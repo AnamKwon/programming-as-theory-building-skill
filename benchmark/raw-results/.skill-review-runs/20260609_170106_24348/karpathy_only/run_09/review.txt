@@ -1,0 +1,154 @@
+I have enough evidence. The test suite runs (deps present) with **19 failed, 16 passed**, and I reproduced the two root-cause defects. Here is the evaluation.
+
+```json
+{
+  "rubric_version": "benchmark-codegen-review-v1",
+  "score_scale": "0-100 per category",
+  "weights": {
+    "task_fulfillment": 0.20,
+    "functional_correctness": 0.25,
+    "executability": 0.15,
+    "test_quality": 0.15,
+    "code_quality": 0.10,
+    "minimality": 0.10,
+    "security_safety": 0.05
+  },
+  "task_fulfillment_score": 85,
+  "task_fulfillment_breakdown": {
+    "instruction_compliance": 78,
+    "required_artifacts": 95,
+    "feature_coverage": 88,
+    "constraint_adherence": 80
+  },
+  "functional_correctness_score": 58,
+  "functional_correctness_breakdown": {
+    "domain_invariants": 45,
+    "edge_case_behavior": 55,
+    "data_consistency": 60,
+    "error_semantics": 72
+  },
+  "executability_score": 59,
+  "executability_breakdown": {
+    "installability": 80,
+    "runtime_entrypoints": 70,
+    "command_result": 32,
+    "runtime_isolation": 55
+  },
+  "test_quality_score": 61,
+  "test_quality_breakdown": {
+    "required_test_coverage": 80,
+    "behavioral_assertions": 78,
+    "integration_realism": 45,
+    "repeatability": 42
+  },
+  "code_quality_score": 78,
+  "code_quality_breakdown": {
+    "readability": 85,
+    "maintainability": 78,
+    "boundary_design": 85,
+    "documentation_quality": 65
+  },
+  "minimality_score": 80,
+  "minimality_breakdown": {
+    "no_speculative_infrastructure": 85,
+    "no_dead_or_duplicate_code": 85,
+    "appropriate_abstractions": 85,
+    "dependency_minimality": 65
+  },
+  "security_safety_score": 80,
+  "security_safety_breakdown": {
+    "auth_enforcement": 90,
+    "secret_handling": 55,
+    "input_safety": 85,
+    "unsafe_operations": 90
+  },
+  "review_confidence_score": 90,
+  "review_confidence_breakdown": {
+    "inspection_depth": 92,
+    "command_evidence": 92,
+    "issue_specificity": 90,
+    "uncertainty_handling": 85
+  },
+  "weighted_components": {
+    "task_fulfillment": 17.0,
+    "functional_correctness": 14.5,
+    "executability": 8.9,
+    "test_quality": 9.2,
+    "code_quality": 7.8,
+    "minimality": 8.0,
+    "security_safety": 4.0
+  },
+  "weighted_total": 69.4,
+  "verdict": "mixed",
+  "key_findings": [
+    "Core confirm-reservation workflow is broken at runtime: service.py:104 compares timezone-aware now() with the naive datetime returned by SQLite, raising 'TypeError: can't compare offset-naive and offset-aware datetimes' on every confirm against the default/declared database.",
+    "All FastAPI endpoint tests fail with 'no such table: skus': test_api.py uses sqlite:///:memory: without StaticPool/shared connection, so the table created on the main thread is invisible to TestClient's worker-thread connection.",
+    "Declared test command (`pytest`) yields 19 failed, 16 passed of 35 tests.",
+    "Stock-availability invariant is wrong: create_reservation checks `stock.quantity < quantity` (service.py:77) ignoring reserved_quantity, so multiple pending reservations can over-reserve beyond available stock.",
+    "README documents an `X-API-Key` header (lines 56-60) but security.py uses HTTPBearer (`Authorization: Bearer`); the doc contradicts the implementation and the tests."
+  ],
+  "score_rationale": {
+    "task_fulfillment": "All requested artifacts and the full endpoint surface (SKU, stock, reservation create/confirm/cancel, order get/list+pagination, health, API-key auth) are present and well-structured. Docked for the README auth-mechanism contradiction and the module-level DB-file side effect on import.",
+    "functional_correctness": "Idempotency, insufficient-stock, cancel, and the expiration sweep work, but the central confirm->order path throws TypeError on the default SQLite store, and the availability check ignores reserved_quantity, allowing oversell. Two central invariants are violated.",
+    "executability": "Dependencies install and the app imports/serves (12 routes), but the declared pytest command fails 19/35, the confirm endpoint 500s at runtime, uvicorn (needed for the documented run command) is not a dependency, and importing app.py writes commerce_service.db into the cwd via a module-level engine.",
+    "test_quality": "Tests target the right categories (happy paths, insufficient stock, idempotency, expiration, auth, pagination) with real behavioral assertions on stock numbers and statuses, but the API test harness is misconfigured (in-memory + threading) so none of the integration tests pass, and it relies on a shared module-level engine with >= assertions rather than isolated state.",
+    "code_quality": "Clean, conventional layering (models/repository/service/security/app) with readable names and a localized TTL constant. Documentation loses points for the false auth claim in the README.",
+    "minimality": "No speculative queues/workers/CLIs; logic is direct. python-multipart is declared but unused, and the abstractions are justified by current behavior.",
+    "security_safety": "Every mutating endpoint (and order reads) is gated by Depends(verify_api_key); pydantic validates inputs and the ORM parameterizes queries. The API key is a hardcoded constant ('secret-key') rather than env-sourced, which is the main weakness.",
+    "review_confidence": "All source and test files were read and the full suite was executed; both primary failure modes were reproduced from tracebacks, so findings are concrete and well-supported."
+  },
+  "instruction_failures": [
+    "README 'Authentication' section instructs callers to send X-API-Key, but the service requires an Authorization: Bearer token (security.py:1-11); the documented contract does not work.",
+    "README 'Run the server' uses `python -m uvicorn` but uvicorn is absent from pyproject.toml dependencies."
+  ],
+  "correctness_failures": [
+    "service.py:104 `if now >= reservation.expires_at` compares aware vs naive datetime -> TypeError; breaks confirm_reservation for all non-confirmed reservations on SQLite (reproduced in test run).",
+    "service.py:77 availability check `stock.quantity < quantity` ignores stock.reserved_quantity, permitting reservations that exceed truly-available stock (over-reservation/oversell).",
+    "test_confirm_expired_reservation_raises_error masks the real bug: it expects InvalidStateError but the code raises TypeError before reaching the expiry branch.",
+    "Module-level `engine = get_engine()` in app.py (line 14) plus DateTime(timezone=True) on SQLite means confirmation is non-functional in the default deployment, not just in tests."
+  ],
+  "execution_failures": [
+    "pytest: 19 failed, 16 passed (35 total).",
+    "tests/test_api.py: all endpoint tests fail with sqlalchemy.exc.OperationalError 'no such table: skus' due to in-memory SQLite shared across threads without StaticPool.",
+    "tests/test_service.py: confirm/order tests fail with TypeError (naive vs aware datetime)."
+  ],
+  "test_gaps": [
+    "No test exercises the reserved_quantity availability rule (e.g. two concurrent pending reservations exceeding stock), so the oversell bug is undetected.",
+    "No test for unauthorized mutation with a *wrong* key (only missing-key 403 is covered), so the 401 path in verify_api_key is unverified.",
+    "API tests share a single module-level engine and use >= assertions, so they are order-dependent and not independently repeatable.",
+    "test_service.py:116 uses fragile reflection (`Repository.__bases__[0]`) to mutate a reservation instead of the repository API."
+  ],
+  "quality_notes": [
+    "Layering and naming are clean; service exceptions map cleanly to HTTP codes in app.py.",
+    "README design notes are accurate except the auth header claim.",
+    "Hardcoded VALID_API_KEY constant should be configuration/env-sourced for production-mindedness.",
+    "Importing the app has a filesystem side effect (creates commerce_service.db in cwd), which complicates isolation and testing."
+  ],
+  "unnecessary_code_examples": [
+    "pyproject.toml declares python-multipart==0.0.6 but no form/file/multipart handling exists in the codebase."
+  ],
+  "security_safety_notes": [
+    "verify_api_key dependency is applied to every mutating endpoint and to order reads (app.py).",
+    "API key is a hardcoded literal 'secret-key' in security.py:5 rather than read from the environment.",
+    "Pydantic Field constraints validate request bodies; SQLAlchemy ORM parameterizes all queries (no injection vectors observed).",
+    "No shell, network, or destructive operations in the code."
+  ],
+  "file_evidence": [
+    {"path": "src/commerce_service/service.py", "note": "Line 104 aware-vs-naive datetime comparison (TypeError on confirm); line 77 availability check ignores reserved_quantity."},
+    {"path": "src/commerce_service/app.py", "note": "Line 14 module-level get_engine() creates commerce_service.db on import; endpoints correctly gated by verify_api_key."},
+    {"path": "src/commerce_service/security.py", "note": "Uses HTTPBearer with hardcoded VALID_API_KEY='secret-key', contradicting README's X-API-Key instruction."},
+    {"path": "tests/test_api.py", "note": "Lines 9-23 in-memory SQLite shared across TestClient worker threads without StaticPool -> 'no such table' on all endpoint tests."},
+    {"path": "tests/test_service.py", "note": "Confirm/order tests fail via TypeError; line 116 uses fragile __bases__ reflection to expire a reservation."},
+    {"path": "pyproject.toml", "note": "Declares unused python-multipart; omits uvicorn referenced by README run command."},
+    {"path": "README.md", "note": "Lines 54-60 document X-API-Key auth that the implementation does not support."}
+  ],
+  "commands_run": [
+    "find . -type f (project listing)",
+    "python3 -c import fastapi,sqlalchemy,pydantic,httpx (deps present; fastapi 0.104.1, sqlalchemy 2.0.23, pydantic 2.5.0, pytest 7.4.3)",
+    "PYTHONPATH=src python3 -m pytest -q -> 19 failed, 16 passed",
+    "PYTHONPATH=src python3 -m pytest tests/test_api.py::TestSKUEndpoints::test_create_sku -> OperationalError: no such table: skus",
+    "PYTHONPATH=src python3 -c 'from commerce_service.app import app' -> import ok, 12 routes, commerce_service.db created"
+  ],
+  "review_risk": "low — all source and test files were read and the full suite was executed with dependencies present; both primary failure modes (tz comparison and in-memory SQLite threading) were reproduced from tracebacks."
+}
+```

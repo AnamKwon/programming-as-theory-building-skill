@@ -1,0 +1,46 @@
+Perfect! I've successfully created a production-style inventory reservation and order orchestration API.
+
+## Summary
+
+**Created 11 files** with a complete FastAPI-based commerce backend:
+
+- **Core Service**: Repository pattern with SQLite (IMMEDIATE transactions for atomicity), Service layer enforcing business rules, Pydantic models for validation
+- **API Endpoints**: Health check, SKU creation/management, stock adjustment, reservation create/confirm/cancel, order lookup with pagination
+- **Security**: API-key header auth on mutations (key: `test-key-12345`)
+- **Features**: 
+  - Idempotency via (idempotency_key, sku) lookup
+  - 30-second reservation TTL with expiration checks
+  - Stock accounting invariant: `on_hand + reserved = total`
+  - ACID transactions prevent race conditions
+  - Paginated order listing (1-100 items per page)
+
+**39 passing tests** covering:
+- Happy paths (create → reserve → confirm)
+- Insufficient stock rejection
+- Idempotent retry (same key returns same reservation)
+- Expired reservation rejection  
+- Unauthorized mutations (missing API key)
+- Pagination bounds and validation
+- Stock accounting correctness
+
+**Output contract:**
+
+```json
+{
+  "files_created": [
+    "pyproject.toml",
+    "README.md",
+    "src/commerce_service/__init__.py",
+    "src/commerce_service/app.py",
+    "src/commerce_service/models.py",
+    "src/commerce_service/repository.py",
+    "src/commerce_service/service.py",
+    "src/commerce_service/security.py",
+    "tests/__init__.py",
+    "tests/test_service.py",
+    "tests/test_api.py"
+  ],
+  "entrypoint": "uvicorn commerce_service.app:app --reload",
+  "test_command": "pytest tests/ -v"
+}
+```

@@ -1,0 +1,153 @@
+I have enough evidence. Two serious defects confirmed by running the code: (1) the repository opens a fresh SQLite connection per operation, which makes the `:memory:` databases the tests use empty on every call — **31 of 37 tests fail** with `no such table`; (2) idempotent re-confirm is broken because `_find_order_by_reservation` matches `order_id.startswith(reservation_id[:8])` but order IDs are unrelated UUIDs, so re-confirming raises `InvalidReservationStateError` instead of returning the order.
+
+```json
+{
+  "rubric_version": "benchmark-codegen-review-v1",
+  "score_scale": "0-100 per category",
+  "weights": {
+    "task_fulfillment": 0.20,
+    "functional_correctness": 0.25,
+    "executability": 0.15,
+    "test_quality": 0.15,
+    "code_quality": 0.10,
+    "minimality": 0.10,
+    "security_safety": 0.05
+  },
+  "task_fulfillment_score": 79,
+  "task_fulfillment_breakdown": {
+    "instruction_compliance": 75,
+    "required_artifacts": 90,
+    "feature_coverage": 80,
+    "constraint_adherence": 70
+  },
+  "functional_correctness_score": 63,
+  "functional_correctness_breakdown": {
+    "domain_invariants": 60,
+    "edge_case_behavior": 60,
+    "data_consistency": 50,
+    "error_semantics": 80
+  },
+  "executability_score": 60,
+  "executability_breakdown": {
+    "installability": 85,
+    "runtime_entrypoints": 85,
+    "command_result": 15,
+    "runtime_isolation": 55
+  },
+  "test_quality_score": 64,
+  "test_quality_breakdown": {
+    "required_test_coverage": 82,
+    "behavioral_assertions": 80,
+    "integration_realism": 78,
+    "repeatability": 15
+  },
+  "code_quality_score": 78,
+  "code_quality_breakdown": {
+    "readability": 85,
+    "maintainability": 65,
+    "boundary_design": 82,
+    "documentation_quality": 80
+  },
+  "minimality_score": 73,
+  "minimality_breakdown": {
+    "no_speculative_infrastructure": 80,
+    "no_dead_or_duplicate_code": 65,
+    "appropriate_abstractions": 80,
+    "dependency_minimality": 65
+  },
+  "security_safety_score": 80,
+  "security_safety_breakdown": {
+    "auth_enforcement": 90,
+    "secret_handling": 55,
+    "input_safety": 85,
+    "unsafe_operations": 90
+  },
+  "review_confidence_score": 91,
+  "review_confidence_breakdown": {
+    "inspection_depth": 95,
+    "command_evidence": 92,
+    "issue_specificity": 92,
+    "uncertainty_handling": 85
+  },
+  "weighted_components": {
+    "task_fulfillment": 15.8,
+    "functional_correctness": 15.8,
+    "executability": 9.0,
+    "test_quality": 9.6,
+    "code_quality": 7.8,
+    "minimality": 7.3,
+    "security_safety": 4.0
+  },
+  "weighted_total": 69.3,
+  "verdict": "mixed",
+  "key_findings": [
+    "Critical: Repository opens a new sqlite connection per method call (repository.py:21-24). With the in-memory ':memory:' DB the tests use, every connection gets a fresh empty database, so tables created in _init_db vanish — 31 of 37 tests fail with 'no such table: skus'. Verified via `pytest`.",
+    "Idempotent confirm is broken: _find_order_by_reservation (service.py:177-182) matches order_id.startswith(reservation_id[:8]), but order_id is an unrelated uuid4 — no reservation->order link is persisted. Re-confirming a CONFIRMED reservation raises InvalidReservationStateError instead of returning the existing order. Verified with a file-DB smoke test; this also fails test_confirm_reservation_already_confirmed.",
+    "Core happy-path workflow does work against a file-backed DB (create SKU, reserve with stock decrement, confirm to order) — confirmed via smoke test.",
+    "Good API/HTTP error semantics (201/200/400/401/403/404/409) and clean repo/service/schema/security layering.",
+    "pydantic-settings is declared as a dependency but never used; API key is hardcoded in security.py rather than configurable."
+  ],
+  "score_rationale": {
+    "task_fulfillment": "All requested endpoints, files, and workflows are present (skus, adjust-stock, reservations create/confirm/cancel, orders list/get, health, API-key auth, cursor pagination) and the README documents them accurately. Docked for the broken idempotent-confirm feature and a non-production-minded persistence design (connection-per-call) despite the 'production-minded' framing.",
+    "functional_correctness": "Stock decrement/restore, lazy expiration with stock return (service.py:96-108), and reservation idempotency hold. But idempotent confirm is broken, reservation+stock updates span two separate connections (non-atomic, TOCTOU on stock check), and there is no persisted reservation->order relationship. Error statuses are appropriate.",
+    "executability": "Package installs and the file-DB app is runnable (uvicorn entrypoint valid; smoke test passed). However the declared `pytest` command fails catastrophically (31 failed / 6 passed) due to the :memory: connection-per-call bug, and app.py instantiates Repository() at import time, writing ./commerce.db into cwd as an import side effect.",
+    "test_quality": "Test intent is strong and comprehensive — happy paths, insufficient stock, idempotent retry, cancelled-key reuse, expiration, auth (401/403), and pagination across both service and API layers with behavioral assertions on quantities and stock restoration. But the suite is not repeatable: it does not run green because the SUT's connection model is incompatible with the :memory: fixtures the tests correctly chose.",
+    "code_quality": "Readable names, clear module boundaries, and parameterized SQL. Maintainability is hurt by the hidden, incorrect reservation/order linkage via string-prefix matching, which is a non-obvious landmine for future changes.",
+    "minimality": "No speculative queues/workers/CLIs. Dinged for the dead/incorrect _find_order_by_reservation path, an unused pydantic-settings dependency, and a somewhat redundant ValueError exception handler/ErrorResponse that overlaps with per-route try/except.",
+    "security_safety": "All mutating and read endpoints enforce verify_api_key via Depends; SQL is parameterized; pydantic validates inputs; no shell/network/destructive operations. Lowered for a hardcoded API key with no environment/config override (and an unused settings library that suggests intent to externalize it).",
+    "review_confidence": "All source and test files were read; dependencies were already available; the test suite was executed and the two core defects were reproduced (pytest run plus a direct file-DB smoke test). Remaining uncertainty is minor (concurrency behavior under real load not exercised)."
+  },
+  "instruction_failures": [
+    "Declared test command (`pytest`) does not pass — 31/37 tests fail, contradicting the README 'Test' instructions.",
+    "pydantic-settings dependency declared but never used; 'production-minded' constraint weakened by per-call connections and a hardcoded secret."
+  ],
+  "correctness_failures": [
+    "service.py:177-182 _find_order_by_reservation can never match (order_id is an unrelated uuid4), so idempotent re-confirm raises InvalidReservationStateError instead of returning the existing order — verified by smoke test.",
+    "repository.py:21-24 connection-per-call is incompatible with ':memory:' DBs, dropping all tables between calls (no such table errors).",
+    "create_sku has no duplicate-SKU handling; a second POST /skus for the same sku raises sqlite3.IntegrityError and surfaces as an unhandled 500 (app.py:38-54, repository.py:70-82).",
+    "create_reservation performs the insert and the stock decrement on two separate connections (service.py:79-87), so the reserve operation is not atomic and the stock check is subject to TOCTOU."
+  ],
+  "execution_failures": [
+    "`pytest` => 31 failed, 6 passed: sqlite3.OperationalError: no such table: skus (repository.py:75).",
+    "app.py:29 instantiates Repository() at module import, creating ./commerce.db in the current working directory as an import-time side effect."
+  ],
+  "test_gaps": [
+    "No test asserts duplicate-SKU creation behavior (would currently 500).",
+    "No test for re-confirm after cancellation or confirm-of-expired beyond the single expired case; the already-confirmed test is present but fails due to the SUT bug.",
+    "No assertion that confirm/cancel are rejected for unauthorized callers (only create/adjust/list cover the auth dimension).",
+    "Tests cannot actually validate any behavior because the suite does not execute green."
+  ],
+  "quality_notes": [
+    "Lazy expiration logic (service.py:96-108) correctly returns stock on read — a nice touch.",
+    "datetime.utcnow() is used throughout (deprecated in 3.12) and ErrorResponse(...).dict() (app.py:226) uses the deprecated pydantic v2 API; both emit warnings but still work.",
+    "Reservation->order relationship should be persisted (e.g., a reservation_id column on orders) instead of inferred by string prefix."
+  ],
+  "unnecessary_code_examples": [
+    "service.py:177-182 _find_order_by_reservation — broken and effectively dead matching logic.",
+    "pydantic-settings in pyproject.toml dependencies — never imported or used.",
+    "app.py:222-227 global ValueError exception handler overlaps with the per-route ValueError->400 try/except blocks."
+  ],
+  "security_safety_notes": [
+    "API key 'test-api-key-123' is hardcoded in security.py:12 with no env/config override despite pydantic-settings being a dependency.",
+    "All SQL uses parameterized queries (no injection); pydantic models bound input ranges (e.g., AdjustStockRequest delta clamp).",
+    "Auth dependency is applied to every non-health endpoint, including reads."
+  ],
+  "file_evidence": [
+    {"path": "src/commerce_service/repository.py", "note": "Lines 21-24: new connection per call; breaks ':memory:' so all tables disappear between operations (root cause of 31 test failures)."},
+    {"path": "src/commerce_service/service.py", "note": "Lines 177-182: _find_order_by_reservation prefix match never succeeds; lines 110-139 idempotent confirm therefore falls through to InvalidReservationStateError. Lines 79-87: non-atomic reserve+decrement."},
+    {"path": "src/commerce_service/app.py", "note": "Line 29 Repository() at import (writes ./commerce.db); good per-endpoint auth and HTTP status mapping; line 226 deprecated .dict()."},
+    {"path": "src/commerce_service/security.py", "note": "Line 12: hardcoded API key; correct 401 (missing) vs 403 (invalid) semantics."},
+    {"path": "tests/test_service.py", "note": "Comprehensive service-layer coverage with :memory: fixture (lines 14-17); cannot pass due to SUT connection model; test_confirm_reservation_already_confirmed (137-148) exercises the broken idempotent-confirm path."},
+    {"path": "tests/test_api.py", "note": "Good API coverage incl. auth, pagination, invalid limit; autouse reset fixture (7-17) re-inits repo to :memory: but the SUT bug still drops tables."},
+    {"path": "pyproject.toml", "note": "Lines 10-22: pydantic-settings declared but unused; pinned deps otherwise plausible."}
+  ],
+  "commands_run": [
+    "find . -type f (project listing)",
+    "python3 -c imports for fastapi/httpx/pytest (deps present: fastapi 0.104.1, httpx, pytest)",
+    "pip install -e . -q && PYTHONPATH=src python3 -m pytest -q  => 31 failed, 6 passed",
+    "pytest single test => sqlite3.OperationalError: no such table: skus (repository.py:75)",
+    "file-DB smoke test of create_sku/create_reservation/confirm twice => reserve+confirm work; second confirm RAISED InvalidReservationStateError"
+  ],
+  "review_risk": "low — all source and test files were read, dependencies were available, the test suite was executed, and both core defects were reproduced (pytest run plus a file-DB smoke test); concurrency behavior under real load was not stress-tested."
+}
+```

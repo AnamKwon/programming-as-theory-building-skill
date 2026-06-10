@@ -1,0 +1,157 @@
+Confirmed. `create_sku`/`adjust_stock` paths have no `commit()`; `DuplicateReservationError`, `count_query`, and `contextmanager` are dead. I have sufficient evidence to score.
+
+```json
+{
+  "rubric_version": "benchmark-codegen-review-v1",
+  "score_scale": "0-100 per category",
+  "weights": {
+    "task_fulfillment": 0.20,
+    "functional_correctness": 0.25,
+    "executability": 0.15,
+    "test_quality": 0.15,
+    "code_quality": 0.10,
+    "minimality": 0.10,
+    "security_safety": 0.05
+  },
+  "task_fulfillment_score": 88,
+  "task_fulfillment_breakdown": {
+    "instruction_compliance": 85,
+    "required_artifacts": 95,
+    "feature_coverage": 88,
+    "constraint_adherence": 85
+  },
+  "functional_correctness_score": 64,
+  "functional_correctness_breakdown": {
+    "domain_invariants": 60,
+    "edge_case_behavior": 65,
+    "data_consistency": 45,
+    "error_semantics": 85
+  },
+  "executability_score": 63,
+  "executability_breakdown": {
+    "installability": 85,
+    "runtime_entrypoints": 70,
+    "command_result": 25,
+    "runtime_isolation": 70
+  },
+  "test_quality_score": 60,
+  "test_quality_breakdown": {
+    "required_test_coverage": 80,
+    "behavioral_assertions": 75,
+    "integration_realism": 40,
+    "repeatability": 45
+  },
+  "code_quality_score": 83,
+  "code_quality_breakdown": {
+    "readability": 85,
+    "maintainability": 80,
+    "boundary_design": 85,
+    "documentation_quality": 80
+  },
+  "minimality_score": 81,
+  "minimality_breakdown": {
+    "no_speculative_infrastructure": 85,
+    "no_dead_or_duplicate_code": 65,
+    "appropriate_abstractions": 85,
+    "dependency_minimality": 90
+  },
+  "security_safety_score": 84,
+  "security_safety_breakdown": {
+    "auth_enforcement": 90,
+    "secret_handling": 80,
+    "input_safety": 70,
+    "unsafe_operations": 95
+  },
+  "review_confidence_score": 90,
+  "review_confidence_breakdown": {
+    "inspection_depth": 95,
+    "command_evidence": 90,
+    "issue_specificity": 90,
+    "uncertainty_handling": 85
+  },
+  "weighted_components": {
+    "task_fulfillment": 17.6,
+    "functional_correctness": 16.0,
+    "executability": 9.5,
+    "test_quality": 9.0,
+    "code_quality": 8.3,
+    "minimality": 8.1,
+    "security_safety": 4.2
+  },
+  "weighted_total": 72.7,
+  "verdict": "mixed",
+  "key_findings": [
+    "Declared test command fails: 13 of 26 tests fail. All API integration tests (test_api.py) error with 'no such table: skus' plus cross-thread sqlite errors; only the 11 service-layer tests pass.",
+    "Production persistence bug: service.create_sku and service.adjust_stock only flush() and never commit(); get_db closes the session in finally, so SKU creation and stock adjustments are rolled back and lost in real (file-DB) deployment. Tests mask this by sharing one never-closed session.",
+    "Stock invariant bug: cancel_reservation permits cancelling EXPIRED reservations and re-releases stock, but _expire_reservation already released it on expiry -> double release / inflated stock.",
+    "Clean, well-layered architecture (models/repository/service/security/app) with correct service-layer logic and appropriate HTTP status codes (403/404/409/410).",
+    "Dead/unused code: DuplicateReservationError (defined+imported, never raised), repository count_query, app contextmanager import, models Optional import; GET /orders uses response_model=dict and returns raw ORM objects (skips OrderResponse validation)."
+  ],
+  "score_rationale": {
+    "task_fulfillment": "All requested artifacts and the full API surface are present: SKU create/adjust, reservation create/confirm/cancel, order list/get, idempotency, expiration, API-key auth, and pagination. Fresh-workspace and no-parent-read constraints are respected. Production-mindedness is undercut by the missing commits.",
+    "functional_correctness": "Service-layer domain logic (stock check, reservation reduce/release, idempotent retry, expiration on confirm, state transitions) is largely correct and unit-tested. But data consistency is materially broken: create_sku/adjust_stock never commit (lost in production), and cancel-after-expire double-releases stock. Error semantics are good.",
+    "executability": "Dependencies are pinned and plausible and the uvicorn entrypoint is usable, but the declared `pytest tests/` command fails for the entire API layer due to an in-memory SQLite + threadpool fixture misconfiguration, and create_sku/adjust_stock do not persist at runtime. App also creates ./commerce.db and runs create_all at import time.",
+    "test_quality": "Tests name all required scenarios (happy path, insufficient stock, idempotency, expiration, auth, pagination, not-found) with some behavioral assertions (stock reduced/released, same reservation id). However the API integration tests do not run at all (broken fixture), indicating the suite was never executed end-to-end; repeatability/integration realism suffer accordingly.",
+    "code_quality": "Readable, idiomatic FastAPI/SQLAlchemy with clear module boundaries and a coherent repository/service/security split. Minor blemishes: inefficient len()-based order count with a dead count_query, and response_model=dict bypassing schema validation.",
+    "minimality": "No speculative queues/workers/CLIs/migrations and dependencies are all used. Loses points for several dead artifacts (DuplicateReservationError, count_query, unused contextmanager/Optional imports) and unused OrderStatus members.",
+    "security_safety": "All mutating endpoints enforce verify_api_key. The default key 'dev-key-123' is an env-overridable placeholder, not a real secret, though comparison is non-constant-time. Input validation relies on Pydantic but does not constrain quantity/expiry to positive values, so negative quantities could corrupt stock. No unsafe shell/file/network operations.",
+    "review_confidence": "All eight source/test files were read in full and the test suite was executed, with specific failure causes captured. Remaining uncertainty is limited to exact runtime serialization behavior of GET /orders, which the broken DB fixture prevented exercising."
+  },
+  "instruction_failures": [
+    "README documents `pytest tests/` as the test command, but it fails (13 failures, 4 teardown errors).",
+    "Production-minded expectation is violated: two mutating endpoints do not persist their writes."
+  ],
+  "correctness_failures": [
+    "service.create_sku and service.adjust_stock never commit; with get_db's session.close() in finally, the writes are rolled back in real deployments (src/commerce_service/service.py:32-36, repository.py:15-34, app.py:37-46).",
+    "cancel_reservation allows EXPIRED reservations and re-releases stock already released by _expire_reservation, double-counting stock (service.py:101-121, 132-138).",
+    "GET /orders uses response_model=dict and returns raw SQLAlchemy ORM objects inside the dict, bypassing OrderResponse validation and risking serialization of ORM internals (app.py:128-142).",
+    "Idempotent retry of a reservation whose status is EXPIRED raises ReservationExpiredError instead of being a safe replay/recreate (service.py:42-48)."
+  ],
+  "execution_failures": [
+    "All test_api.py endpoint tests fail with sqlite3.OperationalError 'no such table: skus': the in-memory engine uses the default SingletonThreadPool, so the TestClient worker thread sees a different empty in-memory DB than the one the fixture created tables on (tests/test_api.py:11-28).",
+    "Teardown errors: 'SQLite objects created in a thread can only be used in that same thread' during connection reset for several API tests.",
+    "app.py performs create_all and creates ./commerce.db at import time against the default file DB (app.py:28-32)."
+  ],
+  "test_gaps": [
+    "No passing API-level coverage for any scenario except health and unauthorized; integration realism is effectively unverified.",
+    "No test for cancel-after-expiry, which would have caught the double-release bug.",
+    "No test asserting that create_sku/adjust_stock persist across a fresh session/request (would have caught the missing commit).",
+    "No validation tests for negative/zero quantity or expiry_minutes."
+  ],
+  "quality_notes": [
+    "list_orders computes total by loading all OrderModel rows and calling len(), with an unused count_query left in place (repository.py:108-117).",
+    "response_model=dict on GET /orders discards the OrderResponse contract (app.py:128).",
+    "models.py imports Optional but does not use it; app.py imports contextmanager but does not use it."
+  ],
+  "unnecessary_code_examples": [
+    "DuplicateReservationError is defined (service.py:20) and imported (app.py:20) but never raised or caught.",
+    "count_query = select(models.OrderModel.__table__) is assigned and never used (repository.py:112).",
+    "from contextlib import contextmanager unused (app.py:2).",
+    "from typing import Optional unused (models.py:3).",
+    "OrderStatus.SHIPPED / OrderStatus.CANCELLED enum members are defined but no transition ever sets them."
+  ],
+  "security_safety_notes": [
+    "All POST mutation endpoints depend on verify_api_key (app.py:54-125); GET endpoints are intentionally public.",
+    "Default API key 'dev-key-123' is an env-overridable placeholder, not a committed real secret (security.py:9-10); key comparison is plain ==, not constant-time.",
+    "quantity and expiry_minutes are not constrained to positive integers, so a negative reservation quantity could increase stock and corrupt invariants (models.py:110-122, service.py:50-63).",
+    "No shell/file/network/destructive operations beyond creating the local sqlite DB file."
+  ],
+  "file_evidence": [
+    {"path": "src/commerce_service/service.py", "note": "create_sku/adjust_stock lack commit() (lines 32-36); cancel_reservation re-releases stock for EXPIRED reservations (101-121) already released by _expire_reservation (132-138)."},
+    {"path": "src/commerce_service/app.py", "note": "get_db closes session without commit (37-42); GET /orders response_model=dict returns raw ORM objects (128-142); create_all + commerce.db at import (28-32); unused contextmanager import (2)."},
+    {"path": "src/commerce_service/repository.py", "note": "list_orders counts by len() over all rows with dead count_query (108-117)."},
+    {"path": "tests/test_api.py", "note": "In-memory SQLite fixture with default threadpool causes 'no such table' under TestClient worker thread (11-28); all endpoint tests fail."},
+    {"path": "tests/test_service.py", "note": "Service-layer tests all pass and assert real domain behavior (stock reduce/release, idempotency, expiry, transitions)."},
+    {"path": "src/commerce_service/security.py", "note": "verify_api_key dependency with env-configurable key, returns 403 on mismatch; non-constant-time comparison."}
+  ],
+  "commands_run": [
+    "find . -type f (excluding caches) — listed 11 project files",
+    "python3 --version; import fastapi/sqlalchemy/httpx/pytest — deps present (Python 3.12.4)",
+    "python3 -m pytest tests/ -q — 13 failed, 13 passed, 4 errors",
+    "python3 -m pytest tests/ -v | grep PASSED/FAILED/ERROR — all test_api endpoint tests FAILED, all test_service PASSED",
+    "python3 -m pytest tests/test_api.py::test_create_sku_success ... — 'no such table: skus' / cross-thread error",
+    "grep -n commit service.py; grep DuplicateReservationError/count_query/contextmanager — confirmed missing commits and dead code"
+  ],
+  "review_risk": "low — all source and test files were read in full and the declared test command was executed with failure causes captured; the only unexercised behavior is GET /orders runtime serialization, blocked by the broken API-test DB fixture."
+}
+```

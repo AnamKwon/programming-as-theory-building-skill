@@ -1,0 +1,163 @@
+```json
+{
+  "rubric_version": "benchmark-codegen-review-v1",
+  "score_scale": "0-100 per category",
+  "weights": {
+    "task_fulfillment": 0.20,
+    "functional_correctness": 0.25,
+    "executability": 0.15,
+    "test_quality": 0.15,
+    "code_quality": 0.10,
+    "minimality": 0.10,
+    "security_safety": 0.05
+  },
+  "task_fulfillment_score": 83,
+  "task_fulfillment_breakdown": {
+    "instruction_compliance": 80,
+    "required_artifacts": 90,
+    "feature_coverage": 78,
+    "constraint_adherence": 85
+  },
+  "functional_correctness_score": 73,
+  "functional_correctness_breakdown": {
+    "domain_invariants": 68,
+    "edge_case_behavior": 75,
+    "data_consistency": 60,
+    "error_semantics": 88
+  },
+  "executability_score": 73,
+  "executability_breakdown": {
+    "installability": 85,
+    "runtime_entrypoints": 90,
+    "command_result": 30,
+    "runtime_isolation": 88
+  },
+  "test_quality_score": 60,
+  "test_quality_breakdown": {
+    "required_test_coverage": 80,
+    "behavioral_assertions": 78,
+    "integration_realism": 50,
+    "repeatability": 32
+  },
+  "code_quality_score": 81,
+  "code_quality_breakdown": {
+    "readability": 85,
+    "maintainability": 80,
+    "boundary_design": 85,
+    "documentation_quality": 72
+  },
+  "minimality_score": 77,
+  "minimality_breakdown": {
+    "no_speculative_infrastructure": 88,
+    "no_dead_or_duplicate_code": 65,
+    "appropriate_abstractions": 85,
+    "dependency_minimality": 70
+  },
+  "security_safety_score": 83,
+  "security_safety_breakdown": {
+    "auth_enforcement": 90,
+    "secret_handling": 60,
+    "input_safety": 85,
+    "unsafe_operations": 95
+  },
+  "review_confidence_score": 90,
+  "review_confidence_breakdown": {
+    "inspection_depth": 92,
+    "command_evidence": 92,
+    "issue_specificity": 90,
+    "uncertainty_handling": 88
+  },
+  "weighted_components": {
+    "task_fulfillment": 16.6,
+    "functional_correctness": 18.3,
+    "executability": 11.0,
+    "test_quality": 9.0,
+    "code_quality": 8.1,
+    "minimality": 7.7,
+    "security_safety": 4.2
+  },
+  "weighted_total": 74.8,
+  "verdict": "mixed",
+  "key_findings": [
+    "Project is structurally complete and cleanly layered (models/repository/service/security/app + tests + pyproject + README); app imports and exposes 14 routes successfully.",
+    "Declared test command `pytest tests/` produces 14 failed / 16 passed — the test suite is substantially broken, not the spec-passing artifact it appears to be.",
+    "All DB-touching API tests fail with `sqlite3.OperationalError: no such table: skus`: the in-memory SQLite fixture (tests/test_api.py:14-21) is not shared with the threaded TestClient (needs StaticPool/shared connection), so the app thread opens an empty :memory: database.",
+    "API contract bug: SKUResponse.available is a plain `@property` (models.py:37-40), which Pydantic v2 does NOT serialize — `model_dump()` omits `available`, so every SKU response silently lacks the field the README and tests advertise.",
+    "Service-layer domain logic is sound: idempotency, insufficient-stock, confirm, cancel, cancel-confirmed-fails, and pagination all pass as service tests; expiration logic in service.py:120-126 is correct.",
+    "tests/test_service.py::test_create_reservation_success fails on `updated_sku.available` (test_service.py:93) — SKUModel has no `available` attribute (only the Pydantic schema does) → AttributeError.",
+    "tests/test_service.py::test_confirm_expired_reservation fails on nonsensical dead code `repo.db.query(repo.__class__.__bases__[0]).first()` (test_service.py:166) which queries `object` → sqlalchemy.exc.ArgumentError, masking otherwise-valid expiration logic."
+  ],
+  "score_rationale": {
+    "task_fulfillment": "All requested artifacts and the full endpoint surface (SKU CRUD/stock, reservation create/confirm/cancel, order get/list, pagination, API-key auth, idempotency, expiration) are present and constraints respected (fresh workspace, no parent reads). Docked for the `available` field never actually being emitted.",
+    "functional_correctness": "Core reservation/idempotency/expiration logic is correct (verified via passing service tests), and HTTP status mapping is clean (404/400/410/403/201). Lowered for non-atomic multi-commit operations (create_reservation then update_sku_reserved commit separately), TOCTOU oversell risk under concurrency (no locking), adjust_stock allowing stock to drop below reserved (negative availability), and the unserialized `available` field weakening the SKU contract.",
+    "executability": "Packaging and entrypoints are plausible and the app imports cleanly with init_db on startup; runtime is isolated to the working dir. Heavily penalized because the declared test command fails 14/16 — command_result is the dominant weakness.",
+    "test_quality": "Tests are designed to cover the required matrix (happy path, insufficient stock, idempotency, expiration, auth, pagination) with behavioral assertions on reserved counts and status transitions. But the API suite is non-functional due to the threaded in-memory fixture, and two service tests are broken (one by junk code), so repeatability and integration realism are low.",
+    "code_quality": "Source is readable with coherent repo/service/schema/security boundaries and clear naming. Docked because the README/schema advertise an `available` field that is never serialized, and OrderStatus enum members go unused.",
+    "minimality": "No speculative infrastructure (no queues/workers/migrations/CLIs) and abstractions are justified. Docked for unused OrderStatus.COMPLETED/CANCELLED, the unused python-dotenv dependency, and the broken dead line in test_service.py:166.",
+    "security_safety": "Every mutating endpoint requires the verify_api_key dependency and read endpoints are open by design; inputs are validated via Pydantic Field constraints and access is via ORM (no injection). Docked for the hardcoded API key (security.py:9) with no env loading despite python-dotenv being a declared dependency.",
+    "review_confidence": "All source, tests, README and pyproject were read; the test suite was executed and individual failures reproduced and root-caused (no-such-table threading bug, property non-serialization, the `object` query). Minor uncertainty: tests ran under installed pydantic 2.5.0 rather than the pinned 2.6.0, but the failing behaviors are version-independent."
+  },
+  "instruction_failures": [
+    "README and SKUResponse promise an `available` field, but it is implemented as a plain property and is absent from actual JSON responses under Pydantic v2."
+  ],
+  "correctness_failures": [
+    "SKUResponse.available (models.py:37-40) is not a computed_field, so it is never serialized — API consumers cannot see availability.",
+    "Reservation creation is non-atomic: create_reservation() commits, then update_sku_reserved() commits separately (service.py:90-96); a crash between them leaves reserved counts inconsistent.",
+    "No row locking or atomic check-and-decrement on the availability check (service.py:82-96), allowing oversell under concurrent reservations on SQLite.",
+    "adjust_stock only guards stock+adjustment>=0 (service.py:58); it can reduce stock below the reserved quantity, producing negative effective availability.",
+    "Idempotent retry returns the existing reservation without verifying the new request's sku_id/quantity match the original (service.py:76-78), so a mismatched retry silently returns an unrelated reservation."
+  ],
+  "execution_failures": [
+    "`pytest tests/` => 14 failed, 16 passed, 2 errors.",
+    "All API tests touching the DB fail: sqlite3.OperationalError: no such table: skus — in-memory engine in tests/test_api.py:14-21 is not shared with the TestClient's worker thread (missing StaticPool/shared connection).",
+    "SQLite 'objects created in a thread can only be used in that same thread' errors on teardown, confirming the cross-thread connection misuse.",
+    "tests/test_service.py::test_create_reservation_success -> AttributeError on updated_sku.available (SKUModel lacks the attribute).",
+    "tests/test_service.py::test_confirm_expired_reservation -> sqlalchemy.exc.ArgumentError from querying `object` via repo.__class__.__bases__[0]."
+  ],
+  "test_gaps": [
+    "Despite intent, the entire API integration layer is effectively untested because every DB-backed API test errors before asserting behavior.",
+    "Expiration is only exercised in a service test that itself crashes on a junk line; the expiration path is not actually verified by a passing test.",
+    "No test asserts the `available` value over the HTTP response (would have caught the missing-field bug).",
+    "No concurrency/oversell test and no test that adjust_stock cannot drop below reserved.",
+    "No test that a confirmed/cancelled reservation cannot be re-confirmed via the API (only the service cancel-confirmed case is covered)."
+  ],
+  "quality_notes": [
+    "Layering (repository/service/schemas/security/app) is clean and easy to follow.",
+    "HTTP error mapping is appropriate and consistent across endpoints (app.py:55-156).",
+    "README accurately describes architecture but overstates the response contract (advertises stock/reserved/available, of which available is not emitted).",
+    "Use of datetime.utcnow (repository.py:42, service.py:89/120) is deprecated on Python 3.12 and triggers warnings.",
+    "test_service.py:165-166 contains meaningless code (`Repository(service.repo.db)` plus a query of `object`) that should never have been committed."
+  ],
+  "unnecessary_code_examples": [
+    "OrderStatus.COMPLETED and OrderStatus.CANCELLED (models.py:19-20) are defined but never assigned anywhere — orders are only ever created as PENDING.",
+    "python-dotenv is a declared runtime dependency (pyproject.toml:16) but never imported or used.",
+    "tests/test_service.py:165-166 — `repo = Repository(service.repo.db)` and `repo.db.query(repo.__class__.__bases__[0]).first()` are dead/broken lines."
+  ],
+  "security_safety_notes": [
+    "Auth is correctly enforced via Depends(verify_api_key) on all mutating endpoints (create_sku, adjust_stock, create/confirm/cancel reservation); read endpoints are intentionally unauthenticated.",
+    "VALID_API_KEY is hardcoded as 'test-api-key-12345' (security.py:9); the comment says to load from env in production but no env loading is implemented (and the dotenv dependency is unused). It is a placeholder, not a leaked real secret.",
+    "Inputs are validated with Pydantic Field constraints (length/gt/le bounds) and pagination query params are bounded (ge/le), reducing injection and abuse risk; SQLAlchemy ORM avoids raw SQL.",
+    "No shell/network/file/destructive operations are performed."
+  ],
+  "file_evidence": [
+    {"path": "src/commerce_service/models.py", "note": "Lines 37-40: `available` is a plain @property, not @computed_field, so it is dropped by Pydantic v2 serialization (verified: model_dump() omits it)."},
+    {"path": "src/commerce_service/service.py", "note": "Lines 82-96 perform check-then-write with separate commits (reservation, then reserved count) — non-atomic and TOCTOU-prone; expiration handling at 120-126 is logically correct."},
+    {"path": "src/commerce_service/repository.py", "note": "Line 11 hardcodes sqlite:///./commerce.db; adjust_stock (98) and update_sku_reserved (153) clamp with max(0,...); each op commits independently."},
+    {"path": "src/commerce_service/security.py", "note": "Line 9 hardcoded VALID_API_KEY; verify_api_key returns 403 on mismatch/missing key."},
+    {"path": "src/commerce_service/app.py", "note": "All mutating routes depend on verify_api_key; status mapping 404/400/410/403/201 is coherent (lines 36-156)."},
+    {"path": "tests/test_api.py", "note": "Lines 14-31: in-memory SQLite session yielded to a threaded TestClient without StaticPool/shared connection — root cause of 'no such table: skus' across all DB-backed API tests."},
+    {"path": "tests/test_service.py", "note": "Line 93 asserts updated_sku.available on a SKUModel that has no such attribute; lines 165-166 contain broken `query(object)` dead code causing ArgumentError."},
+    {"path": "pyproject.toml", "note": "Lines 11-17: python-dotenv declared but never used; pins pydantic 2.6.0 (installed env had 2.5.0, but the failing behaviors are version-independent)."}
+  ],
+  "commands_run": [
+    "find . -type f (excluding caches) — listed 11 project files",
+    "python3 -c import fastapi,sqlalchemy,pydantic,httpx — deps present, pydantic 2.5.0",
+    "PYTHONPATH=src python3 -m pytest tests/ -q — 14 failed, 16 passed, 2 errors",
+    "PYTHONPATH=src python3 -m pytest <selected tests> — captured 'no such table: skus', AttributeError, ArgumentError",
+    "python3 -c 'SKUResponse(...).model_dump()' — confirmed `available` not serialized",
+    "PYTHONPATH=src python3 -c 'from commerce_service.app import app' — import OK, 14 routes",
+    "grep for dotenv/environ/OrderStatus.COMPLETED — confirmed unused dependency and dead enum members"
+  ],
+  "review_risk": "Low-to-moderate: all source and tests were read and the test suite was executed with failures root-caused, but tests ran under the installed pydantic 2.5.0 rather than the pinned 2.6.0 — the property-serialization and threaded-fixture failures are version-independent, so conclusions hold."
+}
+```

@@ -1,0 +1,158 @@
+I've inspected all source and test files, verified dependencies, ran the test suite, and confirmed side effects. Here is the evaluation.
+
+```json
+{
+  "rubric_version": "benchmark-codegen-review-v1",
+  "score_scale": "0-100 per category",
+  "weights": {
+    "task_fulfillment": 0.20,
+    "functional_correctness": 0.25,
+    "executability": 0.15,
+    "test_quality": 0.15,
+    "code_quality": 0.10,
+    "minimality": 0.10,
+    "security_safety": 0.05
+  },
+  "task_fulfillment_score": 86,
+  "task_fulfillment_breakdown": {
+    "instruction_compliance": 85,
+    "required_artifacts": 95,
+    "feature_coverage": 84,
+    "constraint_adherence": 82
+  },
+  "functional_correctness_score": 62,
+  "functional_correctness_breakdown": {
+    "domain_invariants": 55,
+    "edge_case_behavior": 62,
+    "data_consistency": 55,
+    "error_semantics": 82
+  },
+  "executability_score": 62,
+  "executability_breakdown": {
+    "installability": 78,
+    "runtime_entrypoints": 78,
+    "command_result": 35,
+    "runtime_isolation": 68
+  },
+  "test_quality_score": 62,
+  "test_quality_breakdown": {
+    "required_test_coverage": 72,
+    "behavioral_assertions": 84,
+    "integration_realism": 45,
+    "repeatability": 50
+  },
+  "code_quality_score": 84,
+  "code_quality_breakdown": {
+    "readability": 82,
+    "maintainability": 78,
+    "boundary_design": 88,
+    "documentation_quality": 88
+  },
+  "minimality_score": 83,
+  "minimality_breakdown": {
+    "no_speculative_infrastructure": 88,
+    "no_dead_or_duplicate_code": 67,
+    "appropriate_abstractions": 85,
+    "dependency_minimality": 92
+  },
+  "security_safety_score": 80,
+  "security_safety_breakdown": {
+    "auth_enforcement": 92,
+    "secret_handling": 78,
+    "input_safety": 55,
+    "unsafe_operations": 95
+  },
+  "review_confidence_score": 88,
+  "review_confidence_breakdown": {
+    "inspection_depth": 92,
+    "command_evidence": 90,
+    "issue_specificity": 88,
+    "uncertainty_handling": 82
+  },
+  "weighted_components": {
+    "task_fulfillment": 17.2,
+    "functional_correctness": 15.5,
+    "executability": 9.3,
+    "test_quality": 9.3,
+    "code_quality": 8.4,
+    "minimality": 8.3,
+    "security_safety": 4.0
+  },
+  "weighted_total": 72.0,
+  "verdict": "mixed",
+  "key_findings": [
+    "9 of 29 tests FAIL: every DB-touching API test in tests/test_api.py errors with 'SQLite objects created in a thread can only be used in that same thread' — the in-memory engine is created without connect_args={'check_same_thread': False}/StaticPool while TestClient runs requests in a worker thread. The declared `pytest` command does not pass cleanly.",
+    "Expired reservations leak stock permanently: service.confirm_reservation marks an expired reservation EXPIRED (service.py:91-96) but never returns the quantity deducted at creation; no other code path releases it.",
+    "Cancelling a CONFIRMED reservation restores stock while the created order persists: cancel_reservation only blocks CANCELLED/EXPIRED (service.py:111), so a confirmed reservation can be cancelled, re-adding stock and inflating availability against an existing order.",
+    "No quantity validation: ReservationCreate.quantity has no gt=0 constraint; a negative quantity passes the `available < quantity` check and runs `sku.quantity_available -= quantity`, inflating stock (service.py:57,66). SKUCreate.quantity_available also unbounded.",
+    "Order state is never tracked beyond PENDING despite README 'full state tracking' — OrderStatus.FULFILLED/CANCELLED are unused; confirmed reservations create PENDING orders that never transition.",
+    "Clean layered design (app/service/repository/models/security), pinned minimal deps, auth on all mutations, and honest README limitations section are genuine strengths."
+  ],
+  "score_rationale": {
+    "task_fulfillment": "All requested files, endpoints (SKU create/adjust, reservation create/confirm/cancel, paginated orders, health), idempotency, TTL, and API-key auth are present and documented. Order 'state tracking' is only partially realized, and module import writes commerce.db to the cwd, slightly undercutting the production-minded constraint.",
+    "functional_correctness": "Happy-path stock model is coherent (deduct at reservation, restore at cancel), and HTTP status semantics are appropriate (404/409/400/401). But three real invariant bugs — expired-reservation stock leak, cancel-of-confirmed inconsistency, and negative-quantity stock inflation — plus non-atomic two-commit reservation lower this materially.",
+    "executability": "Deps install cleanly and the app/uvicorn entrypoints and imports resolve. However `pytest` produces 9 failures / 20 passes due to the cross-thread SQLite fixture bug, and module-level Base.metadata.create_all writes commerce.db into the working directory at import.",
+    "test_quality": "Coverage intent is strong — service tests assert real behavior (single-deduction idempotency, stock restore on cancel, expiration rejection) and the required scenarios are all addressed. But the API integration layer is non-functional (9 failing tests from a misconfigured in-memory engine), so integration realism and repeatability are compromised.",
+    "code_quality": "Readable, well-separated modules with clear control flow and a thorough, honest README. Minor deductions for the misspelled CommercService class, Pydantic v2 `class Config` deprecation, and the order-state maintainability gap.",
+    "minimality": "Dependencies are minimal and justified; no speculative queues/workers/CLIs. Deducted for two unused repository methods (get_pending_reservations_for_sku, get_confirmed_orders_for_sku) and unused OrderStatus.FULFILLED/CANCELLED values.",
+    "security_safety": "All mutating endpoints enforce the verify_api_key dependency; no unsafe shell/file/network use. The hardcoded key is explicitly a documented test key. Main weakness is input safety — missing positive-quantity validation enables data-integrity abuse.",
+    "review_confidence": "All seven source files and both test files were read, dependencies confirmed present, and the test suite executed with failures and the commerce.db side effect reproduced directly. Concurrency/race behavior was reasoned about rather than load-tested."
+  },
+  "instruction_failures": [
+    "README claims orders provide 'full state tracking', but Order rows never leave PENDING and OrderStatus.FULFILLED/CANCELLED are never assigned.",
+    "Production-minded constraint partially violated: importing the app triggers Base.metadata.create_all on a file-based engine, creating commerce.db in the working directory as an import side effect (app.py:21, models.py:10)."
+  ],
+  "correctness_failures": [
+    "Expired reservation never returns its reserved stock; service.confirm_reservation sets EXPIRED but omits any quantity_available increment (service.py:91-96).",
+    "cancel_reservation permits cancelling a CONFIRMED reservation, restoring stock while the corresponding order remains, inflating availability (service.py:103-124).",
+    "Negative or zero reservation quantity is not rejected; a negative quantity bypasses the stock check and increases quantity_available via `-= quantity` (service.py:57,66).",
+    "Reservation creation is non-atomic: repository.create_reservation commits, then stock decrement commits separately (service.py:64-67) — concurrent requests can over-reserve.",
+    "Idempotency check is read-then-write (service.py:41) without handling the unique-constraint IntegrityError, so concurrent identical keys can raise an uncaught DB error."
+  ],
+  "execution_failures": [
+    "`python3 -m pytest`: 9 failed, 20 passed — all DB-backed API tests fail with sqlite3.ProgrammingError (cross-thread connection) because tests/test_api.py:13 creates the in-memory engine without check_same_thread=False / StaticPool.",
+    "Module import side effect writes commerce.db (45KB observed) into the working directory."
+  ],
+  "test_gaps": [
+    "No test catches the expired-reservation stock leak (confirm-on-expired asserts the 400 but not that stock was/was not restored).",
+    "No test for cancelling a confirmed reservation (the inconsistency path is unexercised).",
+    "No test for invalid (negative/zero) reservation or SKU quantity.",
+    "API integration tests do not actually run end-to-end, so no working proof of HTTP-layer behavior for any mutation that touches the database.",
+    "No test asserts GET /orders is intentionally public (no auth header) vs. an oversight."
+  ],
+  "quality_notes": [
+    "Class name 'CommercService' is misspelled and propagated into the README (service.py:11).",
+    "Pydantic v2 deprecation: response models use `class Config: from_attributes` instead of model_config = ConfigDict(...) (models.py:83,102,114).",
+    "datetime.utcnow() is deprecated in Python 3.12 and is used pervasively (models.py, service.py).",
+    "adjust_stock clamps to max(0, ...) (repository.py:29) and ignores outstanding reservations, which can silently desync available vs. reserved counts."
+  ],
+  "unnecessary_code_examples": [
+    "repository.py:92 get_pending_reservations_for_sku — never called.",
+    "repository.py:102 get_confirmed_orders_for_sku — never called; also filters on FULFILLED orders that are never created.",
+    "models.py:26-29 OrderStatus.FULFILLED / CANCELLED — defined but never assigned."
+  ],
+  "security_safety_notes": [
+    "verify_api_key is required on all mutating routes (app.py:42,54,65,78,89); reads (health, orders) are public by documented design.",
+    "API key is hardcoded in security.py:3 but explicitly labeled a test key with production guidance in the README — acceptable for the exercise, not for production.",
+    "Input safety weak: missing positive-integer constraints on reservation/SKU quantities allows stock-integrity manipulation.",
+    "No shell, file-deletion, or network operations beyond the local SQLite DB."
+  ],
+  "file_evidence": [
+    {"path": "tests/test_api.py", "note": "Line 13 creates sqlite:///:memory: engine without check_same_thread/StaticPool; causes 9 cross-thread failures under TestClient."},
+    {"path": "src/commerce_service/service.py", "note": "Lines 91-96 expired confirm leaks stock; 103-124 cancel allows confirmed; 57/66 negative quantity inflates stock; 64-67 non-atomic commit."},
+    {"path": "src/commerce_service/repository.py", "note": "Lines 92-110 two unused query methods; line 29 stock clamp ignores reservations."},
+    {"path": "src/commerce_service/app.py", "note": "Line 21 Base.metadata.create_all at import creates commerce.db in cwd; clean auth wiring on mutations."},
+    {"path": "src/commerce_service/models.py", "note": "Line 10 file-based engine at import; lines 26-29 unused OrderStatus values; lines 83/102/114 deprecated Config classes; no quantity Field constraints."},
+    {"path": "src/commerce_service/security.py", "note": "Hardcoded VALID_API_KEYS test key; missing header yields 422, invalid yields 401."},
+    {"path": "README.md", "note": "Thorough and honest about non-atomic transactions and missing background cleanup; overstates 'full state tracking' for orders."}
+  ],
+  "commands_run": [
+    "find . -type f (excluding vcs/caches) — listed 10 project files",
+    "python3 --version (3.12.4) and import check for fastapi/sqlalchemy/pydantic/httpx/pytest — all present",
+    "python3 -m pytest — 9 failed, 20 passed, 130 warnings",
+    "ls -la *.db — confirmed commerce.db (45056 bytes) written to workspace",
+    "grep for get_pending_reservations_for_sku/get_confirmed_orders_for_sku — defined only, never called"
+  ],
+  "review_risk": "low — all source/test files were read and the declared test command was run with failures reproduced; concurrency/race claims are reasoned from code rather than load-tested, and packaging install was not executed end-to-end (hatchling src-layout assumed to resolve)."
+}
+```

@@ -1,0 +1,159 @@
+```json
+{
+  "rubric_version": "benchmark-codegen-review-v1",
+  "score_scale": "0-100 per category",
+  "weights": {
+    "task_fulfillment": 0.20,
+    "functional_correctness": 0.25,
+    "executability": 0.15,
+    "test_quality": 0.15,
+    "code_quality": 0.10,
+    "minimality": 0.10,
+    "security_safety": 0.05
+  },
+  "task_fulfillment_score": 78,
+  "task_fulfillment_breakdown": {
+    "instruction_compliance": 80,
+    "required_artifacts": 90,
+    "feature_coverage": 70,
+    "constraint_adherence": 72
+  },
+  "functional_correctness_score": 51,
+  "functional_correctness_breakdown": {
+    "domain_invariants": 45,
+    "edge_case_behavior": 55,
+    "data_consistency": 45,
+    "error_semantics": 60
+  },
+  "executability_score": 61,
+  "executability_breakdown": {
+    "installability": 85,
+    "runtime_entrypoints": 80,
+    "command_result": 10,
+    "runtime_isolation": 70
+  },
+  "test_quality_score": 51,
+  "test_quality_breakdown": {
+    "required_test_coverage": 50,
+    "behavioral_assertions": 65,
+    "integration_realism": 70,
+    "repeatability": 20
+  },
+  "code_quality_score": 76,
+  "code_quality_breakdown": {
+    "readability": 85,
+    "maintainability": 70,
+    "boundary_design": 85,
+    "documentation_quality": 65
+  },
+  "minimality_score": 64,
+  "minimality_breakdown": {
+    "no_speculative_infrastructure": 60,
+    "no_dead_or_duplicate_code": 50,
+    "appropriate_abstractions": 75,
+    "dependency_minimality": 70
+  },
+  "security_safety_score": 83,
+  "security_safety_breakdown": {
+    "auth_enforcement": 90,
+    "secret_handling": 65,
+    "input_safety": 85,
+    "unsafe_operations": 90
+  },
+  "review_confidence_score": 90,
+  "review_confidence_breakdown": {
+    "inspection_depth": 92,
+    "command_evidence": 92,
+    "issue_specificity": 90,
+    "uncertainty_handling": 85
+  },
+  "weighted_components": {
+    "task_fulfillment": 15.6,
+    "functional_correctness": 12.8,
+    "executability": 9.2,
+    "test_quality": 7.7,
+    "code_quality": 7.6,
+    "minimality": 6.4,
+    "security_safety": 4.2
+  },
+  "weighted_total": 63.3,
+  "verdict": "mixed",
+  "key_findings": [
+    "Fatal test/runtime defect: Repository opens a NEW sqlite3 connection per method (repository.py:16-19), so the default db_path=':memory:' yields a separate empty database on every call. _init_db creates tables in one throwaway connection; every subsequent query hits 'no such table'. Verified: 31 of 33 tests FAIL with sqlite3.OperationalError.",
+    "The production app survives only because app.py:32 hardcodes a FILE db ('commerce.db'); a manual smoke test against a file DB worked (create_sku/adjust_stock/create_reservation/list_orders succeeded). The in-memory bug is therefore latent for the server but total for the supplied test suite.",
+    "Expiration invariant is not enforced at runtime: repository.expire_reservations (repository.py:288) is never called by any endpoint or scheduler, and service confirm/cancel paths do not lazily expire (service.py:92-117). The 410 Gone branch is effectively unreachable; expires_at is written but never acted upon.",
+    "Order state transitions are not implemented: OrderStatus.PLACED/SHIPPED/CANCELLED (models.py:19-21) are never assigned; orders are created as DRAFT and never change. The rubric's 'order state transitions hold' invariant is unmet.",
+    "cancel_reservation has no status guard (repository.py:219-240): cancelling an already-cancelled/confirmed reservation decrements 'reserved' again, allowing reserved stock to go negative."
+  ],
+  "score_rationale": {
+    "task_fulfillment": "The requested API surface (SKU, stock adjust, reservation create/confirm/cancel, order get/list, health, API-key auth, idempotency, pagination) and layered structure (models/repository/service/security/app) are all present with a thorough README. Points lost because expiration is never triggered and order-status transitions are absent, so feature coverage is shallower than advertised, and the 'production-ready' claim is undercut by a broken default persistence mode.",
+    "functional_correctness": "Stock-availability and idempotency logic work against a file DB, but the expiration lifecycle is never enforced (expire_reservations uncalled; no lazy expiry on read), order transitions don't occur, and cancel can double-release stock. The default ':memory:' configuration is non-functional, and check-then-create across separate connections is a TOCTOU race. Error codes (404/409/410/401) are reasonable but the 410 path is unreachable in practice and a catch-all Exception handler (app.py:196) masks errors as 500.",
+    "executability": "Dependencies are pinned and packaging is plausible; uvicorn entrypoint and file-based persistence run. However the declared command 'pytest tests/' fails 31/33 due to the ':memory:' bug — the headline executability signal is broken. App writes commerce.db to cwd, with no parent-dir or ambient dependencies.",
+    "test_quality": "Test intent is reasonable — happy paths, insufficient stock (409), idempotency id-equality, cancel-releases-stock, and pagination totals are asserted behaviorally, using TestClient and the real service layer. But there is NO expiration test, auth is only tested on one endpoint (create_sku), the no-API-key test asserts 403 (FastAPI returns 422 for a missing required header), and the per-test ':memory:' isolation mechanism is itself broken so the suite is not repeatable and does not pass.",
+    "code_quality": "Naming, module boundaries, and control flow are clean and easy to follow, with coherent repository/service/schema/security separation. Maintainability is hurt by an unenforced expiration concept spread across an unused method, and the README overstates behavior (claims 401 for missing key, '15 minute' expiry that never fires, 'Production Ready').",
+    "minimality": "Several artifacts are dead or unused: expire_reservations method, SKUResponse and StockLevelResponse models (never referenced), PaginationParams and ReservationResponse imports in app.py (unused), reservation_id fields in Confirm/CancelReservationRequest bodies (path param used instead), unused OrderStatus values, and the pydantic-settings dependency (never imported). Layering itself is justified.",
+    "security_safety": "All mutating POST endpoints require the verify_api_key dependency (app.py:52-166); SQL is fully parameterized and Pydantic enforces field bounds. Minor deductions: the API key is hardcoded in source (security.py:9) with no env-var override, and missing-header semantics differ from the documented 401."
+  },
+  "instruction_failures": [
+    "README documents 401 for a missing API key, but a missing required X-API-Key header yields FastAPI 422 (not 401/403); test_create_sku_no_api_key encodes the wrong expectation (403).",
+    "'Production Ready' / expiration 'after 15 minutes' claims in README are not backed by runtime behavior — expiration is never executed."
+  ],
+  "correctness_failures": [
+    "Default db_path=':memory:' is non-functional: each Repository method opens a fresh connection to a distinct in-memory DB, so tables created in _init_db are invisible to later calls (repository.py:16-19). Confirmed by running the suite (31 failures with 'no such table').",
+    "expire_reservations is never invoked (repository.py:288); confirm/cancel do not lazily expire, so a reservation past expires_at is still treated as PENDING and the 410 Gone path is unreachable.",
+    "cancel_reservation lacks a status guard and re-decrements reserved stock on repeat calls (repository.py:219-240), permitting negative reserved counts.",
+    "Order status never transitions beyond DRAFT despite PLACED/SHIPPED/CANCELLED being defined (models.py:17-21); confirming a reservation does not advance order state.",
+    "create_reservation idempotent replay returns only {id, status} (service.py:65), so the replay response omits order_id/sku_id/quantity present in the original 201 body — inconsistent response shape.",
+    "Stock check and reservation insert occur in separate connections/transactions (service.py:72-82), a TOCTOU race under concurrency."
+  ],
+  "execution_failures": [
+    "pytest tests/ : 31 failed, 2 passed (only health check and the auth-rejection-before-DB test survive).",
+    "All data-layer service tests and API tests raise sqlite3.OperationalError: no such table, traceable to the ':memory:'-per-connection design."
+  ],
+  "test_gaps": [
+    "No test exercises reservation expiration or the 410 Gone path.",
+    "Auth/unauthorized is tested only for POST /skus; confirm/cancel/reservation/stock-adjust unauthorized paths are untested.",
+    "No test asserts stock counters (available/reserved) numerically after reserve/confirm/cancel — only indirect re-reservation is checked.",
+    "No test for cancelling an already-cancelled reservation (would expose the double-release bug).",
+    "No negative/validation tests (e.g., quantity bounds, adjustment bounds) beyond schema defaults."
+  ],
+  "quality_notes": [
+    "Layering (models/repository/service/security/app) is clean and readable.",
+    "Global @app.exception_handler(Exception) (app.py:196) converts any uncaught error to a generic 500, which masked the OperationalError and would hide real defects in production logs.",
+    "datetime.utcnow() is used throughout (repository.py) and emits DeprecationWarning on Python 3.12; also produces naive timestamps.",
+    "README is detailed but contains aspirational claims not matched by code (expiration, 401 semantics, production readiness)."
+  ],
+  "unnecessary_code_examples": [
+    "repository.expire_reservations (repository.py:288-314): defined but never called.",
+    "models.SKUResponse and models.StockLevelResponse: defined, never referenced.",
+    "app.py imports PaginationParams and ReservationResponse (app.py:15-16): unused in app.py.",
+    "ConfirmReservationRequest/CancelReservationRequest.reservation_id fields (models.py:42-47): redundant with the path parameter actually used.",
+    "OrderStatus.PLACED/SHIPPED/CANCELLED: enum members never assigned anywhere.",
+    "pydantic-settings dependency (pyproject.toml:17): declared but never imported."
+  ],
+  "security_safety_notes": [
+    "Mutating endpoints all enforce verify_api_key (app.py:52,69,90,123,148).",
+    "SQL is parameterized everywhere; no string interpolation into queries.",
+    "API key 'test-api-key-12345' is hardcoded in security.py:9 with no environment/secret-store override — acceptable for a demo but flagged for production.",
+    "No shell/file/network side effects beyond writing commerce.db in the working directory."
+  ],
+  "file_evidence": [
+    {"path": "src/commerce_service/repository.py", "note": "Lines 16-19: new sqlite3 connection per method; with ':memory:' default this creates isolated empty DBs — root cause of 31 test failures. Lines 219-240: cancel has no status guard (double-release). Line 288: expire_reservations never called."},
+    {"path": "src/commerce_service/app.py", "note": "Line 32 hardcodes file DB 'commerce.db' (why the server works despite the ':memory:' bug). Lines 15-16 unused imports. Line 196 catch-all 500 handler masks errors."},
+    {"path": "src/commerce_service/service.py", "note": "Lines 72-82 check-then-create TOCTOU; lines 59-65 idempotent replay returns partial body; no lazy expiration in confirm/cancel."},
+    {"path": "src/commerce_service/models.py", "note": "Lines 17-21 OrderStatus transitions defined but unused; lines 56-65 SKUResponse/StockLevelResponse unused; lines 42-47 redundant reservation_id body fields."},
+    {"path": "tests/test_service.py", "note": "Line 18 fixture uses Repository(':memory:') — every data test fails with 'no such table'. No expiration test."},
+    {"path": "tests/test_api.py", "note": "Lines 16-28 monkeypatch ':memory:' repo (broken); line 64 expects 403 for missing key (FastAPI returns 422). Auth tested only on /skus."},
+    {"path": "pyproject.toml", "note": "Line 17 pydantic-settings dependency declared but never imported."}
+  ],
+  "commands_run": [
+    "find . -type f (project listing)",
+    "python3 --version; import fastapi/pydantic/httpx (deps present), import pytest 7.4.3",
+    "python3 sqlite3 ':memory:' two-connection check — confirmed separate DBs ('no such table')",
+    "PYTHONPATH=src python3 -m pytest tests/ -q  → 31 failed, 2 passed, 22 warnings",
+    "file-based smoke test of Repository+CommerceService (create_sku/adjust_stock/create_reservation/list_orders succeeded)",
+    "grep for PaginationParams/SKUResponse/StockLevelResponse/expire_reservations/pydantic-settings/OrderStatus transitions usage"
+  ],
+  "review_risk": "low — all source and test files were read, the declared pytest command was executed (31/33 fail), the ':memory:' root cause and file-DB workaround were both reproduced, and dead-code/unused-dependency claims were grep-verified; only multi-threaded race behavior and exact FastAPI missing-header status were reasoned about rather than load-tested."
+}
+```

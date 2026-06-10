@@ -1,0 +1,150 @@
+All 27 tests pass. I've reviewed every source and test file and run the suite. Here is the benchmark evaluation.
+
+```json
+{
+  "rubric_version": "benchmark-codegen-review-v1",
+  "score_scale": "0-100 per category",
+  "weights": {
+    "task_fulfillment": 0.20,
+    "functional_correctness": 0.25,
+    "executability": 0.15,
+    "test_quality": 0.15,
+    "code_quality": 0.10,
+    "minimality": 0.10,
+    "security_safety": 0.05
+  },
+  "task_fulfillment_score": 88,
+  "task_fulfillment_breakdown": {
+    "instruction_compliance": 88,
+    "required_artifacts": 95,
+    "feature_coverage": 85,
+    "constraint_adherence": 85
+  },
+  "functional_correctness_score": 70,
+  "functional_correctness_breakdown": {
+    "domain_invariants": 60,
+    "edge_case_behavior": 72,
+    "data_consistency": 62,
+    "error_semantics": 88
+  },
+  "executability_score": 88,
+  "executability_breakdown": {
+    "installability": 82,
+    "runtime_entrypoints": 90,
+    "command_result": 95,
+    "runtime_isolation": 85
+  },
+  "test_quality_score": 88,
+  "test_quality_breakdown": {
+    "required_test_coverage": 90,
+    "behavioral_assertions": 88,
+    "integration_realism": 88,
+    "repeatability": 86
+  },
+  "code_quality_score": 86,
+  "code_quality_breakdown": {
+    "readability": 90,
+    "maintainability": 82,
+    "boundary_design": 90,
+    "documentation_quality": 80
+  },
+  "minimality_score": 84,
+  "minimality_breakdown": {
+    "no_speculative_infrastructure": 85,
+    "no_dead_or_duplicate_code": 84,
+    "appropriate_abstractions": 88,
+    "dependency_minimality": 78
+  },
+  "security_safety_score": 84,
+  "security_safety_breakdown": {
+    "auth_enforcement": 92,
+    "secret_handling": 70,
+    "input_safety": 80,
+    "unsafe_operations": 95
+  },
+  "review_confidence_score": 92,
+  "review_confidence_breakdown": {
+    "inspection_depth": 95,
+    "command_evidence": 92,
+    "issue_specificity": 92,
+    "uncertainty_handling": 88
+  },
+  "weighted_components": {
+    "task_fulfillment": 17.6,
+    "functional_correctness": 17.5,
+    "executability": 13.2,
+    "test_quality": 13.2,
+    "code_quality": 8.6,
+    "minimality": 8.4,
+    "security_safety": 4.2
+  },
+  "weighted_total": 82.7,
+  "verdict": "good",
+  "key_findings": [
+    "All 27 tests pass locally (pytest, 0.84s) against installed fastapi 0.110.0 / sqlalchemy 2.0.25; project is coherent and runnable.",
+    "Clean layered design (models/repository/service/security/app) with all requested endpoints, API-key auth on every mutation, idempotent reservation creation, and paginated orders.",
+    "Significant domain-invariant bug: expiring a reservation (service.py mark_expired_reservations and the lazy-expire path in confirm_reservation lines 102-106) sets status=EXPIRED but never restores SKU.available / decrements SKU.reserved, so expired holds permanently leak stock.",
+    "README overclaims 'Automatic reservation expiration (15 minutes)' — expiration is only lazy-on-confirm plus a manual expire_reservations() method that is not wired to any endpoint or scheduler.",
+    "Stock and reservation/order mutations span multiple separate commits (non-atomic), with no row locking or ORDER BY on pagination."
+  ],
+  "score_rationale": {
+    "task_fulfillment": "All required artifacts and the full endpoint surface (skus, stock adjust, reservation create/confirm/cancel, orders pagination, health) are present with API-key auth and idempotency. Minor shortfall: 'automatic' expiration is not actually automatic, and a stray commerce.db runtime artifact is left in the workspace.",
+    "functional_correctness": "Reserve/confirm/cancel conserve stock correctly on the happy paths and error semantics are good (404/409/410/400/401/422). Dropped substantially because expiration never releases reserved stock back to available (service.py:113-124 and 102-106), multi-step writes are non-atomic, and pagination lacks a deterministic ORDER BY.",
+    "executability": "Dependencies are pinned and packaging uses hatchling with a src layout; uvicorn entrypoint and sqlite default are usable. Full test suite passes. Tests import via `src.commerce_service` namespace rather than the installed `commerce_service` package, a slight install/layout inconsistency.",
+    "test_quality": "Coverage spans happy paths, insufficient stock, idempotent retry, expiration, auth, and pagination across both service and API layers with real sqlite persistence, and assertions check stock counts and status transitions, not just HTTP codes. Gap: no test asserts stock is restored after expiration (which is why the leak bug went uncaught).",
+    "code_quality": "Readable names, coherent module boundaries, and a clean repository/service split. Maintainability slightly weakened because stock mutation logic is spread across service methods and the expiration invariant is incompletely implemented; no docstrings and a small README inaccuracy.",
+    "minimality": "Lean and free of speculative infrastructure (no queues/workers/CLIs). pytest-asyncio is declared and asyncio_mode='auto' is set but there are no async tests, making it an unjustified dependency; expire_reservations is unexposed.",
+    "security_safety": "Every mutating endpoint depends on verify_api_key and inputs are validated via Pydantic with ORM-parameterized queries. Lowered for a hardcoded dev API key in source with no env-based loading, and adjust_stock permits negative available with no floor.",
+    "review_confidence": "All eight source/test files were read and the declared test command plus a dependency check were executed with captured results; findings cite specific files and lines."
+  },
+  "instruction_failures": [
+    "README claims automatic 15-minute expiration, but no scheduler/background task or endpoint triggers expire_reservations() — only confirm-time lazy checks exist."
+  ],
+  "correctness_failures": [
+    "Expired reservations leak inventory: mark_expired_reservations (repository.py:113-124) and the lazy-expire branch in confirm_reservation (service.py:102-106) change status to EXPIRED without incrementing SKU.available or decrementing SKU.reserved.",
+    "create_reservation and confirm_reservation perform the row write and the stock adjustment in separate commits (service.py:68-83, 108-124); a crash between commits leaves stock and reservation/order state inconsistent.",
+    "get_orders pagination has no ORDER BY (repository.py:108), so offset/limit ordering is implementation-defined and not stable across backends.",
+    "adjust_stock allows available to go negative (repository.py:39-44); a large negative quantity yields negative stock with no validation.",
+    "No concurrency control (row locking / SELECT FOR UPDATE); the availability check then decrement in create_reservation can oversell under concurrent requests."
+  ],
+  "execution_failures": [
+    "Tests rely on the `src.commerce_service` import path rather than the packaged `commerce_service` module that `pip install -e` would expose; an installed-only environment would not resolve the test imports without the source tree on sys.path."
+  ],
+  "test_gaps": [
+    "No test verifies stock is released back to available after expiration, allowing the stock-leak bug to pass unnoticed (test_expire_reservations only asserts status and count).",
+    "Auth is only negatively tested on POST /skus; confirm/cancel/reservations/orders are not tested for missing/invalid keys.",
+    "No test for negative-going stock adjustments or for idempotency-key reuse with conflicting sku/quantity payloads."
+  ],
+  "quality_notes": [
+    "datetime.utcnow() is used throughout (service.py:66,102,150) and emits deprecation warnings on modern Python; timezone-aware datetimes would be cleaner.",
+    "Missing API key returns 422 (FastAPI Header(...) required) rather than 401; tests encode this behavior but it is arguably the wrong auth semantic.",
+    "No docstrings; the code is self-explanatory but the README's expiration claim is not accurate."
+  ],
+  "unnecessary_code_examples": [
+    "dev dependency pytest-asyncio==0.23.1 with asyncio_mode='auto' but no async tests in the suite.",
+    "service.expire_reservations()/repository.mark_expired_reservations() are implemented and tested but not exposed via any endpoint or background job."
+  ],
+  "security_safety_notes": [
+    "Hardcoded API key VALID_API_KEYS = {\"sk-dev-test-key-12345\"} in security.py with no environment-variable override; acceptable as a dev default but not production-minded.",
+    "Mutating endpoints all enforce verify_api_key (app.py), which is the requested control.",
+    "Inputs validated with Pydantic constraints and queries use SQLAlchemy ORM parameterization, avoiding injection.",
+    "No shell/file/network side effects beyond the intended sqlite persistence."
+  ],
+  "file_evidence": [
+    {"path": "src/commerce_service/repository.py", "note": "mark_expired_reservations (113-124) sets EXPIRED status only; no stock restoration. get_orders (104-111) has no ORDER BY. adjust_stock (39-44) does not floor available at 0."},
+    {"path": "src/commerce_service/service.py", "note": "create_reservation (48-83) and confirm_reservation (85-124) split row writes and stock adjustment across separate commits; lazy-expire branch (102-106) does not release stock. utcnow() used at 66/102/150."},
+    {"path": "src/commerce_service/app.py", "note": "All mutations depend on verify_api_key; appropriate status codes mapped (409/410/400/404). sqlite default DATABASE_URL with check_same_thread handling."},
+    {"path": "src/commerce_service/security.py", "note": "Hardcoded dev API key; missing header yields 422 via Header(...)."},
+    {"path": "tests/test_service.py", "note": "Strong behavioral assertions on available/reserved counts and status transitions; test_expire_reservations checks only status, not stock restoration."},
+    {"path": "tests/test_api.py", "note": "TestClient integration tests with file-backed sqlite, create/drop per test; covers auth, insufficient stock, idempotency, pagination."},
+    {"path": "pyproject.toml", "note": "Pinned deps and hatchling build; declares pytest-asyncio + asyncio_mode='auto' though no async tests exist."},
+    {"path": "commerce.db", "note": "Leftover runtime sqlite artifact present in the workspace; not used by tests (which use test_commerce.db / in-memory)."}
+  ],
+  "commands_run": [
+    "find . -type f (excluding caches) — listed project layout",
+    "python3 -c 'import fastapi, sqlalchemy, httpx, pytest' — confirmed deps (fastapi 0.110.0, sqlalchemy 2.0.25)",
+    "python3 -m pytest -q — 27 passed, 87 warnings in 0.84s"
+  ],
+  "review_risk": "low — all source and test files were read and the test suite plus a dependency check ran successfully; installed dependency versions differ slightly from the pins but are compatible, and concurrency/atomicity concerns were reasoned about statically rather than load-tested."
+}
+```

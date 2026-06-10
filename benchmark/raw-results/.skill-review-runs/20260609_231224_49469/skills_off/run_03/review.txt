@@ -1,0 +1,159 @@
+I have enough evidence. The core findings: the confirm-reservation workflow is completely broken by a timezone-aware/naive datetime mismatch (every confirm raises `TypeError` → HTTP 500), and the API test fixture is misconfigured for threaded SQLite, so the suite fails heavily (23 failed, 16 errors, 16 passed).
+
+```json
+{
+  "rubric_version": "benchmark-codegen-review-v1",
+  "score_scale": "0-100 per category",
+  "weights": {
+    "task_fulfillment": 0.20,
+    "functional_correctness": 0.25,
+    "executability": 0.15,
+    "test_quality": 0.15,
+    "code_quality": 0.10,
+    "minimality": 0.10,
+    "security_safety": 0.05
+  },
+  "task_fulfillment_score": 80,
+  "task_fulfillment_breakdown": {
+    "instruction_compliance": 80,
+    "required_artifacts": 90,
+    "feature_coverage": 80,
+    "constraint_adherence": 70
+  },
+  "functional_correctness_score": 44,
+  "functional_correctness_breakdown": {
+    "domain_invariants": 38,
+    "edge_case_behavior": 45,
+    "data_consistency": 45,
+    "error_semantics": 48
+  },
+  "executability_score": 65,
+  "executability_breakdown": {
+    "installability": 85,
+    "runtime_entrypoints": 85,
+    "command_result": 20,
+    "runtime_isolation": 70
+  },
+  "test_quality_score": 55,
+  "test_quality_breakdown": {
+    "required_test_coverage": 80,
+    "behavioral_assertions": 75,
+    "integration_realism": 35,
+    "repeatability": 30
+  },
+  "code_quality_score": 79,
+  "code_quality_breakdown": {
+    "readability": 85,
+    "maintainability": 75,
+    "boundary_design": 85,
+    "documentation_quality": 70
+  },
+  "minimality_score": 74,
+  "minimality_breakdown": {
+    "no_speculative_infrastructure": 85,
+    "no_dead_or_duplicate_code": 60,
+    "appropriate_abstractions": 80,
+    "dependency_minimality": 70
+  },
+  "security_safety_score": 90,
+  "security_safety_breakdown": {
+    "auth_enforcement": 90,
+    "secret_handling": 90,
+    "input_safety": 85,
+    "unsafe_operations": 95
+  },
+  "review_confidence_score": 90,
+  "review_confidence_breakdown": {
+    "inspection_depth": 92,
+    "command_evidence": 90,
+    "issue_specificity": 90,
+    "uncertainty_handling": 85
+  },
+  "weighted_components": {
+    "task_fulfillment": 16.0,
+    "functional_correctness": 11.0,
+    "executability": 9.8,
+    "test_quality": 8.3,
+    "code_quality": 7.9,
+    "minimality": 7.4,
+    "security_safety": 4.5
+  },
+  "weighted_total": 64.8,
+  "verdict": "mixed",
+  "key_findings": [
+    "CRITICAL: confirm_reservation always raises TypeError ('can't compare offset-naive and offset-aware datetimes'). expires_at is stored tz-aware (datetime.now(timezone.utc)) into a naive SQLAlchemy DateTime column and round-trips back naive, then is compared to datetime.now(timezone.utc) in service.py:91. Every confirm — valid or expired — 500s. The reserve→confirm→order workflow is broken end-to-end.",
+    "Running `pytest` yields 23 failed, 16 errors, 16 passed. The core happy-path, confirm, expiration, and most API tests do not pass.",
+    "API test fixture (tests/test_api.py:12-19) uses default in-memory SQLite without StaticPool/check_same_thread=False; TestClient runs handlers in a worker thread, producing 'SQLite objects created in a thread can only be used in that same thread' and 'no such table: skus'. Nearly all DB-touching API tests error.",
+    "Expiration leaks stock: when confirm detects an expired reservation (service.py:91-95) it sets state EXPIRED but never restores the decremented stock, unlike cancel (service.py:122). Reserved stock is lost permanently.",
+    "Domain invariant intact on the working paths: reserve decrements stock, cancel restores it, idempotent retry returns the same reservation, post-cancel key reuse is rejected.",
+    "Clean layering (models / repository / service / app / security) and full auth enforcement on mutating endpoints are genuine strengths."
+  ],
+  "score_rationale": {
+    "task_fulfillment": "All requested artifacts and the full endpoint surface (SKUs, stock adjust, reservation create/confirm/cancel, paginated orders, idempotency, API-key auth) are present and match the README. Score held back because 'production-grade' is claimed while a core endpoint is non-functional.",
+    "functional_correctness": "Insufficient-stock, idempotency, auth, and pagination behave correctly, but the confirmation path is entirely broken by the tz-aware/naive datetime bug (service.py:91), expiration both 500s and leaks stock, and reserve performs two separate commits (service.py:69-73) so it is not atomic.",
+    "executability": "Packaging and entrypoints are plausible and importable, but the declared test command fails heavily (23 failed / 16 errors) and the confirm endpoint 500s at runtime; app.py also creates commerce.db in cwd at import time as a side effect.",
+    "test_quality": "Tests cover every required scenario and assert real behavior (states, stock restoration, ids), but the API integration fixture is misconfigured for threaded SQLite so those tests error rather than run, and the expiration test sleeps 1.1s against a 1-minute TTL — it would not actually expire and only 'fails' via the datetime bug. Suite is not repeatable/green.",
+    "code_quality": "Readable, well-separated modules with clear names and coherent boundaries. README is clear though it overstates readiness. Minor: get_orders cursor typed as `int = None` instead of Optional.",
+    "minimality": "No speculative queues/workers/migrations. Deductions for dead code: update_order_state, get_orders_by_reservation, get_order, OrderState.COMPLETED/CANCELLED, and ErrorResponse are unused; orders are created PENDING and never transition. python-dotenv is declared but never imported/used.",
+    "security_safety": "All mutating endpoints depend on verify_api_key; the key is read from env with no hardcoded secret; Pydantic validates inputs and SQLAlchemy ORM avoids injection; no unsafe shell/file/network operations.",
+    "review_confidence": "Read every source and test file and ran the full suite plus targeted failing tests, capturing the exact tracebacks; root causes are pinned to specific lines. Minor residual uncertainty only about deployment-time behavior beyond the test harness."
+  },
+  "instruction_failures": [
+    "Claims 'production-grade' but the reservation confirmation endpoint is non-functional, contradicting the stated feature set.",
+    "README documents reservation expiration as a feature, yet expiration handling 500s and leaks stock."
+  ],
+  "correctness_failures": [
+    "service.py:91 — tz-aware vs naive datetime comparison raises TypeError on every confirm_reservation call (verified via test_create/confirm/expired failures).",
+    "service.py:91-95 — expired reservation sets EXPIRED state but never restores reserved stock (stock leak).",
+    "service.py:69-73 — create_reservation commits the reservation and the stock decrement in two separate transactions; a failure between them leaves inconsistent state.",
+    "Orders are created in OrderState.PENDING on confirm and never advanced to COMPLETED, so order state orchestration is effectively a no-op."
+  ],
+  "execution_failures": [
+    "pytest: 23 failed, 16 errors, 16 passed.",
+    "tests/test_api.py fixture: in-memory SQLite + threaded TestClient without StaticPool/check_same_thread=False -> 'SQLite objects created in a thread can only be used in that same thread' and 'no such table: skus'.",
+    "tests/test_service.py confirm/create reservation tests fail with TypeError from the datetime comparison."
+  ],
+  "test_gaps": [
+    "No passing integration test actually exercises a confirm or pagination over the HTTP layer due to the broken fixture.",
+    "Expiration test (test_confirm_expired_reservation_fails) sleeps 1.1s against a 60s TTL; it cannot truly exercise expiry and currently only errors via the datetime bug.",
+    "No test asserts stock is (or is not) restored on expiration — the stock-leak bug is uncovered.",
+    "No test for the API_KEY-not-configured 500 path or for unauthorized confirm/cancel/stock endpoints."
+  ],
+  "quality_notes": [
+    "Good separation of concerns across models/repository/service/app/security.",
+    "get_orders signature uses `cursor: int = None` (app.py:147) instead of Optional[int].",
+    "Pagination limit validation silently coerces out-of-range limits to 10 (app.py:149) rather than returning 422, which masks client errors.",
+    "models.Config class-based config triggers Pydantic v2 deprecation warnings; ConfigDict would be cleaner."
+  ],
+  "unnecessary_code_examples": [
+    "repository.update_order_state, get_orders_by_reservation, and get_order are never called.",
+    "OrderState.COMPLETED and OrderState.CANCELLED are defined but never used; orders never leave PENDING.",
+    "models.ErrorResponse schema is defined but never referenced.",
+    "python-dotenv is a declared dependency but is never imported or invoked."
+  ],
+  "security_safety_notes": [
+    "All mutating endpoints enforce X-API-Key via Depends(verify_api_key) (app.py:52,70,90,113,133).",
+    "API key sourced from os.getenv('API_KEY'); no hardcoded production secret (test key only in tests).",
+    "Pydantic field constraints validate untrusted input; ORM queries avoid SQL injection.",
+    "GET /orders is unauthenticated by design (read-only), which is acceptable but worth noting."
+  ],
+  "file_evidence": [
+    {"path": "src/commerce_service/service.py", "note": "Line 68 stores tz-aware expires_at; line 91 compares datetime.now(timezone.utc) to the naive round-tripped value -> TypeError on every confirm. Lines 91-95 set EXPIRED without restoring stock (leak)."},
+    {"path": "src/commerce_service/models.py", "note": "DateTime columns (expires_at line 43) are naive; tz-aware values are stripped on persistence, causing the comparison bug. OrderState.COMPLETED/CANCELLED and ErrorResponse are unused."},
+    {"path": "src/commerce_service/repository.py", "note": "Sound pagination via limit+1 (lines 101-116). update_order_state/get_orders_by_reservation/get_order are dead code."},
+    {"path": "src/commerce_service/app.py", "note": "Creates engine + Base.metadata.create_all at import (commerce.db side effect, line 30). confirm endpoint (111-123) does not catch the TypeError, so it surfaces as HTTP 500."},
+    {"path": "src/commerce_service/security.py", "note": "verify_api_key reads API_KEY from env and 403s on mismatch, 500s when unset; clean and injection-safe."},
+    {"path": "tests/test_api.py", "note": "Fixture (12-31) uses in-memory SQLite without StaticPool; threaded TestClient triggers cross-thread SQLite errors and missing-table failures."},
+    {"path": "tests/test_service.py", "note": "Confirm/create reservation tests fail with TypeError; expiration test sleeps 1.1s against a 1-minute TTL (lines 105-114)."},
+    {"path": "pyproject.toml", "note": "Pinned deps and hatchling packaging; python-dotenv (line 16) declared but unused."}
+  ],
+  "commands_run": [
+    "find . -type f (project file listing)",
+    "python3 --version; python3 -c 'import fastapi, sqlalchemy, httpx, pytest' (deps present, Python 3.12.4)",
+    "PYTHONPATH=src python3 -m pytest -q (23 failed, 16 errors, 16 passed)",
+    "PYTHONPATH=src python3 -m pytest tests/test_service.py::TestReservation::... (captured TypeError on datetime comparison)",
+    "PYTHONPATH=src python3 -m pytest tests/test_api.py::TestSKU::test_create_duplicate_sku_fails (captured thread/no-such-table errors)"
+  ],
+  "review_risk": "Low: all source and test files were read and the full suite plus targeted tests were executed with dependencies present (Python 3.12, not the pinned 3.11); root causes are confirmed from captured tracebacks. Tests were run via PYTHONPATH rather than an editable install, but that does not affect the observed failures."
+}
+```

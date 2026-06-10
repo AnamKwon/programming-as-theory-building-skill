@@ -1,0 +1,156 @@
+I have enough evidence. I inspected every source and test file, reproduced the core defect in isolation, and ran the full suite (36 failed, 3 passed). The findings are conclusive.
+
+The decisive issue: `Repository._get_conn()` opens a fresh `sqlite3.connect(":memory:")` on every call, and each `:memory:` connection is a *separate* database. Tables created in `_init_db()` vanish when that connection closes, so every subsequent operation raises `no such table`. Since `app.py:34` and all test fixtures use the default `":memory:"`, the entire application is non-functional as shipped — only the 3 tests that never touch the DB (health, 401, 403) pass.
+
+```json
+{
+  "rubric_version": "benchmark-codegen-review-v1",
+  "score_scale": "0-100 per category",
+  "weights": {
+    "task_fulfillment": 0.20,
+    "functional_correctness": 0.25,
+    "executability": 0.15,
+    "test_quality": 0.15,
+    "code_quality": 0.10,
+    "minimality": 0.10,
+    "security_safety": 0.05
+  },
+  "task_fulfillment_score": 70,
+  "task_fulfillment_breakdown": {
+    "instruction_compliance": 70,
+    "required_artifacts": 85,
+    "feature_coverage": 80,
+    "constraint_adherence": 45
+  },
+  "functional_correctness_score": 27,
+  "functional_correctness_breakdown": {
+    "domain_invariants": 22,
+    "edge_case_behavior": 24,
+    "data_consistency": 8,
+    "error_semantics": 55
+  },
+  "executability_score": 48,
+  "executability_breakdown": {
+    "installability": 70,
+    "runtime_entrypoints": 28,
+    "command_result": 8,
+    "runtime_isolation": 85
+  },
+  "test_quality_score": 65,
+  "test_quality_breakdown": {
+    "required_test_coverage": 82,
+    "behavioral_assertions": 80,
+    "integration_realism": 75,
+    "repeatability": 22
+  },
+  "code_quality_score": 68,
+  "code_quality_breakdown": {
+    "readability": 80,
+    "maintainability": 75,
+    "boundary_design": 62,
+    "documentation_quality": 55
+  },
+  "minimality_score": 76,
+  "minimality_breakdown": {
+    "no_speculative_infrastructure": 85,
+    "no_dead_or_duplicate_code": 68,
+    "appropriate_abstractions": 82,
+    "dependency_minimality": 70
+  },
+  "security_safety_score": 80,
+  "security_safety_breakdown": {
+    "auth_enforcement": 85,
+    "secret_handling": 62,
+    "input_safety": 85,
+    "unsafe_operations": 90
+  },
+  "review_confidence_score": 91,
+  "review_confidence_breakdown": {
+    "inspection_depth": 95,
+    "command_evidence": 95,
+    "issue_specificity": 90,
+    "uncertainty_handling": 85
+  },
+  "weighted_components": {
+    "task_fulfillment": 14.0,
+    "functional_correctness": 6.8,
+    "executability": 7.2,
+    "test_quality": 9.8,
+    "code_quality": 6.8,
+    "minimality": 7.6,
+    "security_safety": 4.0
+  },
+  "weighted_total": 56.1,
+  "verdict": "mixed",
+  "key_findings": [
+    "FATAL: Repository._get_conn() reconnects to ':memory:' on every call (repository.py:16-19); each SQLite ':memory:' connection is an independent database, so tables created in _init_db() are gone before the first operation. Reproduced standalone: create_sku raises 'OperationalError: no such table: skus'.",
+    "Full suite is effectively red: 36 failed, 3 passed (only health, 401-unauth, 403-invalid-key pass because they never reach the DB).",
+    "The same ':memory:' default is hardcoded for the live app (app.py:34), so the deployed service 500s on every data-bearing endpoint, not just tests.",
+    "tests/test_api.py reset_db rebinds the test module's own `repo`/`service` globals (test_api.py:11-17), not app.py's captured `service`; even with the DB fixed it would not reset app state between tests.",
+    "Design is otherwise coherent (repository/service/schema/security separation, full endpoint set, sensible HTTP status mapping), so the project is recoverable with a small persistence fix — hence 'mixed' rather than 'poor'."
+  ],
+  "score_rationale": {
+    "task_fulfillment": "All requested artifacts and the full API surface exist (SKUs, reservations, confirm, cancel, paginated orders, API-key auth, health) and the README documents the contract. constraint_adherence is the weak point: the 'production-minded' expectation is badly violated by a non-functional persistence layer, though fresh-workspace/no-parent-reads constraints are respected.",
+    "functional_correctness": "Business logic reads plausibly, but nothing executes because no data persists (data_consistency near-zero). Independent real invariant gaps remain even after a DB fix: expired reservations are only detected lazily on confirm and their reserved stock is never released back to availability (service.py:144-149); adjust_stock guards stock>=0 but not stock>=reserved (service.py:61-63), allowing negative availability; the idempotent confirm path returns confirmed_at=None against a non-Optional ConfirmReservationResponse.confirmed_at (service.py:137 vs models.py:62), which would 500 on response validation. error_semantics (401/403/404/409/410 mapping) is well done but unreachable.",
+    "executability": "Dependencies/packaging look installable and imports resolve; uvicorn entrypoint exists. But command_result is the dominant signal and the suite is overwhelmingly red. runtime_isolation is genuinely good — no parent/sibling/ambient dependencies.",
+    "test_quality": "Tests are well-designed in intent: they cover happy paths, insufficient stock (409), idempotent create/confirm, expiration, auth (401/403), cancellation state transitions, and pagination, with behavioral assertions on reserved/available counts and stock release via a realistic TestClient. Repeatability is broken: the reset_db fixture targets the wrong globals and the underlying DB never works, so the suite cannot pass repeatably.",
+    "code_quality": "Readable names and clean module boundaries (models/repository/service/security/app). Maintainability is reasonable. boundary_design is dinged because the service reaches into the repository's private _get_conn() (service.py:211-223). documentation_quality is dinged because README claims working features and a 'production' posture the code does not deliver.",
+    "minimality": "No speculative queues/workers/migrations/CLIs; the repository abstraction is justified. Minor dead code/deps: ErrorResponse model is defined but never used (models.py:83), and python-dotenv is declared as a dependency (pyproject.toml:18) but never imported.",
+    "security_safety": "All mutating endpoints depend on APIKeyValidator while GETs are open, which is appropriate; inputs are validated via Pydantic and SQL is parameterized throughout; no unsafe shell/file/network ops. secret_handling is dinged for the hardcoded default key 'test-key-123' baked into APIKeyValidator (security.py:7) with no env override path.",
+    "review_confidence": "All 6 source files and both test files were read; the suite was executed and the root-cause bug reproduced in isolation. Findings cite concrete files/lines. Remaining uncertainty is low and limited to behaviors masked by the DB failure."
+  },
+  "instruction_failures": [
+    "'Production-minded' / runnable service expectation violated: default ':memory:' wiring makes the live app non-functional for every data endpoint (app.py:34, repository.py:16-19).",
+    "Declared test command `pytest` does not pass (36 failed / 3 passed)."
+  ],
+  "correctness_failures": [
+    "':memory:' per-connection isolation breaks all persistence — reproduced: create_sku -> OperationalError: no such table: skus (repository.py:16-19).",
+    "Expired reservations never release their reserved stock; expiration is only evaluated lazily inside confirm_reservation, so abandoned reservations permanently subtract from availability (service.py:144-149).",
+    "adjust_stock permits reducing stock below the reserved quantity, producing negative available (service.py:61-66, _format_sku available = stock - reserved).",
+    "Idempotent confirm returns confirmed_at=None but ConfirmReservationResponse.confirmed_at is a required datetime, causing a response-validation 500 on the repeated-confirm path (service.py:126-137, models.py:54-62)."
+  ],
+  "execution_failures": [
+    "pytest: 36 failed, 3 passed in ~2s; failures are sqlite3.OperationalError 'no such table' across service and API tests.",
+    "Standalone reproduction: Repository(':memory:').create_sku('X',10) -> OperationalError: no such table: skus."
+  ],
+  "test_gaps": [
+    "No test catches the ':memory:' persistence failure as a defect because every test shares the same broken assumption (so the suite fails outright rather than isolating the cause).",
+    "reset_db fixture does not actually reset the app's repository/service; cross-test state isolation for the API layer is not real (test_api.py:9-18).",
+    "No test exercises the idempotent-confirm response shape (confirmed_at=None) end-to-end against the response_model, so the latent 500 is unobserved.",
+    "No test for adjust_stock reducing below reserved, nor for expired-reservation stock release."
+  ],
+  "quality_notes": [
+    "Service layer reaches into Repository._get_conn() directly (service.py:211-223), breaking the otherwise clean repository boundary.",
+    "datetime.utcnow() is used throughout (deprecated in 3.12); functional but flagged for a 3.11+ target.",
+    "README overstates maturity ('monitoring', 'production') relative to a single in-memory store that does not persist."
+  ],
+  "unnecessary_code_examples": [
+    "models.py:83 ErrorResponse — defined but never referenced by any route or handler.",
+    "pyproject.toml:18 python-dotenv — declared dependency with no import anywhere in src/.",
+    "models.py ReservationResponse.idempotency_key is surfaced in API responses though it is an internal control field (minor leakage, not strictly needed in the response contract)."
+  ],
+  "security_safety_notes": [
+    "All POST/PATCH/DELETE routes enforce Depends(APIKeyValidator); GET routes are intentionally open (app.py:45-185).",
+    "Default API key 'test-key-123' is hardcoded with no environment-variable override (security.py:7); acceptable for a demo but should be externalized.",
+    "SQL is fully parameterized and inputs are validated via Pydantic (Field constraints in models.py); no injection or unsafe shell/file/network operations observed."
+  ],
+  "file_evidence": [
+    {"path": "src/commerce_service/repository.py", "note": "Lines 16-19: _get_conn() opens a new sqlite3.connect(self.db_path) per call; with ':memory:' each connection is a distinct DB, so _init_db tables (21-69) are unreachable by later calls. Root cause of total failure."},
+    {"path": "src/commerce_service/app.py", "note": "Line 34: Repository(db_path=':memory:') wires the broken default into the live app; every data endpoint 500s. Status-code mapping (105-175) and auth dependency usage are otherwise correct."},
+    {"path": "src/commerce_service/service.py", "note": "Sound business logic, but confirm idempotent path returns confirmed_at=None (137) against a required field; expiration only checked lazily (144-149); adjust_stock lacks reserved floor (61-66); private _get_conn() reach-in (211-223)."},
+    {"path": "src/commerce_service/security.py", "note": "APIKeyValidator enforces 401 (missing) and 403 (invalid); default key 'test-key-123' hardcoded (line 7)."},
+    {"path": "src/commerce_service/models.py", "note": "Pydantic schemas with validation constraints; ErrorResponse (83) unused; ConfirmReservationResponse.confirmed_at required datetime (62) conflicts with None idempotent path."},
+    {"path": "tests/test_api.py", "note": "reset_db (9-18) rebinds test-module globals, not app.py's service; cannot reset app state. Only Health/401/403 tests pass."},
+    {"path": "tests/test_service.py", "note": "Comprehensive behavioral coverage (stock, idempotency, expiration, cancellation, pagination) but all DB-touching tests fail due to the ':memory:' defect."},
+    {"path": "pyproject.toml", "note": "Reasonable deps and pytest config; python-dotenv (18) is declared but unused."}
+  ],
+  "commands_run": [
+    "find . -type f (excluding caches) — listed 11 project files",
+    "python3 --version (3.12.4); python3 -c 'import fastapi, httpx, pytest' -> deps present",
+    "python3 -c reproduce: Repository(':memory:').create_sku(...) -> OperationalError: no such table: skus",
+    "python3 -m pytest -q -> 36 failed, 3 passed in ~2s",
+    "python3 -m pytest -q -rA -> passing tests = Health/test_create_sku_unauthorized/test_create_sku_invalid_key"
+  ],
+  "review_risk": "low — all source and test files were read, dependencies were available, the suite was run, and the root-cause defect was reproduced in isolation; latent bugs beyond the persistence failure (expiration stock release, idempotent confirmed_at, adjust below reserved) are inferred from code since the DB failure masks them at runtime."
+}
+```

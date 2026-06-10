@@ -1,0 +1,158 @@
+I've completed a thorough review. Key findings: the service/domain layer is solid, but the API test suite is wired incorrectly (`dependency_overrides` keyed on instances that aren't dependency callables), so API tests run against a persistent file DB and 8/15 fail and are non-repeatable; and `confirm_reservation` leaves orders stuck in `PENDING` (passes a stale detached `reservation.status` instead of `CONFIRMED`).
+
+```json
+{
+  "rubric_version": "benchmark-codegen-review-v1",
+  "score_scale": "0-100 per category",
+  "weights": {
+    "task_fulfillment": 0.20,
+    "functional_correctness": 0.25,
+    "executability": 0.15,
+    "test_quality": 0.15,
+    "code_quality": 0.10,
+    "minimality": 0.10,
+    "security_safety": 0.05
+  },
+  "task_fulfillment_score": 82,
+  "task_fulfillment_breakdown": {
+    "instruction_compliance": 85,
+    "required_artifacts": 90,
+    "feature_coverage": 82,
+    "constraint_adherence": 70
+  },
+  "functional_correctness_score": 69,
+  "functional_correctness_breakdown": {
+    "domain_invariants": 55,
+    "edge_case_behavior": 80,
+    "data_consistency": 55,
+    "error_semantics": 85
+  },
+  "executability_score": 60,
+  "executability_breakdown": {
+    "installability": 88,
+    "runtime_entrypoints": 85,
+    "command_result": 30,
+    "runtime_isolation": 35
+  },
+  "test_quality_score": 54,
+  "test_quality_breakdown": {
+    "required_test_coverage": 80,
+    "behavioral_assertions": 65,
+    "integration_realism": 45,
+    "repeatability": 25
+  },
+  "code_quality_score": 82,
+  "code_quality_breakdown": {
+    "readability": 85,
+    "maintainability": 78,
+    "boundary_design": 85,
+    "documentation_quality": 82
+  },
+  "minimality_score": 73,
+  "minimality_breakdown": {
+    "no_speculative_infrastructure": 72,
+    "no_dead_or_duplicate_code": 65,
+    "appropriate_abstractions": 85,
+    "dependency_minimality": 70
+  },
+  "security_safety_score": 85,
+  "security_safety_breakdown": {
+    "auth_enforcement": 95,
+    "secret_handling": 60,
+    "input_safety": 88,
+    "unsafe_operations": 95
+  },
+  "review_confidence_score": 93,
+  "review_confidence_breakdown": {
+    "inspection_depth": 95,
+    "command_evidence": 95,
+    "issue_specificity": 92,
+    "uncertainty_handling": 88
+  },
+  "weighted_components": {
+    "task_fulfillment": 16.4,
+    "functional_correctness": 17.3,
+    "executability": 9.0,
+    "test_quality": 8.1,
+    "code_quality": 8.2,
+    "minimality": 7.3,
+    "security_safety": 4.3
+  },
+  "weighted_total": 70.5,
+  "verdict": "mixed",
+  "key_findings": [
+    "API test harness is broken: app.dependency_overrides[repo]/[service] (test_api.py:13-14) key the overrides on Repository/Service INSTANCES, not on dependency callables. Endpoints reference the module-global `service` (app.py:27) bound to a file DB, so overrides are inert and API tests hit sqlite:///commerce.db.",
+    "Test suite does not pass: pytest yields 7-8 FAILED in tests/test_api.py (KeyError 'id' / 400) because reused SKU code 'PROD-001' collides on the unique constraint in the shared persistent commerce.db; failures worsen on re-run (8 failed on second run) — non-repeatable.",
+    "Domain bug: confirm_reservation produces an order stuck in PENDING with confirmed_at=None. service.py:93 calls update_order_status(order.id, reservation.status) using the detached reservation's stale PENDING status instead of OrderStatus.CONFIRMED. Verified at runtime: returned and persisted order.status == OrderStatus.PENDING.",
+    "Service-layer logic is otherwise sound: stock reserve/release, idempotent retry, expiration check, and cancel-with-release all pass (tests/test_service.py, 11/11 green).",
+    "Runtime isolation violation: Repository() default db_url='sqlite:///commerce.db' (repository.py:11) writes a DB file into the cwd at import time; running the tests created commerce.db in the workspace.",
+    "Dead code / unused deps: pydantic-settings dependency never used; create_engine imported unused in models.py:6; select imported unused in repository.py:4; get_order_by_reservation and expire_pending_reservations are never called/wired."
+  ],
+  "score_rationale": {
+    "task_fulfillment": "All requested files, endpoints, and the documented API surface are present and match the README contract. Loses points on production-mindedness: hardcoded API key and a default file-DB path that pollutes cwd.",
+    "functional_correctness": "Stock/idempotency/expiration/auth/error-code semantics are correct, but the order state-transition invariant is broken (confirmed reservations yield PENDING orders, confirmed_at never set), and multi-session repo writes are non-atomic, hurting data consistency.",
+    "executability": "Packaging and entrypoints are plausible and installable, but the declared test command fails (8/15 API tests) and is non-repeatable, and the app writes a DB file to cwd — weak runtime isolation.",
+    "test_quality": "Coverage breadth is good across all required scenarios, but the API integration tests are mis-wired to a shared persistent DB, so they fail and are not repeatable; the order-status bug is not asserted at the service level so it slips through.",
+    "code_quality": "Clean module boundaries (models/repository/service/security/app), readable names, and an accurate concise README. The broken dependency-override test pattern is the main maintainability blemish.",
+    "minimality": "Abstractions are justified, but there are unused imports, an unused dependency (pydantic-settings), and two unused repository/service methods (get_order_by_reservation, expire_pending_reservations) that are never wired into the app or tests.",
+    "security_safety": "Mutating endpoints all enforce verify_api_key; pydantic validation and ORM use mitigate injection. Docked for a hardcoded API key with no env/config override.",
+    "review_confidence": "All source and test files were read; pytest was run and the order-status bug reproduced directly; unused imports/deps confirmed via grep. High confidence."
+  },
+  "instruction_failures": [
+    "Production-minded constraint weakly met: hardcoded VALID_API_KEY='test-key-123' (security.py:6) and default file-DB path with no configuration hook (repository.py:11)."
+  ],
+  "correctness_failures": [
+    "confirm_reservation leaves the created order in PENDING with confirmed_at=None instead of CONFIRMED (service.py:90-94); order state-transition invariant violated.",
+    "create_reservation reserve_stock and create_reservation run in separate sessions/transactions (repository.py:65-104); a failure between them (e.g., idempotency_key unique violation) would leak reserved stock.",
+    "adjust_stock applies an unbounded delta (repository.py:55-63); a negative delta can drive available_qty below zero with no guard."
+  ],
+  "execution_failures": [
+    "pytest fails: tests/test_api.py 8 failed / 7 passed (commands_run). KeyError 'id' from 400 responses caused by SKU code collision against the shared persistent commerce.db.",
+    "Re-running the suite increases failures (test_create_sku_authorized also fails on 2nd run) — state leaks across runs via commerce.db.",
+    "app instantiates Repository() (sqlite:///commerce.db) at module import (app.py:26), creating a DB file in the working directory."
+  ],
+  "test_gaps": [
+    "No test asserts order.status == 'confirmed' at the service layer, so the PENDING-order bug is undetected by the green service suite (test_service.py:122-141 only checks reservation status).",
+    "API tests are not isolated: setup_test_db override (test_api.py:8-18) never takes effect, so tests do not exercise an isolated in-memory DB as intended.",
+    "No test for unauthorized confirm/cancel/list with invalid key beyond create_sku, and none for expired-reservation cleanup (expire_pending_reservations untested).",
+    "No test asserting stock is released when a reservation expires."
+  ],
+  "quality_notes": [
+    "Repository.get_stock returns a fresh detached Stock copy (repository.py:37-46) while other getters return live-then-detached ORM rows — inconsistent pattern, though functional.",
+    "datetime.utcnow() is used throughout (deprecated in 3.12, emits warnings); timezone-aware datetimes would be cleaner.",
+    "Auth returns 403 for a missing key where 401 is more conventional, but tests are consistent with 403."
+  ],
+  "unnecessary_code_examples": [
+    "models.py:6 imports create_engine but never uses it.",
+    "repository.py:4 imports select but never uses it.",
+    "repository.py:182 get_order_by_reservation is never called.",
+    "service.py:113 expire_pending_reservations is never wired into the app or covered by tests.",
+    "pyproject.toml:14 declares pydantic-settings which is never imported."
+  ],
+  "security_safety_notes": [
+    "All mutating endpoints (POST /skus, /stock/adjust, /reservations, /reservations/{id}/confirm, DELETE /reservations/{id}) require Depends(verify_api_key); GET /orders is unauthenticated (read-only, acceptable).",
+    "API key 'test-key-123' is hardcoded in security.py:6 with no environment/config override.",
+    "Inputs validated via pydantic (quantity gt=0, ttl ge=1, pagination ge/le bounds); SQLAlchemy ORM avoids SQL injection.",
+    "No shell, network, or destructive filesystem operations beyond creating the SQLite DB file."
+  ],
+  "file_evidence": [
+    {"path": "tests/test_api.py", "note": "Lines 13-14 set app.dependency_overrides[repo]/[service] keyed on instances, not Depends callables; endpoints don't use Depends for these, so overrides are inert and tests hit the file DB."},
+    {"path": "src/commerce_service/service.py", "note": "Line 93 passes detached reservation.status (PENDING) to update_order_status instead of OrderStatus.CONFIRMED; confirmed orders never transition, confirmed_at stays None (verified at runtime)."},
+    {"path": "src/commerce_service/app.py", "note": "Line 26 creates module-global Repository() with default file DB; line 27 binds Service to it; endpoints call this global directly."},
+    {"path": "src/commerce_service/repository.py", "note": "Line 11 default db_url='sqlite:///commerce.db' writes to cwd; line 4 unused 'select' import; separate sessions per call make reserve+create non-atomic."},
+    {"path": "src/commerce_service/models.py", "note": "Line 6 unused create_engine import; otherwise clean ORM + pydantic schema separation."},
+    {"path": "src/commerce_service/security.py", "note": "Hardcoded VALID_API_KEY at line 6; verify_api_key enforced on all mutations."},
+    {"path": "pyproject.toml", "note": "Pinned deps and valid build config, but declares unused pydantic-settings (line 14)."}
+  ],
+  "commands_run": [
+    "find . -type f (list project files)",
+    "python3 --version; python3 -c 'import fastapi, sqlalchemy, httpx, pytest' (deps present, Python 3.12.4)",
+    "python3 -m pytest -q (7 failed, 19 passed on first run)",
+    "python3 -m pytest tests/test_api.py -q (8 failed, 7 passed on re-run; non-repeatable; commerce.db created)",
+    "python3 -c '...confirm_reservation...' (reproduced order.status == PENDING, confirmed_at == None)",
+    "grep -rn for pydantic_settings/select/create_engine/get_order_by_reservation/expire_pending (confirmed unused code/deps)",
+    "rm -f commerce.db (removed the test-generated artifact that did not exist before review)"
+  ],
+  "review_risk": "low — all source and tests were read, pytest was run, the order-status bug was reproduced directly, and unused code/deps were confirmed by grep; the only residual uncertainty is concurrent-access behavior under a multi-threaded server, which was not load-tested."
+}
+```

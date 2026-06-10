@@ -1,0 +1,37 @@
+All files created successfully. Here's the project structure:
+
+```json
+{
+  "files_created": [
+    "pyproject.toml",
+    "README.md",
+    "src/commerce_service/__init__.py",
+    "src/commerce_service/models.py",
+    "src/commerce_service/repository.py",
+    "src/commerce_service/service.py",
+    "src/commerce_service/security.py",
+    "src/commerce_service/app.py",
+    "tests/__init__.py",
+    "tests/test_service.py",
+    "tests/test_api.py"
+  ],
+  "entrypoint": "commerce_service.app:app",
+  "test_command": "pytest tests/"
+}
+```
+
+**Key features implemented:**
+
+- **Repository pattern**: SQLite database access isolated in `repository.py`
+- **Service layer**: Business logic for stock, reservations, orders in `service.py` with clear exception types
+- **Pydantic models**: Strong typing for requests/responses in `models.py`
+- **FastAPI endpoints**: Health check, SKU CRUD, reservation workflow (create/confirm/cancel), order lookup with pagination
+- **API-key security**: Header-based authentication on all mutations via `security.py`
+- **Idempotency**: Duplicate reservation detection via idempotency keys
+- **Expiration handling**: Reservation expiration checks before confirmation
+- **State transitions**: Reservations → confirmed → orders, with validation
+- **Comprehensive tests**: 
+  - Unit tests: stock, reservations, orders, pagination, expired reservations, duplicate keys
+  - Integration tests: all API endpoints, authorization, pagination, error cases
+
+Run with: `uvicorn commerce_service.app:app --reload`

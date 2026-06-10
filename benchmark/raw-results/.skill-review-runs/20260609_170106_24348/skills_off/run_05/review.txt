@@ -1,0 +1,151 @@
+All files inspected. The project is a partial skeleton: `models.py` and `repository.py` exist, but `app.py`, `service.py`, `security.py`, and the entire `tests/` directory referenced by the README and `pyproject.toml` are **absent**.
+
+```json
+{
+  "rubric_version": "benchmark-codegen-review-v1",
+  "score_scale": "0-100 per category",
+  "weights": {
+    "task_fulfillment": 0.20,
+    "functional_correctness": 0.25,
+    "executability": 0.15,
+    "test_quality": 0.15,
+    "code_quality": 0.10,
+    "minimality": 0.10,
+    "security_safety": 0.05
+  },
+  "task_fulfillment_score": 28,
+  "task_fulfillment_breakdown": {
+    "instruction_compliance": 15,
+    "required_artifacts": 20,
+    "feature_coverage": 15,
+    "constraint_adherence": 60
+  },
+  "functional_correctness_score": 20,
+  "functional_correctness_breakdown": {
+    "domain_invariants": 25,
+    "edge_case_behavior": 20,
+    "data_consistency": 25,
+    "error_semantics": 10
+  },
+  "executability_score": 40,
+  "executability_breakdown": {
+    "installability": 70,
+    "runtime_entrypoints": 10,
+    "command_result": 10,
+    "runtime_isolation": 70
+  },
+  "test_quality_score": 1,
+  "test_quality_breakdown": {
+    "required_test_coverage": 0,
+    "behavioral_assertions": 0,
+    "integration_realism": 0,
+    "repeatability": 0
+  },
+  "code_quality_score": 48,
+  "code_quality_breakdown": {
+    "readability": 70,
+    "maintainability": 50,
+    "boundary_design": 45,
+    "documentation_quality": 25
+  },
+  "minimality_score": 58,
+  "minimality_breakdown": {
+    "no_speculative_infrastructure": 70,
+    "no_dead_or_duplicate_code": 55,
+    "appropriate_abstractions": 70,
+    "dependency_minimality": 35
+  },
+  "security_safety_score": 58,
+  "security_safety_breakdown": {
+    "auth_enforcement": 5,
+    "secret_handling": 70,
+    "input_safety": 65,
+    "unsafe_operations": 90
+  },
+  "review_confidence_score": 90,
+  "review_confidence_breakdown": {
+    "inspection_depth": 95,
+    "command_evidence": 85,
+    "issue_specificity": 92,
+    "uncertainty_handling": 88
+  },
+  "weighted_components": {
+    "task_fulfillment": 5.6,
+    "functional_correctness": 5.0,
+    "executability": 6.0,
+    "test_quality": 0.2,
+    "code_quality": 4.8,
+    "minimality": 5.8,
+    "security_safety": 2.9
+  },
+  "weighted_total": 30.3,
+  "verdict": "poor",
+  "key_findings": [
+    "The HTTP/application layer is entirely missing: README and pyproject reference commerce_service.app:app, service.py, and security.py, but only models.py and repository.py exist in src/commerce_service/.",
+    "No tests exist despite pyproject testpaths=['tests'] and the README's 'test coverage' / 'Production Ready' claims; `pytest` would collect nothing.",
+    "The declared run command `uvicorn commerce_service.app:app --reload` cannot start because the app module does not exist.",
+    "Core domain behavior (auth enforcement, idempotency conflict handling, reservation expiration, order state transitions, endpoint error semantics) is not implemented anywhere; repository.py only provides low-level data helpers.",
+    "What exists (models.py, repository.py) is clean and compiles, but is not wired together by any caller."
+  ],
+  "score_rationale": {
+    "task_fulfillment": "Only 2 of 5 documented source modules are present and there is no tests/ directory. The full API surface (SKU create, stock adjust, reservation create/confirm/cancel, order listing) is described in README but never implemented at any callable level. Fresh-workspace/no-parent-read constraints are respected, which is the only meaningful credit.",
+    "functional_correctness": "No runnable behavior to confirm invariants. repository.reserve_stock guards against insufficient stock (repository.py:113-124), but release_stock can drive reserved_quantity negative (repository.py:126-137), create_reservation and reserve_stock run in separate sessions with no coordinating transaction, idempotency is only a lookup helper (repository.py:85-92) with no enforcement, and expiration (ReservationState.EXPIRED in models.py:15) is never applied. No HTTP error semantics exist.",
+    "executability": "Dependencies are pinned and packaging (hatchling) is plausible, so install is believable. But the documented uvicorn entrypoint targets a nonexistent module, and the configured pytest testpaths=['tests'] resolves to nothing. The two present modules compile cleanly (py_compile passed) and have no external-state dependence.",
+    "test_quality": "No tests of any kind are present. All required coverage (happy path, insufficient stock, idempotency, expiration, auth, pagination) is absent.",
+    "code_quality": "models.py and repository.py are readable with sensible naming and an intended models/repository separation. However the README documents files and behavior that do not exist (service.py, security.py, app.py, 'test coverage', 'Production Ready'), which is materially misleading documentation.",
+    "minimality": "The existing code is not speculative, but several declared dependencies are unjustified by present code: fastapi, uvicorn, and python-dateutil are never imported (no app/service), and dev deps httpx/pytest-asyncio are unused (no tests). release_stock is defined but unreferenced.",
+    "security_safety": "No API-key dependency or any auth is implemented since security.py is missing, so mutating-endpoint protection is effectively absent. No hardcoded real secrets (README mentions a 'dev-key' default not present in code), pydantic Field constraints provide input validation in models.py, and there are no unsafe shell/file/network operations.",
+    "review_confidence": "Entire codebase is small and was fully read; file inventory was confirmed including hidden files, and py_compile was run. Main uncertainty is whether fastapi is installed locally, which is moot given the app module is absent."
+  },
+  "instruction_failures": [
+    "Required files app.py, service.py, and security.py were not created (referenced in README:35-41 and pyproject 'commerce_service.app:app').",
+    "No tests/ directory created despite pyproject.toml:27 testpaths=['tests'] and README test instructions.",
+    "API endpoints described in README:47-53 are not implemented.",
+    "README overstates completeness with 'Production Ready' and 'test coverage' (README:11) that are false."
+  ],
+  "correctness_failures": [
+    "No reservation expiration logic; ReservationState.EXPIRED (models.py:15) is declared but never set.",
+    "Idempotency is not enforced — only get_reservation_by_idempotency_key (repository.py:85-92) exists, with no service path returning the prior reservation on retry.",
+    "release_stock (repository.py:126-137) does not guard against reserved_quantity going negative.",
+    "create_reservation (repository.py:52-74) and reserve_stock (repository.py:113-124) execute in separate sessions/transactions with no atomic coordination, risking stock/reservation divergence.",
+    "No order state-transition rules (e.g., confirming an expired/cancelled reservation) are enforced anywhere."
+  ],
+  "execution_failures": [
+    "`uvicorn commerce_service.app:app --reload` fails: module commerce_service.app does not exist.",
+    "`pytest` collects no tests because the tests/ directory referenced by testpaths does not exist."
+  ],
+  "test_gaps": [
+    "No tests at all: missing happy-path, insufficient-stock, idempotent-retry, expiration, auth, and pagination coverage."
+  ],
+  "quality_notes": [
+    "README 'Architecture' section (README:35-41) lists modules that are not present, misleading future maintainers.",
+    "models.get_database_url and the SQLAlchemy/pydantic models are clean, but nothing imports repository.py, so the data layer is currently unreachable."
+  ],
+  "unnecessary_code_examples": [
+    "python-dateutil dependency (pyproject.toml:15) is never imported.",
+    "fastapi and uvicorn dependencies (pyproject.toml:11-12) are declared but unused since no app exists.",
+    "httpx and pytest-asyncio dev dependencies (pyproject.toml:21-22) are unused with no tests.",
+    "repository.release_stock (repository.py:126-137) is defined but never referenced by any caller."
+  ],
+  "security_safety_notes": [
+    "API-key authentication is not implemented (security.py missing); no mutating endpoint is protected.",
+    "No hardcoded real secrets found; README references a 'dev-key' default that is not embedded in code.",
+    "Input validation is present via pydantic Field constraints in models.py (e.g., min_length, ge/gt)."
+  ],
+  "file_evidence": [
+    {"path": "pyproject.toml", "note": "Declares entrypoint commerce_service.app:app and testpaths=['tests'], neither of which exists; includes unused deps (dateutil, fastapi, uvicorn, httpx, pytest-asyncio)."},
+    {"path": "README.md", "note": "Documents app.py/service.py/security.py and full endpoint list plus 'Production Ready' and 'test coverage' claims that are not backed by code."},
+    {"path": "src/commerce_service/models.py", "note": "SQLAlchemy + pydantic models are clean; ReservationState.EXPIRED defined but never used; no business logic."},
+    {"path": "src/commerce_service/repository.py", "note": "Low-level data helpers only; reserve_stock guards stock but release_stock can go negative; create_reservation and reserve_stock are non-atomic across sessions."},
+    {"path": "src/commerce_service/__init__.py", "note": "Only sets __version__; no app exposure."}
+  ],
+  "commands_run": [
+    "ls -la and find . -type f (full file inventory, including hidden)",
+    "ls -laR src",
+    "grep -rn for dateutil/security/service/app usage in src/",
+    "python3 -m py_compile src/commerce_service/models.py src/commerce_service/repository.py (compiled OK)",
+    "python3 -c 'import fastapi' (availability check)"
+  ],
+  "review_risk": "low — the entire small codebase was read and a compile check run; the project is provably incomplete (no app/service/security/tests), so runtime behavior could not and need not be exercised."
+}
+```

@@ -1,0 +1,25 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "commerce-service"
+version = "0.1.0"
+description = "Inventory reservation and order orchestration API"
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi==0.115.4",
+    "pydantic==2.10.2",
+    "uvicorn[standard]==0.30.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0.0",
+    "pytest-asyncio>=0.24.0",
+    "httpx==0.27.0",
+]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]

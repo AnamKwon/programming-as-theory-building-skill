@@ -1,0 +1,157 @@
+I have thorough evidence. Confirmed findings: 23 of 43 tests fail (entire `test_service.py` suite is broken by the `:memory:` fixture against a per-operation-connection repository), duplicate SKU creation returns HTTP 500, SQLAlchemy is declared but unused, and there is dead/buggy code. Here is the evaluation.
+
+```json
+{
+  "rubric_version": "benchmark-codegen-review-v1",
+  "score_scale": "0-100 per category",
+  "weights": {
+    "task_fulfillment": 0.20,
+    "functional_correctness": 0.25,
+    "executability": 0.15,
+    "test_quality": 0.15,
+    "code_quality": 0.10,
+    "minimality": 0.10,
+    "security_safety": 0.05
+  },
+  "task_fulfillment_score": 81,
+  "task_fulfillment_breakdown": {
+    "instruction_compliance": 80,
+    "required_artifacts": 90,
+    "feature_coverage": 85,
+    "constraint_adherence": 70
+  },
+  "functional_correctness_score": 63,
+  "functional_correctness_breakdown": {
+    "domain_invariants": 62,
+    "edge_case_behavior": 70,
+    "data_consistency": 55,
+    "error_semantics": 65
+  },
+  "executability_score": 65,
+  "executability_breakdown": {
+    "installability": 85,
+    "runtime_entrypoints": 90,
+    "command_result": 30,
+    "runtime_isolation": 55
+  },
+  "test_quality_score": 62,
+  "test_quality_breakdown": {
+    "required_test_coverage": 80,
+    "behavioral_assertions": 78,
+    "integration_realism": 60,
+    "repeatability": 30
+  },
+  "code_quality_score": 80,
+  "code_quality_breakdown": {
+    "readability": 85,
+    "maintainability": 70,
+    "boundary_design": 85,
+    "documentation_quality": 80
+  },
+  "minimality_score": 64,
+  "minimality_breakdown": {
+    "no_speculative_infrastructure": 60,
+    "no_dead_or_duplicate_code": 55,
+    "appropriate_abstractions": 80,
+    "dependency_minimality": 60
+  },
+  "security_safety_score": 88,
+  "security_safety_breakdown": {
+    "auth_enforcement": 90,
+    "secret_handling": 80,
+    "input_safety": 88,
+    "unsafe_operations": 95
+  },
+  "review_confidence_score": 93,
+  "review_confidence_breakdown": {
+    "inspection_depth": 95,
+    "command_evidence": 95,
+    "issue_specificity": 92,
+    "uncertainty_handling": 90
+  },
+  "weighted_components": {
+    "task_fulfillment": 16.2,
+    "functional_correctness": 15.8,
+    "executability": 9.8,
+    "test_quality": 9.3,
+    "code_quality": 8.0,
+    "minimality": 6.4,
+    "security_safety": 4.4
+  },
+  "weighted_total": 69.8,
+  "verdict": "mixed",
+  "key_findings": [
+    "The declared test command (pytest tests/) fails: 23 of 43 tests error out. The entire tests/test_service.py suite is broken because the fixture uses Repository(':memory:') while repository.py opens a fresh sqlite3 connection per operation (repository.py:19-26), so each call gets a private, empty in-memory DB and tables created in _init_db() vanish ('no such table: skus/orders').",
+    "tests/test_api.py (18 tests) passes against a file-backed DB, so the API surface and most domain behavior is genuinely exercised and working.",
+    "Duplicate SKU creation returns HTTP 500: create_sku only catches ValueError (app.py:56), but the UNIQUE constraint raises sqlite3.IntegrityError, which propagates uncaught (verified by smoke test).",
+    "SQLAlchemy is declared as a runtime dependency (pyproject.toml:14) but never imported anywhere; persistence is raw sqlite3.",
+    "Expired reservations leak stock: stock is decremented at reservation time but never restored on expiry. get_expired_reservations() exists (repository.py:193) but is never called, and the confirm path only marks EXPIRED without releasing stock (service.py:99-104).",
+    "Dead/buggy code: repository.update_order_status (repository.py:185) is never called and references a non-existent column (WHERE order_id = ? — the column is id); OrderStatus import in repository.py:8 is unused."
+  ],
+  "score_rationale": {
+    "task_fulfillment": "All requested artifacts (pyproject, README, src package, tests) and the full endpoint surface (SKU create/adjust, reservation create/confirm/cancel, paginated orders, API-key auth) are present and match the README contract. Knocked down for production-mindedness: a module-level Repository() singleton writes commerce.db into the CWD at import time, and there is no expiry reconciliation.",
+    "functional_correctness": "Core invariants hold for the happy and most edge paths (stock decrement, idempotent retry returns original reservation, insufficient stock -> 409, expired confirm -> 410, auth -> 401), all verified by passing API tests. Lowered for: expired reservations permanently leak stock (no sweeper, no release), orders are created 'pending' and never transition to 'confirmed', non-atomic multi-statement writes (adjust_stock + create_reservation are separate commits on separate connections) create TOCTOU/partial-failure risk, and duplicate SKU yields a 500.",
+    "executability": "App imports cleanly and the uvicorn entrypoint is valid; dependencies install. Heavily penalized because the documented `pytest tests/` command fails (23 failures) and the app has an import-time filesystem side effect (commerce.db in CWD) plus a shared global repo, hurting runtime isolation.",
+    "test_quality": "Coverage of required scenarios is good in intent (insufficient stock, idempotency, expiration, auth, pagination) and assertions check real behavior (stock balances, qty preservation, status), not just status codes. But repeatability/isolation is poor: the service-layer fixture is non-functional so half the suite never runs, and the API suite relies on a shared CWD file DB reset via clear_db() rather than isolated per-test state.",
+    "code_quality": "Clear layering (models/repository/service/security/app), descriptive names, accurate README, honest docstrings (security.py states it accepts any non-empty key). Maintainability dinged by dead code and a method with a wrong column reference that would silently misbehave if wired up.",
+    "minimality": "Abstractions (repository + service) are appropriate for the scope, but there is an unused SQLAlchemy dependency, an unused get_expired_reservations method, an unused+buggy update_order_status method, and an unused OrderStatus import in the repository.",
+    "security_safety": "All mutating endpoints enforce Depends(verify_api_key); GET /orders being unauthenticated is reasonable. SQL is fully parameterized (no injection), inputs are validated via Pydantic constraints, and no secrets are hardcoded or unsafe operations performed. The auth is intentionally a placeholder (any non-empty key), which is documented.",
+    "review_confidence": "Read every source and test file plus config; ran the full suite, the API-only suite, a duplicate-SKU smoke test, and dependency/dead-code greps. Findings cite specific files and lines. Only the live uvicorn server was not exercised (TestClient used instead)."
+  },
+  "instruction_failures": [
+    "README documents `pytest tests/ -v` as the run-tests command, but that command fails for the majority of the suite.",
+    "README claims SQLite persistence and a repository pattern but also implies a coherent design; the declared SQLAlchemy dependency is never used, a minor contract/honesty mismatch."
+  ],
+  "correctness_failures": [
+    "tests/test_service.py: Repository(':memory:') is unusable with the per-operation connection model — every DB-touching service test errors with 'no such table' (repository.py:19-26 vs fixture test_service.py:16-21).",
+    "app.py:56 create_sku: duplicate SKU triggers sqlite3.IntegrityError -> HTTP 500 instead of 400/409 (reproduced).",
+    "service.py:99-104 confirm_reservation: expired reservation is marked EXPIRED but reserved stock is never returned to the SKU; no background expiry process releases it either.",
+    "Order lifecycle is incomplete: orders are always created with status 'pending' and never confirmed/cancelled; the only mutator (update_order_status) is dead and references column order_id which does not exist (repository.py:185-191).",
+    "Multi-step mutations are not transactional across the two-connection sequence in reserve_inventory (adjust_stock then create_reservation), risking stock decremented without a persisted reservation on partial failure."
+  ],
+  "execution_failures": [
+    "`PYTHONPATH=src python3 -m pytest tests/` => 23 failed, 20 passed (all 23 failures in tests/test_service.py).",
+    "Importing commerce_service.app creates commerce.db in the current working directory as a side effect of the module-level Repository() singleton."
+  ],
+  "test_gaps": [
+    "Service-layer behavioral tests (idempotency, expiration, cancel-releases-stock) are authored but do not execute, so those invariants are effectively untested at the unit level.",
+    "No test for duplicate SKU creation (which would have caught the 500).",
+    "No test asserts stock is restored after expiration (the leak is unverified and would have surfaced the missing release).",
+    "No test isolation per case in the API suite — relies on a shared file DB and clear_db(), so failures can cross-contaminate and the suite cannot run in parallel."
+  ],
+  "quality_notes": [
+    "Layering and naming are clean and easy to follow; service layer is the single place invariants live.",
+    "datetime handling is mixed: created_at comes from SQLite CURRENT_TIMESTAMP (UTC) while expires_at uses naive datetime.now() (local), so displayed timestamps can be inconsistent across timezones, though expiry comparison itself stays internally consistent.",
+    "DeprecationWarning emitted under Python 3.12 for the default datetime adapter (repository.py:125) — works now but is on a deprecation path."
+  ],
+  "unnecessary_code_examples": [
+    "pyproject.toml:14 — sqlalchemy>=2.0 declared but never imported.",
+    "repository.py:193-200 — get_expired_reservations() has no callers.",
+    "repository.py:185-191 — update_order_status() has no callers and uses a nonexistent column (order_id).",
+    "repository.py:8 — `from .models import OrderStatus` is unused in the repository module."
+  ],
+  "security_safety_notes": [
+    "All mutating endpoints (create_sku, adjust_stock, create/confirm/cancel reservation) require the verify_api_key dependency (app.py:46,64,87,112,137).",
+    "verify_api_key accepts any non-empty key — explicitly documented as a placeholder (security.py:9-11); acceptable for the scope but not real auth.",
+    "All SQL uses parameterized queries; no string interpolation, so no injection vector.",
+    "No secrets committed; no shell/network/file operations beyond the intended SQLite file."
+  ],
+  "file_evidence": [
+    {"path": "src/commerce_service/repository.py", "note": "Per-operation connection model (lines 19-26) is incompatible with the ':memory:' test fixture; update_order_status (185-191) is dead and references column order_id which does not exist; get_expired_reservations (193-200) is dead; unused OrderStatus import (8)."},
+    {"path": "tests/test_service.py", "note": "Fixture Repository(':memory:') (16-21) makes all 21 DB-touching tests fail with 'no such table'; only the two pure-validation tests pass."},
+    {"path": "src/commerce_service/service.py", "note": "reserve_inventory (57-84) decrements stock then creates reservation in separate commits; confirm_reservation (99-104) marks expired without releasing stock; no expiry sweeper anywhere."},
+    {"path": "src/commerce_service/app.py", "note": "create_sku (45-57) only catches ValueError, so duplicate SKU IntegrityError becomes HTTP 500; module-level _repo = Repository() (31) creates commerce.db at import."},
+    {"path": "pyproject.toml", "note": "Declares sqlalchemy>=2.0 (14) which is never imported in src/."},
+    {"path": "tests/test_api.py", "note": "18 passing integration tests using TestClient and a shared file DB reset by _repo.clear_db() per test (11-12); covers auth, insufficient stock, idempotency, confirm/cancel, pagination."}
+  ],
+  "commands_run": [
+    "find . -type f (excluding caches) — listed 11 project files",
+    "python3 --version; import fastapi/pydantic/sqlalchemy/pytest/httpx — Python 3.12.4, fastapi 0.109.0, pydantic 2.5.0, pytest 7.4.3, httpx 0.25.2",
+    "PYTHONPATH=src python3 -m pytest tests/ -v — 23 failed, 20 passed",
+    "PYTHONPATH=src python3 -m pytest tests/test_api.py -q — 18 passed; confirmed commerce.db left in CWD",
+    "TestClient smoke test of duplicate POST /skus — second request returns sqlite3.IntegrityError -> 500",
+    "grep for sqlalchemy / get_expired_reservations / update_order_status / OrderStatus usage — confirmed unused dependency and dead code"
+  ],
+  "review_risk": "low — all source and tests were read and the declared test command plus targeted smoke checks were run with dependencies available; the only untested path is the live uvicorn server (validated via FastAPI TestClient instead)."
+}
+```

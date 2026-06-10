@@ -1,0 +1,159 @@
+All 25 tests pass, but I confirmed a critical defect: the **default runtime entrypoint is broken**. With the default `:memory:` DB, every `Repository` method opens a fresh `sqlite3.connect(":memory:")` connection — so the tables created in `_init_db()` vanish, and the README's documented `uvicorn src.commerce_service.app:app` command fails with `no such table: skus` on the first request. The tests pass only because `conftest.py` uses a temp **file** DB. I also found that `app.py` duplicates the entire route set at module level (lines 96–161) referencing an undefined module-global `service`.
+
+Here is my benchmark-style evaluation:
+
+```json
+{
+  "rubric_version": "benchmark-codegen-review-v1",
+  "score_scale": "0-100 per category",
+  "weights": {
+    "task_fulfillment": 0.20,
+    "functional_correctness": 0.25,
+    "executability": 0.15,
+    "test_quality": 0.15,
+    "code_quality": 0.10,
+    "minimality": 0.10,
+    "security_safety": 0.05
+  },
+  "task_fulfillment_score": 84,
+  "task_fulfillment_breakdown": {
+    "instruction_compliance": 80,
+    "required_artifacts": 95,
+    "feature_coverage": 90,
+    "constraint_adherence": 70
+  },
+  "functional_correctness_score": 74,
+  "functional_correctness_breakdown": {
+    "domain_invariants": 80,
+    "edge_case_behavior": 80,
+    "data_consistency": 58,
+    "error_semantics": 78
+  },
+  "executability_score": 80,
+  "executability_breakdown": {
+    "installability": 90,
+    "runtime_entrypoints": 45,
+    "command_result": 95,
+    "runtime_isolation": 90
+  },
+  "test_quality_score": 86,
+  "test_quality_breakdown": {
+    "required_test_coverage": 92,
+    "behavioral_assertions": 80,
+    "integration_realism": 88,
+    "repeatability": 85
+  },
+  "code_quality_score": 76,
+  "code_quality_breakdown": {
+    "readability": 85,
+    "maintainability": 65,
+    "boundary_design": 85,
+    "documentation_quality": 70
+  },
+  "minimality_score": 65,
+  "minimality_breakdown": {
+    "no_speculative_infrastructure": 75,
+    "no_dead_or_duplicate_code": 40,
+    "appropriate_abstractions": 80,
+    "dependency_minimality": 65
+  },
+  "security_safety_score": 88,
+  "security_safety_breakdown": {
+    "auth_enforcement": 92,
+    "secret_handling": 78,
+    "input_safety": 88,
+    "unsafe_operations": 95
+  },
+  "review_confidence_score": 92,
+  "review_confidence_breakdown": {
+    "inspection_depth": 95,
+    "command_evidence": 95,
+    "issue_specificity": 90,
+    "uncertainty_handling": 88
+  },
+  "weighted_components": {
+    "task_fulfillment": 16.8,
+    "functional_correctness": 18.5,
+    "executability": 12.0,
+    "test_quality": 12.9,
+    "code_quality": 7.6,
+    "minimality": 6.5,
+    "security_safety": 4.4
+  },
+  "weighted_total": 78.7,
+  "verdict": "good",
+  "key_findings": [
+    "All 25 tests pass cleanly (pytest: 25 passed in 0.31s) covering happy paths, insufficient stock, idempotency, expiration, auth, and pagination.",
+    "CRITICAL: the default `:memory:` runtime is broken. Repository opens a new sqlite3 connection per method, so :memory: gives each call a fresh empty DB. The README's documented `uvicorn src.commerce_service.app:app` entrypoint fails with `sqlite3.OperationalError: no such table: skus` (reproduced). Works only if DB_PATH points to a file.",
+    "app.py duplicates the entire route set at module level (lines 96-161) referencing an undefined module-global `service`; these routes are shadowed by the create_app() closure routes but are dead, confusing, and a latent NameError.",
+    "Clean layering (models / repository / service / security / app) with API-key auth enforced on every mutating endpoint and /orders.",
+    "Stock accounting (available vs reserved, confirm deducts both, cancel releases reserved) is coherent and directly asserted in test_stock_reservation_tracking.",
+    "Non-atomic persistence: create_reservation and confirm issue multiple separate commits across separate connections, and stock availability is checked in the service on a different connection than the insert (TOCTOU race)."
+  ],
+  "score_rationale": {
+    "task_fulfillment": "Full requested surface implemented (SKUs, stock adjust, reservation create/confirm/cancel, order pagination, idempotency, expiration, API-key auth) with all requested artifacts. Docked for the broken production default and committed egg-info build artifacts undermining the production-minded constraint.",
+    "functional_correctness": "Domain logic and state transitions are correct under a file-backed DB and well covered, but the shipped default (:memory:) is incoherent per-connection, persistence is non-atomic with a TOCTOU window, duplicate SKU names raise an uncaught IntegrityError (500 rather than 4xx since the service only catches ValueError), and negative stock adjustments are not floored.",
+    "executability": "Dependencies are pinned and the package installs; tests run and pass and are isolated from parent state. The major deduction is the runtime entrypoint: the documented default run command is non-functional.",
+    "test_quality": "Strong coverage across required scenarios with behavioral assertions (stock tracking, idempotent id equality, expiration via datetime patch). Weaknesses: service tests assert broad `Exception` rather than specific HTTP status codes, and no test exercises the default :memory: app or the duplicate module-level routes (which would have caught the headline bug).",
+    "code_quality": "Readable, well-named, docstringed, and cleanly separated into layers. Maintainability and documentation suffer from the duplicated route block and a README that recommends a broken run command without mentioning DB_PATH must be a file.",
+    "minimality": "Significant duplicate/dead code (full second route set in app.py). Unused repository methods (get_order, update_order_status), empty placeholder models (ReservationConfirm, ReservationCancel), unused Optional imports, and two unjustified dependencies (python-multipart, pydantic-settings) that are never used.",
+    "security_safety": "API-key dependency guards all mutating endpoints and /orders; SQL is fully parameterized; pydantic validates and bounds inputs; no unsafe shell/file/network operations. Minor: weak default API key fallback ('test-api-key') and 403 used for auth failures instead of 401.",
+    "review_confidence": "All source and test files were read; the test suite was executed and the default-entrypoint failure was reproduced directly. Findings cite concrete files/lines."
+  },
+  "instruction_failures": [
+    "README quick-start (`uvicorn src.commerce_service.app:app --reload`) does not work with the documented default configuration; every data endpoint returns a 500 due to missing tables.",
+    "Build artifacts (src/commerce_service.egg-info/*) committed into the workspace rather than a clean source tree."
+  ],
+  "correctness_failures": [
+    "Default :memory: DB is reinitialized per connection, so tables created in _init_db() are absent for all subsequent operations (repository.py:11-18, _get_conn opens a new connection per call).",
+    "create_reservation performs availability check (service.py:63-69) and reservation insert + stock update (repository.py:128-154) across separate connections and separate commits — not atomic, with a TOCTOU race under concurrency.",
+    "Duplicate SKU name raises sqlite3.IntegrityError (UNIQUE constraint, repository.py:27) which is not caught (service.create_sku only catches ValueError, service.py:21) producing a 500 instead of a 4xx.",
+    "adjust_stock allows negative quantities down to -1,000,000 (models.py:34) with no floor, so available_quantity can go negative (repository.py:107-115)."
+  ],
+  "execution_failures": [
+    "Reproduced: `from src.commerce_service.app import app; TestClient(app).post('/skus', ...)` -> sqlite3.OperationalError: no such table: skus (app.py default db_path=':memory:')."
+  ],
+  "test_gaps": [
+    "No test runs against the default :memory: app object, so the broken production entrypoint is invisible to the suite.",
+    "No test for duplicate SKU name handling (would reveal the uncaught IntegrityError/500).",
+    "Service-layer tests assert generic `Exception` instead of the specific HTTP status code, so 404 vs 409 vs 500 is not actually verified at the service layer (test_service.py:24-25, 45-46, 86-87, 107-108).",
+    "No test for cancel-after-expiry or confirm-on-cancelled state machine paths beyond the single already-cancelled case.",
+    "No test that reserved quantity is released back on cancel (only confirm path's stock movement is asserted)."
+  ],
+  "quality_notes": [
+    "app.py contains the entire endpoint set twice: once inside create_app() (live) and once at module scope (lines 96-161) referencing a module-global `service` that is never defined — dead, shadowed, and would NameError if ever reached.",
+    "datetime.utcnow() is deprecated (service.py:72,99) generating warnings; naive UTC timestamps stored as isoformat strings.",
+    "README claims SQLite-backed persistence but the default configuration does not persist; DB_PATH-as-file requirement is undocumented."
+  ],
+  "unnecessary_code_examples": [
+    "src/commerce_service/app.py:96-161 — full duplicate route definitions referencing an undefined `service` global.",
+    "src/commerce_service/repository.py:245-279 — get_order and update_order_status are never called by the service or API.",
+    "src/commerce_service/models.py:51-56 — ReservationConfirm and ReservationCancel are empty placeholder models with no fields used meaningfully.",
+    "pyproject.toml:14-15 — python-multipart and pydantic-settings are declared but unused (no form parsing; config read via os.getenv).",
+    "Unused `Optional` import in models.py:5 and `Optional` used but `datetime` import patterns; egg-info build artifacts committed."
+  ],
+  "security_safety_notes": [
+    "verify_api_key (security.py:15-22) is applied via Depends on all mutating endpoints and /orders; missing/invalid keys are rejected.",
+    "All SQL uses parameterized queries (repository.py) — no string interpolation / injection risk.",
+    "Auth failures return 403; conventionally a missing credential is 401, an invalid one 403 — minor semantic nit.",
+    "Default API key falls back to the hardcoded literal 'test-api-key' (security.py:12); acceptable for dev but should fail closed in production."
+  ],
+  "file_evidence": [
+    {"path": "src/commerce_service/repository.py", "note": "Lines 11-18: new sqlite3 connection per method; with ':memory:' default each call gets a fresh empty DB, so tables from _init_db() are gone for later operations."},
+    {"path": "src/commerce_service/app.py", "note": "Lines 92-93 default db_path=':memory:' (broken default); lines 96-161 duplicate all routes referencing undefined module-global `service`."},
+    {"path": "src/commerce_service/service.py", "note": "Coherent stock/reservation logic and HTTP status mapping; create_sku only catches ValueError (line 21), missing IntegrityError; utcnow deprecation at 72/99; availability check separated from insert (TOCTOU)."},
+    {"path": "src/commerce_service/security.py", "note": "API-key header dependency enforced; default fallback key 'test-api-key'; 403 on missing/invalid."},
+    {"path": "tests/conftest.py", "note": "Fixtures use a tempfile .db (lines 16-19, 28-31), which is why the suite passes despite the broken :memory: default."},
+    {"path": "tests/test_api.py", "note": "Covers auth (403), insufficient stock (409), idempotency, confirm/cancel, pagination via TestClient against a real file DB."},
+    {"path": "tests/test_service.py", "note": "Behavioral stock-tracking assertions (lines 128-142); expiration via datetime patch (69-87); but error tests assert broad Exception, not status codes."},
+    {"path": "pyproject.toml", "note": "Pinned deps and src layout; python-multipart and pydantic-settings declared but unused."}
+  ],
+  "commands_run": [
+    "find . -type f (excluding caches) — listed project files",
+    "python3 -c 'import fastapi, httpx, pytest' — confirmed deps available (fastapi 0.109.0)",
+    "python3 -m pytest -q — 25 passed, 35 warnings in 0.31s",
+    "python3 -c '... TestClient(app).post(/skus ...)' — reproduced sqlite3.OperationalError: no such table: skus on the default :memory: entrypoint"
+  ],
+  "review_risk": "low — all source and tests were read, the test suite was executed, and the broken default entrypoint was directly reproduced; concurrency/TOCTOU and IntegrityError-to-500 findings are reasoned from code rather than executed under load."
+}
+```

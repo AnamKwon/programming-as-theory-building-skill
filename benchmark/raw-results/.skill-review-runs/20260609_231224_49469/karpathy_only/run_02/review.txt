@@ -1,0 +1,158 @@
+Confirmed the latent bugs. Producing the evaluation.
+
+```json
+{
+  "rubric_version": "benchmark-codegen-review-v1",
+  "score_scale": "0-100 per category",
+  "weights": {
+    "task_fulfillment": 0.20,
+    "functional_correctness": 0.25,
+    "executability": 0.15,
+    "test_quality": 0.15,
+    "code_quality": 0.10,
+    "minimality": 0.10,
+    "security_safety": 0.05
+  },
+  "task_fulfillment_score": 78,
+  "task_fulfillment_breakdown": {
+    "instruction_compliance": 78,
+    "required_artifacts": 90,
+    "feature_coverage": 70,
+    "constraint_adherence": 75
+  },
+  "functional_correctness_score": 28,
+  "functional_correctness_breakdown": {
+    "domain_invariants": 25,
+    "edge_case_behavior": 28,
+    "data_consistency": 15,
+    "error_semantics": 44
+  },
+  "executability_score": 53,
+  "executability_breakdown": {
+    "installability": 90,
+    "runtime_entrypoints": 45,
+    "command_result": 20,
+    "runtime_isolation": 57
+  },
+  "test_quality_score": 72,
+  "test_quality_breakdown": {
+    "required_test_coverage": 85,
+    "behavioral_assertions": 75,
+    "integration_realism": 78,
+    "repeatability": 50
+  },
+  "code_quality_score": 75,
+  "code_quality_breakdown": {
+    "readability": 82,
+    "maintainability": 60,
+    "boundary_design": 82,
+    "documentation_quality": 76
+  },
+  "minimality_score": 78,
+  "minimality_breakdown": {
+    "no_speculative_infrastructure": 85,
+    "no_dead_or_duplicate_code": 62,
+    "appropriate_abstractions": 80,
+    "dependency_minimality": 85
+  },
+  "security_safety_score": 85,
+  "security_safety_breakdown": {
+    "auth_enforcement": 90,
+    "secret_handling": 70,
+    "input_safety": 85,
+    "unsafe_operations": 95
+  },
+  "review_confidence_score": 91,
+  "review_confidence_breakdown": {
+    "inspection_depth": 95,
+    "command_evidence": 95,
+    "issue_specificity": 90,
+    "uncertainty_handling": 85
+  },
+  "weighted_components": {
+    "task_fulfillment": 15.6,
+    "functional_correctness": 7.0,
+    "executability": 8.0,
+    "test_quality": 10.8,
+    "code_quality": 7.5,
+    "minimality": 7.8,
+    "security_safety": 4.3
+  },
+  "weighted_total": 60.9,
+  "verdict": "mixed",
+  "key_findings": [
+    "Fatal, pervasive bug: repository write methods (create_sku, update_sku_stock, create_order, update_order_status) re-query the object in a second get_session() context that commits (expire_on_commit defaults True) and closes before returning, yielding a detached+expired ORM instance. Any attribute access raises sqlalchemy.orm.exc.DetachedInstanceError.",
+    "Ran the declared suite in the exact pinned environment (sqlalchemy 2.0.23, fastapi 0.104.1, pydantic 2.5.0): 17 of 21 tests FAIL. Only trivial tests pass (health, missing/invalid API key, sku-not-found).",
+    "Every mutating API endpoint is non-functional at runtime: create_sku returns HTTP 400 (its bare `except Exception` masks the DetachedInstanceError), and stock/reservation/confirm/cancel responses crash building the response model (KeyError 'id').",
+    "Layering, naming, HTTP status semantics (409/410/404/400) and test scenario coverage are well designed — the project is one systematic fix away from working (e.g. expire_on_commit=False or expunge-after-load in the write methods).",
+    "Dead/unused code: ReservationConfirm schema is imported and defined but never used as a request body; OrderStatus.COMPLETED is never reachable (no transition implemented despite README's 'reserved → confirmed → completed').",
+    "Latent test bug: tests/test_service.py:91 references repo.Order / repo.Order.id, but Order is a module-level class, not a Repository attribute (AttributeError if that line were reached)."
+  ],
+  "score_rationale": {
+    "task_fulfillment": "All requested artifacts and the documented endpoint surface exist with clean module split; README matches routes. Deductions: 'completed' order state is advertised but unimplemented, confirm endpoint ignores its own ReservationConfirm model, and the default Repository() writes commerce.db to cwd on import.",
+    "functional_correctness": "Severe. The core create/reserve/confirm/cancel workflow does not execute at all due to the detached-instance bug; domain invariants and edge cases are coded but cannot be observed to hold. error_semantics earns partial credit only because the chosen status codes are appropriate in intent; reserved_quantity is also never released on confirm.",
+    "executability": "Dependencies are complete, pinned, and install cleanly (verified present at exact versions). The app imports and /health works, but every write path fails and 17/21 tests fail, so command_result and runtime_entrypoints are heavily penalized. Module-load Repository() writing a cwd file mildly hurts isolation.",
+    "test_quality": "Coverage design is genuinely good (happy path, insufficient stock, idempotent retry, expiration, auth missing/invalid, pagination boundaries, cancel rules) with behavioral assertions on stock quantities and statuses against in-memory SQLite. But the entire suite was clearly never executed successfully — it fails wholesale against the source — and test_service.py:91 contains an independent AttributeError, so repeatability/trust is low.",
+    "code_quality": "Readable names and coherent boundary separation (models/repository/service/security/app). Maintainability is undercut by the broken double-session read-after-write pattern duplicated across four methods, which is the central correctness defect rather than a stylistic one.",
+    "minimality": "No speculative infrastructure; dependencies are all used; ORM choice is justified. Loses points for unused ReservationConfirm schema, unreachable COMPLETED enum value, and the duplicated re-query pattern.",
+    "security_safety": "All mutating endpoints enforce Depends(validate_api_key); inputs validated via Pydantic and ORM-parameterized queries; pagination bounds enforced. API keys are hardcoded in source (acceptable for a demo but not production-grade); GET /orders is intentionally unauthenticated.",
+    "review_confidence": "All eight source/test files read in full; suite executed in the exact declared dependency versions; failures reproduced and root-caused; dead-code and latent-bug claims grep-verified."
+  },
+  "instruction_failures": [
+    "README claims 'Order state transitions (reserved → confirmed → completed)' but no transition to 'completed' is implemented; OrderStatus.COMPLETED is dead.",
+    "ReservationConfirm request model is defined/imported but never wired to the confirm endpoint."
+  ],
+  "correctness_failures": [
+    "create_sku/update_sku_stock/create_order/update_order_status return ORM objects from a committed-and-closed session, causing DetachedInstanceError on attribute access (src/commerce_service/repository.py:49-56, 65-75, 77-89, 105-116).",
+    "All mutating endpoints crash or mask errors: app.py create_sku returns 400 via bare `except Exception` (app.py:39-40); other endpoints raise KeyError building the response model.",
+    "reserved_quantity is never decremented when a reservation is confirmed, so reserved stock inflates permanently (service.py confirm_reservation does not adjust SKU counters).",
+    "Expiration is only enforced lazily on confirm; an expired reservation's stock is never auto-released back to available."
+  ],
+  "execution_failures": [
+    "pytest: 17 failed, 4 passed. test_api.py mutation tests fail with KeyError 'id'; test_service.py tests fail with DetachedInstanceError.",
+    "test_create_sku_with_api_key asserts 200 but receives 400 because the endpoint swallows the DetachedInstanceError.",
+    "tests/test_service.py:91 uses repo.Order, which does not exist on Repository (latent AttributeError)."
+  ],
+  "test_gaps": [
+    "No test passes for any write/state-transition behavior, so domain invariants are effectively unverified despite scenario coverage existing on paper.",
+    "test_api.py fixture restores app_module.repo but not app_module.service.repo on teardown, leaking the in-memory repo into later state (masked here because the suite already fails).",
+    "No assertion that reserved_quantity is released on confirm (it isn't), so the inflation bug is untested.",
+    "No test for SKU not found via API, duplicate sku_code uniqueness violation, or confirm on already-confirmed/cancelled order via the HTTP layer."
+  ],
+  "quality_notes": [
+    "Clean layering and consistent naming; service layer holds the state-machine rules in one place.",
+    "The read-after-write pattern (flush in session A, re-query in session B that commits/closes before return) is the central design flaw and is repeated verbatim four times.",
+    "HTTP status code choices (409 for conflict/insufficient stock, 410 for expired, 404 for missing) are thoughtful.",
+    "No docstrings, but README is concise and largely accurate."
+  ],
+  "unnecessary_code_examples": [
+    "models.py:46 ReservationConfirm — defined and imported (app.py:9) but never used.",
+    "models.py:9 OrderStatus.COMPLETED — never assigned or transitioned to.",
+    "Duplicated 'flush in one session, re-query in another' block across repository.py create_sku/update_sku_stock/create_order/update_order_status."
+  ],
+  "security_safety_notes": [
+    "All mutating routes attach Depends(validate_api_key); missing/invalid key returns 403 (verified by passing tests).",
+    "API keys are hardcoded in security.py (VALID_API_KEYS = {'dev-key-123','test-key-456'}) rather than sourced from config/env — demo-grade, not production.",
+    "Inputs validated via Pydantic constraints and pagination bounds (Query ge/le); SQLAlchemy ORM avoids raw SQL injection.",
+    "No shell/file/network side effects beyond writing the local SQLite DB."
+  ],
+  "file_evidence": [
+    {"path": "src/commerce_service/repository.py", "note": "Lines 49-56/65-75/77-89/105-116: write methods return objects from a get_session() block that commits (expire_on_commit=True) and closes before return → DetachedInstanceError. get_sku/get_order/list_orders avoid it via session.expunge(), proving the author knew the pattern but did not apply it to writes."},
+    {"path": "src/commerce_service/app.py", "note": "Line 39-40: create_sku wraps everything in bare `except Exception` → DetachedInstanceError surfaces as HTTP 400 (observed in test_create_sku_with_api_key). Other endpoints crash assembling the response model."},
+    {"path": "src/commerce_service/service.py", "note": "confirm_reservation (58-69) transitions status and clears expires_at but never decrements reserved_quantity; expiration checked only lazily."},
+    {"path": "src/commerce_service/security.py", "note": "API-key dependency correctly enforced; keys hardcoded at module scope."},
+    {"path": "tests/test_service.py", "note": "Line 91 references repo.Order / repo.Order.id which do not exist on Repository (Order is module-level)."},
+    {"path": "tests/test_api.py", "note": "Lines 9-20 fixture swaps module-global repo for in-memory DB but restores only repo (not service.repo) on teardown."},
+    {"path": "pyproject.toml", "note": "Dependencies complete and pinned; installed environment matches exactly (sqlalchemy 2.0.23, fastapi 0.104.1, pydantic 2.5.0)."}
+  ],
+  "commands_run": [
+    "find . -type f (excluding caches) — listed 11 project files",
+    "python3 --version (3.12.4); import fastapi/sqlalchemy/pydantic/httpx — deps present",
+    "python3 -c 'import sqlalchemy,fastapi,pydantic' — versions 2.0.23 / 0.104.1 / 2.5.0 (match pins)",
+    "PYTHONPATH=src python3 -m pytest -q — 17 failed, 4 passed",
+    "PYTHONPATH=src python3 -m pytest -rA — identified the 4 passing tests",
+    "grep -n for ReservationConfirm/COMPLETED/repo.Order/expire_on_commit — confirmed dead code and latent test bug"
+  ],
+  "review_risk": "low — all source and test files were read in full and the declared test suite was executed in the exact pinned dependency environment, reproducing and root-causing the failures; remaining uncertainty is only about non-tested runtime paths (e.g. concurrent stock contention), which the SQLite single-file design does not address."
+}
+```

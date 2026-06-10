@@ -1,0 +1,153 @@
+I've reviewed all source files and run the test suite. Key finding: the declared test command fails (9 failed, 9 errors of 25) due to a threading bug in the API test fixture, while service-layer logic is correct (12/12 service tests pass).
+
+```json
+{
+  "rubric_version": "benchmark-codegen-review-v1",
+  "score_scale": "0-100 per category",
+  "weights": {
+    "task_fulfillment": 0.20,
+    "functional_correctness": 0.25,
+    "executability": 0.15,
+    "test_quality": 0.15,
+    "code_quality": 0.10,
+    "minimality": 0.10,
+    "security_safety": 0.05
+  },
+  "task_fulfillment_score": 84,
+  "task_fulfillment_breakdown": {
+    "instruction_compliance": 80,
+    "required_artifacts": 95,
+    "feature_coverage": 92,
+    "constraint_adherence": 70
+  },
+  "functional_correctness_score": 75,
+  "functional_correctness_breakdown": {
+    "domain_invariants": 85,
+    "edge_case_behavior": 88,
+    "data_consistency": 60,
+    "error_semantics": 68
+  },
+  "executability_score": 74,
+  "executability_breakdown": {
+    "installability": 90,
+    "runtime_entrypoints": 90,
+    "command_result": 30,
+    "runtime_isolation": 85
+  },
+  "test_quality_score": 70,
+  "test_quality_breakdown": {
+    "required_test_coverage": 90,
+    "behavioral_assertions": 88,
+    "integration_realism": 50,
+    "repeatability": 50
+  },
+  "code_quality_score": 82,
+  "code_quality_breakdown": {
+    "readability": 90,
+    "maintainability": 80,
+    "boundary_design": 90,
+    "documentation_quality": 70
+  },
+  "minimality_score": 87,
+  "minimality_breakdown": {
+    "no_speculative_infrastructure": 95,
+    "no_dead_or_duplicate_code": 85,
+    "appropriate_abstractions": 88,
+    "dependency_minimality": 80
+  },
+  "security_safety_score": 84,
+  "security_safety_breakdown": {
+    "auth_enforcement": 92,
+    "secret_handling": 60,
+    "input_safety": 90,
+    "unsafe_operations": 95
+  },
+  "review_confidence_score": 91,
+  "review_confidence_breakdown": {
+    "inspection_depth": 95,
+    "command_evidence": 92,
+    "issue_specificity": 90,
+    "uncertainty_handling": 88
+  },
+  "weighted_components": {
+    "task_fulfillment": 16.8,
+    "functional_correctness": 18.8,
+    "executability": 11.1,
+    "test_quality": 10.5,
+    "code_quality": 8.2,
+    "minimality": 8.7,
+    "security_safety": 4.2
+  },
+  "weighted_total": 78.3,
+  "verdict": "good",
+  "key_findings": [
+    "Complete layered FastAPI project (app/service/repository/models/security) with all requested endpoints, idempotency, pagination, lazy expiration, and API-key auth.",
+    "Declared test command fails: `pytest` yields 9 failed + 9 errors of 25 tests. Root cause is the API test fixture (tests/test_api.py:13) creating an in-memory SQLite engine without check_same_thread=False and sharing one session, which collides with the TestClient worker thread.",
+    "Service-layer logic is sound and well-tested: tests/test_service.py passes 12/12, proving stock decrement/restore, state transitions, idempotency, and expiration behavior.",
+    "Domain operations are not atomic: create_reservation commits the reservation then commits the stock decrement separately (service.py:61-69); confirm commits status then the order separately. A failure between commits leaves inconsistent state; no transaction boundary or locking.",
+    "Config drift from docs: README advertises COMMERCE_API_KEY and DATABASE_URL env vars, but security.py:15 hardcodes the key 'test-api-key-123' and app.py:12 hardcodes the DB URL; python-dotenv is a dependency but never used."
+  ],
+  "score_rationale": {
+    "task_fulfillment": "All required artifacts and the full endpoint surface are present and the architecture matches the brief. Marked down for production-mindedness: hardcoded credentials/DB URL that contradict the documented env-var contract.",
+    "functional_correctness": "Service tests confirm domain invariants and edge cases hold. Lowered for non-atomic multi-commit operations and concurrency race on stock (no locking), plus error semantics that map not-found and conflict cases to 400 rather than 404/409.",
+    "executability": "App imports cleanly (11 routes) and deps are complete/plausible, but the declared `pytest` command fails for every DB-touching API test due to the fixture threading bug, a major hit to command_result.",
+    "test_quality": "Coverage breadth is excellent and assertions verify real domain behavior (stock levels, restored stock, statuses). Integration realism and repeatability are low because the API integration tests error out every run; only auth/health tests that bypass the DB pass.",
+    "code_quality": "Clean naming, clear layering, and coherent module boundaries. Maintainability slightly limited by per-operation commits in repositories; documentation accuracy reduced by false env-var claims.",
+    "minimality": "Lean — no speculative queues/workers/migrations/CLI. Minor: python-dotenv dependency is unused and an unused Decimal import in tests/test_api.py.",
+    "security_safety": "All mutating endpoints enforce the API-key dependency; read endpoint is appropriately open. Pydantic constraints and ORM parameterization guard inputs. Secret handling is weak due to the hardcoded key that ignores the documented env variable.",
+    "review_confidence": "All source and test files were read and the full suite was executed with results captured; failure root cause traced to a specific fixture line."
+  },
+  "instruction_failures": [
+    "README documents COMMERCE_API_KEY and DATABASE_URL configuration that the code does not honor (security.py:15, app.py:12 hardcode values)."
+  ],
+  "correctness_failures": [
+    "Multi-step operations are not transactional: reservation creation and stock decrement commit independently (service.py:61-69); confirmation status update and order creation commit independently (service.py:88-90).",
+    "Check-then-decrement stock has no locking; concurrent reservations could oversell.",
+    "Not-found conditions (SKU/reservation missing) return HTTP 400 instead of 404; duplicate-SKU and already-processed idempotency conflicts return 400 instead of 409 (app.py:54,69,89,103,117).",
+    "Expiration is only evaluated lazily on confirm; an expired-but-still-'pending' reservation continues to hold stock indefinitely until confirm is attempted."
+  ],
+  "execution_failures": [
+    "`pytest` (declared command) fails: 9 failed, 16 passed, 9 errors. All failures are sqlite3.ProgrammingError 'SQLite objects created in a thread can only be used in that same thread' from tests/test_api.py.",
+    "tests/test_api.py:13 in-memory engine omits connect_args={'check_same_thread': False} and the fixture returns a single shared session, incompatible with the TestClient's worker thread."
+  ],
+  "test_gaps": [
+    "API-layer expiration and idempotency-after-confirmation paths are covered only in the service tests; the API equivalents never execute due to the fixture failure.",
+    "No test asserts a 404/not-found path for missing SKU or reservation IDs.",
+    "No concurrency/double-confirm or double-cancel state-machine test at the API layer."
+  ],
+  "quality_notes": [
+    "Layering and naming are clean and easy to follow (app -> service -> repository -> models).",
+    "Repository methods each commit, preventing the service from composing a single transaction across steps.",
+    "README architecture/endpoint tables are accurate except for the Environment section, which describes config the code ignores."
+  ],
+  "unnecessary_code_examples": [
+    "python-dotenv is declared in pyproject.toml dependencies but never imported or used anywhere.",
+    "Unused `from decimal import Decimal` import in tests/test_api.py (prices passed as strings).",
+    "Two nearly identical `db` fixtures duplicated across tests/test_api.py and tests/test_service.py (no shared conftest)."
+  ],
+  "security_safety_notes": [
+    "All mutating endpoints depend on verify_api_key (app.py:42,61,75,95,109); GET /orders is unauthenticated, which is acceptable for a read endpoint.",
+    "API key is hardcoded as 'test-api-key-123' in security.py:15 rather than read from COMMERCE_API_KEY; it is a test placeholder but still a hardcoded credential ignoring documented config.",
+    "Inputs validated via Pydantic constraints (gt/ge/min_length/max_length); SQLAlchemy ORM queries are parameterized, so no obvious injection risk.",
+    "No shell, file, or network side effects beyond creating ./commerce.db in the working directory."
+  ],
+  "file_evidence": [
+    {"path": "tests/test_api.py", "note": "Line 13 creates in-memory SQLite engine without check_same_thread=False and returns a shared session, causing all DB-touching API tests to error under TestClient's thread."},
+    {"path": "tests/test_service.py", "note": "12/12 pass; asserts stock levels, restored stock on cancel/expire, idempotency reuse, and pagination — strong behavioral coverage of the service."},
+    {"path": "src/commerce_service/service.py", "note": "create_reservation (61-69) and confirm_reservation (88-90) perform separate commits per repository call, so operations are not atomic."},
+    {"path": "src/commerce_service/security.py", "note": "Line 15 hardcodes expected key 'test-api-key-123' instead of reading COMMERCE_API_KEY documented in README."},
+    {"path": "src/commerce_service/app.py", "note": "Line 12 hardcodes DATABASE_URL; all ValueErrors mapped to 400 (lines 54,69,89,103,117), including not-found and conflict cases."},
+    {"path": "pyproject.toml", "note": "Declares python-dotenv dependency that is never used in the codebase."},
+    {"path": "src/commerce_service/repository.py", "note": "Idempotency key has a unique constraint and lookup (44-47); pagination uses count + offset/limit with deterministic ordering (90-99)."}
+  ],
+  "commands_run": [
+    "find . -type f (excluding caches) — listed 11 project files",
+    "python3 -c 'import fastapi, sqlalchemy, httpx, pytest' — deps available",
+    "PYTHONPATH=src python3 -m pytest -q — 9 failed, 16 passed, 9 errors",
+    "PYTHONPATH=src python3 -m pytest tests/test_service.py — 12 passed",
+    "PYTHONPATH=src python3 -m pytest tests/test_api.py — 9 failed, 4 passed, 9 errors",
+    "PYTHONPATH=src python3 -c 'from commerce_service.app import app' — app imports, 11 routes"
+  ],
+  "review_risk": "low — all source and test files were read and the full test suite was executed with results captured; the test failures are deterministic and traced to a specific fixture line."
+}
+```

@@ -1,0 +1,163 @@
+I have enough evidence. All files reviewed, tests run (2 of 28 fail), and I confirmed the root causes.
+
+Key technical findings:
+- **Broken dependency injection**: endpoints use `get_service()` (app.py:38-46) which directly instantiates `SessionLocal` bound to the file DB `commerce.db`. The `get_db_session` dependency (app.py:49) is never wired into any endpoint, so the test's `app.dependency_overrides[get_db_session]` (test_api.py:26) is a no-op. Tests run against a persistent `./commerce.db` file (confirmed created, 40KB) and leak state across tests.
+- **2 failing tests**: `test_create_reservation_insufficient_stock` returns 201 instead of 409 because idempotency key `"key-1"` was already persisted by an earlier test in `commerce.db`; `test_list_orders_pagination` is self-contradictory (asserts 10 items while creating zero orders, total==0).
+- **Missing order-creation endpoint**: `service.create_order`/`update_order_state` exist but no `POST /orders`; order state transitions are never reachable via the API.
+- Dead code: `get_db_session`, `update_order_state`, `create_order`, `ErrorResponse`, `create_engine` import in models.py, unused `python-dotenv` dep; global exception handler returns a dict rather than a `Response`.
+
+```json
+{
+  "rubric_version": "benchmark-codegen-review-v1",
+  "score_scale": "0-100 per category",
+  "weights": {
+    "task_fulfillment": 0.20,
+    "functional_correctness": 0.25,
+    "executability": 0.15,
+    "test_quality": 0.15,
+    "code_quality": 0.10,
+    "minimality": 0.10,
+    "security_safety": 0.05
+  },
+  "task_fulfillment_score": 76,
+  "task_fulfillment_breakdown": {
+    "instruction_compliance": 75,
+    "required_artifacts": 90,
+    "feature_coverage": 65,
+    "constraint_adherence": 75
+  },
+  "functional_correctness_score": 72,
+  "functional_correctness_breakdown": {
+    "domain_invariants": 80,
+    "edge_case_behavior": 72,
+    "data_consistency": 62,
+    "error_semantics": 75
+  },
+  "executability_score": 60,
+  "executability_breakdown": {
+    "installability": 65,
+    "runtime_entrypoints": 75,
+    "command_result": 55,
+    "runtime_isolation": 45
+  },
+  "test_quality_score": 58,
+  "test_quality_breakdown": {
+    "required_test_coverage": 80,
+    "behavioral_assertions": 72,
+    "integration_realism": 50,
+    "repeatability": 30
+  },
+  "code_quality_score": 77,
+  "code_quality_breakdown": {
+    "readability": 85,
+    "maintainability": 75,
+    "boundary_design": 70,
+    "documentation_quality": 78
+  },
+  "minimality_score": 67,
+  "minimality_breakdown": {
+    "no_speculative_infrastructure": 65,
+    "no_dead_or_duplicate_code": 55,
+    "appropriate_abstractions": 78,
+    "dependency_minimality": 68
+  },
+  "security_safety_score": 83,
+  "security_safety_breakdown": {
+    "auth_enforcement": 90,
+    "secret_handling": 75,
+    "input_safety": 78,
+    "unsafe_operations": 90
+  },
+  "review_confidence_score": 88,
+  "review_confidence_breakdown": {
+    "inspection_depth": 92,
+    "command_evidence": 88,
+    "issue_specificity": 90,
+    "uncertainty_handling": 82
+  },
+  "weighted_components": {
+    "task_fulfillment": 15.2,
+    "functional_correctness": 18.0,
+    "executability": 9.0,
+    "test_quality": 8.7,
+    "code_quality": 7.7,
+    "minimality": 6.7,
+    "security_safety": 4.2
+  },
+  "weighted_total": 69.5,
+  "verdict": "mixed",
+  "key_findings": [
+    "Clean three-layer design (models/repository/service/security) with correct core reservation domain logic; all 14 service-layer tests pass.",
+    "Broken test/runtime isolation: endpoints call get_service() which binds directly to the file DB sqlite:///./commerce.db, so the dependency override on get_db_session is a no-op and tests pollute a persistent ./commerce.db (confirmed 40KB file created).",
+    "2 of 28 tests fail: test_create_reservation_insufficient_stock (201 vs expected 409 due to leaked idempotency key) and test_list_orders_pagination (self-contradictory assertions).",
+    "Order workflow is incomplete: service.create_order / update_order_state exist but no POST /orders endpoint exposes them, so OrderState transitions are unreachable via the API.",
+    "Several dead artifacts: get_db_session, update_order_state, create_order, ErrorResponse, models.py create_engine import, and unused python-dotenv dependency.",
+    "Global exception handler returns a plain dict instead of a Response, which will not set a proper error status."
+  ],
+  "score_rationale": {
+    "task_fulfillment": "Most requested artifacts and endpoints exist (SKU, reservation lifecycle, order list/get, pagination, idempotency, auth), but the order-creation workflow has no API surface and the 'production-grade' DB is created as a file in cwd at import time. feature_coverage and constraint_adherence reduced.",
+    "functional_correctness": "Stock, reserve, confirm, cancel, and lazy-expiration invariants are implemented correctly at the service layer (service.py:42-127) and verified by passing unit tests. Points lost for non-transactional multi-step writes (reserve commits reservation then separately commits reserved_stock, service.py:70-76), no concurrency control, and an exception handler that returns a dict.",
+    "executability": "Deps are pinned and importable; app imports and runs. But 2 tests fail and runtime isolation is poor: writes ./commerce.db, the DI override never takes effect, and state leaks between tests. hatchling packaging lacks explicit src-layout config while tests import via src.* namespace.",
+    "test_quality": "Good breadth (happy path, insufficient stock, idempotency, expiration, auth, pagination) with real behavioral assertions on stock counts and states in test_service.py. Severely undercut by non-repeatability: the API tests unknowingly hit a shared persistent DB, one pagination test is logically inconsistent, and the suite does not pass clean.",
+    "code_quality": "Readable, well-named, docstring'd modules with coherent layer boundaries. Marred by the app bypassing its own DI helper and leftover dead code; README is clear but overstates production-readiness.",
+    "minimality": "Mostly lean (no queues/workers/migrations), but contains a half-built order workflow with no endpoint, multiple dead functions/models/imports, and an unused python-dotenv dependency.",
+    "security_safety": "All mutating POST endpoints enforce verify_api_key (app.py), Pydantic validates inputs with gt=0 constraints, and ORM use avoids SQL injection. Minor: hardcoded dev fallback key and adjust_stock permits driving available_stock negative.",
+    "review_confidence": "All source and test files were read and the full suite was executed; failures were traced to concrete root causes. Minor residual uncertainty about hatchling install behavior since pip install was not performed."
+  },
+  "instruction_failures": [
+    "No POST /orders (or equivalent) endpoint despite order orchestration being a central requested workflow; order state transitions are unreachable from the API.",
+    "Service is not safely runnable as a clean 'fresh workspace' artifact: importing app.py eagerly creates ./commerce.db in the working directory."
+  ],
+  "correctness_failures": [
+    "Reserve performs two separate commits (reservation insert, then reserved_stock update) with no surrounding transaction, risking inconsistent state on failure (service.py:70-76).",
+    "Global exception handler returns a dict rather than a Response/JSONResponse (app.py:194-199), so it will not produce a correct error status code.",
+    "adjust_stock applies negative deltas without a floor, allowing available_stock to go negative (repository.py:24-30, service.py:35-40)."
+  ],
+  "execution_failures": [
+    "tests/test_api.py::TestReservation::test_create_reservation_insufficient_stock fails: 201 returned instead of 409 because idempotency key 'key-1' persisted by an earlier test in the shared ./commerce.db triggers an idempotent hit.",
+    "tests/test_api.py::TestOrder::test_list_orders_pagination fails: asserts len(items)==10 while creating zero orders and asserting total==0.",
+    "app.dependency_overrides[get_db_session] has no effect because no endpoint depends on get_db_session; API tests run against the real file DB instead of the in-memory engine."
+  ],
+  "test_gaps": [
+    "No test exercises the order-creation path or OrderState transitions (because no endpoint exists).",
+    "API tests do not verify stock decrement on confirm or stock return on cancel (only service tests do).",
+    "No test isolates the database per test for the API layer; reset_db drops/creates the wrong (unused) in-memory engine while the app uses commerce.db.",
+    "No negative/zero idempotency-mismatch test (same key, different sku/quantity)."
+  ],
+  "quality_notes": [
+    "app.py uses get_service() context manager and never uses the FastAPI get_db_session dependency, undermining testability and the documented layering.",
+    "OrderResponse/list orders build item dicts inline twice (app.py:156-159, 178-181) — minor duplication.",
+    "README claims 'production-grade' and a 'pending → confirmed → locked' reservation flow, but there is no 'locked' state in ReservationState (models.py:12-16)."
+  ],
+  "unnecessary_code_examples": [
+    "src/commerce_service/app.py:49 get_db_session — defined and only referenced by the ineffective test override.",
+    "src/commerce_service/repository.py:94 update_order_state — never called.",
+    "src/commerce_service/service.py:140 create_order — never exposed via an endpoint.",
+    "src/commerce_service/models.py:6 imports create_engine — unused; ErrorResponse (models.py:132) unused.",
+    "pyproject.toml:15 python-dotenv dependency — never imported or used."
+  ],
+  "security_safety_notes": [
+    "All mutating POST endpoints require verify_api_key via Depends (app.py:64-145); read endpoints are unauthenticated, which is reasonable.",
+    "API key default 'test-key-123' is a hardcoded dev fallback overridable by API_KEY env var (security.py:7) — acceptable but should not ship as a real secret.",
+    "Inputs validated by Pydantic with gt=0 on quantities; ORM queries avoid SQL injection.",
+    "No shell/network/file-destructive operations beyond creating the local sqlite DB."
+  ],
+  "file_evidence": [
+    {"path": "src/commerce_service/app.py", "note": "Endpoints use get_service() bound to file DB (30-46); get_db_session dependency (49) unused; exception handler returns dict (194-199)."},
+    {"path": "tests/test_api.py", "note": "dependency_overrides[get_db_session] is a no-op (26); reset_db targets unused in-memory engine (33-38); pagination test contradictory (217-237)."},
+    {"path": "src/commerce_service/service.py", "note": "Correct reserve/confirm/cancel/expiration logic but non-transactional double commit in reserve (70-76); create_order unexposed (140-151)."},
+    {"path": "src/commerce_service/repository.py", "note": "update_order_state dead (94-100); adjust_stock has no negative floor (24-30)."},
+    {"path": "src/commerce_service/models.py", "note": "Unused create_engine import (6) and unused ErrorResponse (132); no 'locked' reservation state despite README."},
+    {"path": "pyproject.toml", "note": "python-dotenv listed (15) but unused; hatchling build lacks explicit src-layout package config."},
+    {"path": "commerce.db", "note": "40KB sqlite file created in working dir by running tests — evidence of broken runtime isolation and state leakage."}
+  ],
+  "commands_run": [
+    "find . -type f (excluding caches) — listed project files",
+    "python3 -c 'import fastapi, sqlalchemy, pydantic, httpx, pytest' — confirmed deps available",
+    "python3 -m pytest -q — 2 failed, 26 passed, 74 warnings",
+    "ls -la *.db && grep -rn get_db_session — confirmed commerce.db created and dependency unused",
+    "python3 -m pytest tests/test_api.py::TestReservation::test_create_reservation_insufficient_stock -q — confirmed 201 vs 409"
+  ],
+  "review_risk": "low — all source and tests were read and the full suite was executed with failures root-caused; only residual uncertainty is hatchling install/packaging behavior, since a real pip install was not performed."
+}
+```

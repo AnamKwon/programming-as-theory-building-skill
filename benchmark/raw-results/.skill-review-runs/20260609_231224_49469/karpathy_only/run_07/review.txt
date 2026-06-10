@@ -1,0 +1,153 @@
+All checks complete. I have sufficient evidence to score. Here is the benchmark-style evaluation:
+
+```json
+{
+  "rubric_version": "benchmark-codegen-review-v1",
+  "score_scale": "0-100 per category",
+  "weights": {
+    "task_fulfillment": 0.20,
+    "functional_correctness": 0.25,
+    "executability": 0.15,
+    "test_quality": 0.15,
+    "code_quality": 0.10,
+    "minimality": 0.10,
+    "security_safety": 0.05
+  },
+  "task_fulfillment_score": 89,
+  "task_fulfillment_breakdown": {
+    "instruction_compliance": 90,
+    "required_artifacts": 95,
+    "feature_coverage": 90,
+    "constraint_adherence": 82
+  },
+  "functional_correctness_score": 76,
+  "functional_correctness_breakdown": {
+    "domain_invariants": 65,
+    "edge_case_behavior": 80,
+    "data_consistency": 70,
+    "error_semantics": 88
+  },
+  "executability_score": 90,
+  "executability_breakdown": {
+    "installability": 92,
+    "runtime_entrypoints": 90,
+    "command_result": 95,
+    "runtime_isolation": 82
+  },
+  "test_quality_score": 85,
+  "test_quality_breakdown": {
+    "required_test_coverage": 84,
+    "behavioral_assertions": 86,
+    "integration_realism": 84,
+    "repeatability": 86
+  },
+  "code_quality_score": 86,
+  "code_quality_breakdown": {
+    "readability": 90,
+    "maintainability": 82,
+    "boundary_design": 90,
+    "documentation_quality": 82
+  },
+  "minimality_score": 80,
+  "minimality_breakdown": {
+    "no_speculative_infrastructure": 85,
+    "no_dead_or_duplicate_code": 75,
+    "appropriate_abstractions": 88,
+    "dependency_minimality": 72
+  },
+  "security_safety_score": 89,
+  "security_safety_breakdown": {
+    "auth_enforcement": 92,
+    "secret_handling": 80,
+    "input_safety": 90,
+    "unsafe_operations": 95
+  },
+  "review_confidence_score": 90,
+  "review_confidence_breakdown": {
+    "inspection_depth": 92,
+    "command_evidence": 92,
+    "issue_specificity": 90,
+    "uncertainty_handling": 86
+  },
+  "weighted_components": {
+    "task_fulfillment": 17.8,
+    "functional_correctness": 19.0,
+    "executability": 13.5,
+    "test_quality": 12.8,
+    "code_quality": 8.6,
+    "minimality": 8.0,
+    "security_safety": 4.5
+  },
+  "weighted_total": 84.1,
+  "verdict": "good",
+  "key_findings": [
+    "Complete, coherent FastAPI + SQLAlchemy + SQLite project with all requested artifacts (pyproject.toml, README.md, src/, tests/) and a clean repository/service/schema/security layering.",
+    "Full required API surface present: SKU create/adjust-stock, reservation create/confirm/cancel, order get/list-with-pagination, health, and x-api-key auth on all mutating endpoints.",
+    "All 43 tests pass locally (pytest, 0.57s) with dependencies already available; appropriate HTTP status codes (404/400/409/410/403/422).",
+    "Domain-invariant bug: confirming an EXPIRED reservation marks it expired but does NOT release the reserved stock, leaking units (verified: stock stays 90 instead of returning to 100), whereas the background expire_old_reservations sweep DOES release — inconsistent expiry handling.",
+    "Minor dead code / unused dependencies: python-dotenv and pydantic-settings declared but never used; models.py imports unused UUID/uuid4; OrderRepository.update_status never called."
+  ],
+  "score_rationale": {
+    "task_fulfillment": "Prompt and output contract followed closely: requested files, structure, endpoints, idempotency, expiration, pagination, and key-auth all delivered. Slight deduction because importing the app eagerly runs init_db() and writes commerce.db into the workspace (a side effect at import), and egg-info is left behind.",
+    "functional_correctness": "Happy paths, insufficient stock, idempotent retry, unauthorized, and pagination behave correctly; status codes are well chosen. Held down by a confirmed stock-leak on the confirm-expired path (service.py:92-95 marks EXPIRED but skips stock release unlike service.py:128-135), no transaction/locking around read-modify-write stock updates (race risk), and idempotency lookup ignores whether sku_id/quantity match the original request.",
+    "executability": "Deps are pinned and installable (package was installed; egg-info present), uvicorn entrypoint and init_db default are usable, and the full test suite passes. Minor isolation concern: module-level init_db() writes commerce.db to the current working directory on import, though tests correctly override the DB to temp/in-memory.",
+    "test_quality": "Strong behavioral assertions (stock decremented/released, statuses, order linkage) across service and API layers with realistic SQLite persistence and per-test table reset. Gaps: the API-level expired-reservation test is a no-op `pass`, the API idempotency test leaves stock verification commented out, and no test asserts stock release after confirm-on-expired (which is exactly where the bug hides).",
+    "code_quality": "Readable names and clean layer boundaries (repository/service/schemas/security). Maintainability slightly reduced because the stock-release rule is duplicated across cancel/expire/confirm paths and applied inconsistently, which is the source of the expiry bug. README is accurate without false claims; docstrings are sparse.",
+    "minimality": "No speculative queues/workers/migrations/CLIs. Deductions for two unused runtime dependencies (python-dotenv, pydantic-settings with no settings module), unused imports in models.py, an unused OrderRepository.update_status method, and expire_old_reservations having no scheduler/endpoint wiring (only exercised in tests).",
+    "security_safety": "All mutating endpoints enforce the validate_api_key dependency; inputs validated via Pydantic/Query bounds; ORM avoids SQL injection; no unsafe shell/file/network operations. The single allowed API key is hardcoded in security.py, but it is an explicitly documented demo key rather than a real leaked secret.",
+    "review_confidence": "All source and test files were read in full, dependencies confirmed present, the test suite was executed (43 passed), and the key correctness claim (confirm-expired stock leak) and dead-dependency/dead-import claims were verified with targeted commands."
+  },
+  "instruction_failures": [
+    "App import has a side effect: init_db() at app.py:25 creates commerce.db in the working directory, leaving a 49KB DB artifact in the 'fresh workspace'.",
+    "Editable install left src/commerce_service.egg-info in the tree (build/packaging residue)."
+  ],
+  "correctness_failures": [
+    "confirm_reservation on an expired reservation (service.py:92-95) sets status EXPIRED but does not release reserved stock back to the SKU; verified stock remained 90 instead of 100, leaking inventory.",
+    "Stock read-modify-write (repository.update_stock) is not transactional/locked; concurrent reservations could oversell despite check_same_thread=False.",
+    "Idempotency replay (service.py:55-58) returns any prior reservation with the same key without verifying sku_id/quantity match the new request."
+  ],
+  "execution_failures": [],
+  "test_gaps": [
+    "tests/test_api.py:210-228 test_confirm_expired_reservation is a stub (`pass`) — expiry is only exercised at the service layer.",
+    "tests/test_api.py:169-174 idempotency stock-conservation check is commented out and never asserted.",
+    "No test asserts stock is released (or intentionally not released) after confirm-on-expired, so the stock-leak bug goes undetected.",
+    "No concurrency/oversell test for simultaneous reservations."
+  ],
+  "quality_notes": [
+    "Clean separation: models.py (ORM + Pydantic), repository.py (data access), service.py (rules), security.py (auth), app.py (HTTP).",
+    "Stock-release logic is duplicated across cancel/expire paths but omitted on the confirm-expired path, indicating the invariant is not centralized.",
+    "README claims 'cursor-based pagination' but the implementation is offset/limit with the cursor merely encoding the next offset."
+  ],
+  "unnecessary_code_examples": [
+    "src/commerce_service/models.py:3 — `from uuid import UUID, uuid4` is unused in this module.",
+    "src/commerce_service/repository.py:107-112 — OrderRepository.update_status is never called anywhere.",
+    "pyproject.toml:14-16 — python-dotenv and pydantic-settings are declared dependencies with no usage in src/ or tests/.",
+    "service.py:128-135 expire_old_reservations has no scheduler or endpoint invoking it in production; only tests call it."
+  ],
+  "security_safety_notes": [
+    "All POST/PATCH mutating endpoints depend on validate_api_key (app.py:42,49,66,93,118).",
+    "GET /orders and GET /orders/{id} are unauthenticated reads — acceptable but worth noting.",
+    "security.py:4 hardcodes the demo key 'test-key-123'; documented in README, not a real secret, but keys are not externalized to config/env.",
+    "Inputs validated via Pydantic constraints (gt=0, ge=0, min_length) and Query bounds (ge/le); SQLAlchemy ORM avoids raw SQL injection."
+  ],
+  "file_evidence": [
+    {"path": "src/commerce_service/service.py", "note": "Lines 92-95: confirm on expired reservation marks EXPIRED but omits stock release present at lines 122-124/132-134, causing inventory leak (verified via probe)."},
+    {"path": "src/commerce_service/service.py", "note": "Lines 55-58: idempotency returns prior reservation without validating sku_id/quantity against the new request."},
+    {"path": "src/commerce_service/app.py", "note": "Line 25: init_db() runs at import, writing commerce.db into the workspace as a side effect."},
+    {"path": "src/commerce_service/security.py", "note": "Lines 4-10: single hardcoded demo API key; 403 on missing/invalid; enforced on all mutations."},
+    {"path": "src/commerce_service/repository.py", "note": "Lines 21-26 and 102-105: stock updates and pagination are plain offset/limit with no locking/transaction guard."},
+    {"path": "tests/test_api.py", "note": "Lines 210-228 expired test is a no-op; lines 169-174 idempotency stock assertion commented out."},
+    {"path": "tests/test_service.py", "note": "Lines 197-209 verify stock release for the expire-sweep path but not for the confirm-on-expired path."},
+    {"path": "pyproject.toml", "note": "Lines 14-16: python-dotenv and pydantic-settings declared but unused; deps otherwise pinned and coherent."},
+    {"path": "commerce.db", "note": "49KB SQLite DB artifact left in workspace, generated by module-level init_db()."}
+  ],
+  "commands_run": [
+    "find . -type f (project listing)",
+    "python3 -c 'import fastapi, sqlalchemy, pydantic, httpx' (dependency availability)",
+    "python3 -m pytest -q (43 passed in 0.57s)",
+    "python3 probe of confirm-on-expired stock release (stock stayed 90, not restored to 100)",
+    "grep for pydantic_settings/dotenv usage, uuid imports, update_status callers; ls of generated artifacts"
+  ],
+  "review_risk": "low — all source and test files read in full, dependencies confirmed installed, full test suite executed (43 passed), and the key correctness and dead-code findings verified with targeted commands; remaining risk is only around untested concurrency behavior under real multi-threaded load."
+}
+```

@@ -1,0 +1,157 @@
+All findings confirmed empirically. I have enough evidence to score. Two critical bugs demonstrated: (1) confirming a reservation never decrements `quantity_on_hand`, enabling unlimited oversell; (2) `adjust_stock` commits a negative quantity before validating, persisting an invalid state despite returning an error.
+
+```json
+{
+  "rubric_version": "benchmark-codegen-review-v1",
+  "score_scale": "0-100 per category",
+  "weights": {
+    "task_fulfillment": 0.20,
+    "functional_correctness": 0.25,
+    "executability": 0.15,
+    "test_quality": 0.15,
+    "code_quality": 0.10,
+    "minimality": 0.10,
+    "security_safety": 0.05
+  },
+  "task_fulfillment_score": 86,
+  "task_fulfillment_breakdown": {
+    "instruction_compliance": 85,
+    "required_artifacts": 92,
+    "feature_coverage": 88,
+    "constraint_adherence": 78
+  },
+  "functional_correctness_score": 57,
+  "functional_correctness_breakdown": {
+    "domain_invariants": 40,
+    "edge_case_behavior": 70,
+    "data_consistency": 40,
+    "error_semantics": 78
+  },
+  "executability_score": 86,
+  "executability_breakdown": {
+    "installability": 85,
+    "runtime_entrypoints": 82,
+    "command_result": 95,
+    "runtime_isolation": 80
+  },
+  "test_quality_score": 86,
+  "test_quality_breakdown": {
+    "required_test_coverage": 82,
+    "behavioral_assertions": 85,
+    "integration_realism": 88,
+    "repeatability": 90
+  },
+  "code_quality_score": 82,
+  "code_quality_breakdown": {
+    "readability": 88,
+    "maintainability": 75,
+    "boundary_design": 88,
+    "documentation_quality": 78
+  },
+  "minimality_score": 79,
+  "minimality_breakdown": {
+    "no_speculative_infrastructure": 85,
+    "no_dead_or_duplicate_code": 72,
+    "appropriate_abstractions": 85,
+    "dependency_minimality": 75
+  },
+  "security_safety_score": 82,
+  "security_safety_breakdown": {
+    "auth_enforcement": 90,
+    "secret_handling": 70,
+    "input_safety": 72,
+    "unsafe_operations": 95
+  },
+  "review_confidence_score": 91,
+  "review_confidence_breakdown": {
+    "inspection_depth": 95,
+    "command_evidence": 92,
+    "issue_specificity": 90,
+    "uncertainty_handling": 88
+  },
+  "weighted_components": {
+    "task_fulfillment": 17.2,
+    "functional_correctness": 14.3,
+    "executability": 12.9,
+    "test_quality": 12.9,
+    "code_quality": 8.2,
+    "minimality": 7.9,
+    "security_safety": 4.1
+  },
+  "weighted_total": 77.5,
+  "verdict": "mixed",
+  "key_findings": [
+    "All 49 tests pass cleanly (pytest: 49 passed in ~1s) with dependencies already installed; project is coherent and runnable.",
+    "CRITICAL oversell bug: confirm_reservation moves a reservation PENDING->CONFIRMED and creates an order but never decrements SKU.quantity_on_hand. Since availability = on_hand - sum(PENDING), confirmed stock is released back to available. Demonstrated: 3 confirmed orders of qty 100 against on_hand=100 (sold 300 of 100).",
+    "Data-consistency bug in adjust_stock: repository commits the delta, then the service checks for negativity and raises InvalidStockError — but the negative value is already persisted. Demonstrated: rejected -100 adjustment left on_hand at -50.",
+    "Expired reservations are never swept and get_reserved_quantity counts all PENDING regardless of expires_at, so abandoned reservations lock stock indefinitely on the availability path (expiry only resolves lazily on a confirm attempt).",
+    "Clean, readable layering (models/repository/service/security/app) with sensible HTTP status codes (400/401/403/404/409/410) and good idempotency handling for both reservations and confirmations.",
+    "Minor cruft: pydantic-settings dependency unused, ErrorResponse model unused, `status` import unused in app.py, hardcoded API key 'test-key'."
+  ],
+  "score_rationale": {
+    "task_fulfillment": "All requested artifacts present (pyproject.toml, README.md, src/ package, tests/) and the full API surface is implemented: SKU create/get, stock adjust, reservation create/confirm/cancel, order list with pagination, idempotency keys, expiration, and API-key auth. Constraint adherence is dinged: a committed commerce.db sits in the workspace (ambient artifact from a prior run) and the README claims 'production-grade' while shipping a hardcoded key and no transaction safety.",
+    "functional_correctness": "The central inventory invariant is broken (oversell via confirm not decrementing on_hand, demonstrated), plus a persisted-negative-stock bug in adjust_stock and stock permanently locked by un-swept expired reservations. Edge handling for insufficient stock, idempotent retries, expiration-on-confirm, auth, and pagination is otherwise correct, and error semantics are clean, so the category is not a total failure but the core domain logic is unreliable.",
+    "executability": "Dependencies are pinned and importable; the full pytest suite passes (49 passed). The uvicorn entrypoint and src-layout package are plausible. Tests are well isolated via in-memory SQLite and a get_db dependency override. Slight risk: the app uses a cwd-relative sqlite:///commerce.db and a committed DB file is present, and packaging/wheel build and live uvicorn startup were not exercised.",
+    "test_quality": "Coverage spans the required scenarios at both service and API layers with realistic in-memory SQLAlchemy persistence and per-test isolation; assertions check quantities, statuses, and idempotent id equality, not just status codes. The gap that matters: no test asserts on_hand decreases after confirmation, which is exactly why the oversell defect went uncaught; no test exercises stock exhaustion across confirmed orders.",
+    "code_quality": "Readable, consistently sectioned modules with clear repository/service/schema/security boundaries and a named TTL constant. Maintainability suffers because the stock-commitment invariant is simply absent rather than localized and visible, and the README slightly overclaims ('production-grade') with no docstrings on service methods.",
+    "minimality": "No speculative queues/workers/CLIs/migrations. Points lost for an unused pydantic-settings dependency, an unused ErrorResponse model, and an unused `status` import in app.py; the repository/service split is justified by current behavior.",
+    "security_safety": "All mutating endpoints enforce verify_api_key (read endpoints intentionally open). No real secret is leaked, but the key is hardcoded and not env-configurable. Inputs are validated via Pydantic and pagination bounds, and ORM use avoids injection, but there are no positivity constraints on quantity/delta, allowing odd negative-quantity reservations.",
+    "review_confidence": "All source and test files were read, the declared test command was run (49 passed), and the two most serious bugs were reproduced with standalone scripts. Remaining uncertainty is limited to packaging/install build and concurrent-request behavior, which were not executed."
+  },
+  "instruction_failures": [
+    "README claims a 'production-grade' service but ships a hardcoded API key, no configuration layer (declared pydantic-settings is unused), and no transactional/locking safety.",
+    "A generated commerce.db artifact was left committed in the workspace, contrary to a clean fresh-workspace expectation; the app's sqlite:///commerce.db path is cwd-relative."
+  ],
+  "correctness_failures": [
+    "confirm_reservation (src/commerce_service/service.py:106-140) never decrements SKUEntity.quantity_on_hand; combined with availability = on_hand - sum(PENDING) in get_reserved_quantity (repository.py:132-141), confirmed orders free stock back to available, enabling unlimited oversell (demonstrated: 300 units sold against 100 on hand).",
+    "adjust_stock (service.py:47-55) relies on repository.update_sku_quantity (repository.py:32-38) which commits before the service's negativity check, so a rejected adjustment persists an invalid negative quantity (demonstrated on_hand=-50 after a 400).",
+    "Expiration is not reflected in availability: get_reserved_quantity counts every PENDING reservation regardless of expires_at and nothing sweeps expired reservations, so abandoned reservations lock inventory until someone attempts to confirm them.",
+    "create_reservation read-then-write (service.py:79-98) has a TOCTOU race with no row locking; under concurrency two requests can both pass the availability check and oversell."
+  ],
+  "execution_failures": [
+    "No execution failure observed: 49 tests passed. Packaging install (pip install -e .) and live uvicorn startup were not exercised in this review."
+  ],
+  "test_gaps": [
+    "No test verifies SKU.quantity_on_hand is reduced after confirming a reservation — the exact assertion that would have caught the oversell bug.",
+    "No test confirms that a rejected adjust_stock leaves the prior quantity unchanged (current test only checks the 400 status).",
+    "No test covers the availability impact of expired-but-unconfirmed reservations.",
+    "No negative/zero-quantity reservation validation test."
+  ],
+  "quality_notes": [
+    "Layering and naming are clear; HTTP status mapping (409 for state conflicts, 410 for expired) is thoughtful.",
+    "datetime.utcnow() is deprecated on this runtime (306 deprecation warnings) and Pydantic class-based Config is deprecated for V2; both are cosmetic but noted by the test run.",
+    "create_sku wraps creation in a broad `except Exception` -> 400 (app.py:65-69), which masks unexpected server errors as client errors."
+  ],
+  "unnecessary_code_examples": [
+    "pydantic-settings is declared in pyproject.toml dependencies but never imported or used anywhere in src/ or tests/.",
+    "ErrorResponse model (models.py:123-125) is defined but never referenced (no endpoint uses it as a response_model).",
+    "`status` is imported in app.py:1 but never used (literal status codes are used throughout)."
+  ],
+  "security_safety_notes": [
+    "All mutating endpoints depend on verify_api_key (app.py:63,88,108,140,157); read endpoints are intentionally unauthenticated.",
+    "API key is hardcoded as 'test-key' in security.py:8 with no environment/config override — acceptable as a demo default but not production-safe.",
+    "No positivity validation on reservation quantity or stock delta; negative quantity reservations are accepted and can inflate availability.",
+    "No shell/file/network side effects in request handling; SQLAlchemy ORM avoids SQL injection."
+  ],
+  "file_evidence": [
+    {"path": "src/commerce_service/service.py", "note": "confirm_reservation (106-140) creates order without decrementing on_hand; adjust_stock (47-55) validates after the repository already committed."},
+    {"path": "src/commerce_service/repository.py", "note": "get_reserved_quantity (132-141) sums only PENDING reservations ignoring expires_at; update_sku_quantity (32-38) commits the delta unconditionally."},
+    {"path": "src/commerce_service/app.py", "note": "Endpoints, auth dependencies, and HTTP status mapping; unused `status` import; broad except in create_sku; cwd-relative DATABASE_URL=sqlite:///commerce.db."},
+    {"path": "src/commerce_service/security.py", "note": "Hardcoded API key 'test-key'; 401 on wrong key, 403 on missing header via APIKeyHeader."},
+    {"path": "src/commerce_service/models.py", "note": "Clean ORM + Pydantic schemas; ReservationStatus enum; ErrorResponse defined but unused."},
+    {"path": "tests/test_service.py", "note": "Strong service-level coverage incl. expiration and canceled-key idempotency, but no on_hand-decrement-after-confirm assertion."},
+    {"path": "tests/test_api.py", "note": "API-level tests via TestClient with in-memory DB override; covers auth, pagination, idempotency, insufficient stock."},
+    {"path": "pyproject.toml", "note": "Pinned deps; pydantic-settings declared but unused; pytest asyncio_mode=auto; hatchling build."},
+    {"path": "commerce.db", "note": "Committed SQLite artifact present in workspace (empty tables) — ambient state left from a prior run."}
+  ],
+  "commands_run": [
+    "find . -type f (excluding caches) — listed project layout",
+    "python3 -c import fastapi,sqlalchemy,pydantic,httpx — deps available; pytest 7.4.3",
+    "sqlite3 inspection of commerce.db — tables skus/reservations/orders, 0 rows",
+    "python3 -m pytest -q — 49 passed, 306 warnings",
+    "python3 repro script — demonstrated oversell (300 sold vs 100 on hand)",
+    "python3 repro script — demonstrated adjust_stock persists -50 after rejected -100"
+  ],
+  "review_risk": "low — all source/tests read and the full suite run (49 passed) with two core bugs reproduced; not exercised: wheel build/editable install, live uvicorn startup, and concurrent-request behavior (TOCTOU race is reasoned, not load-tested)."
+}
+```

@@ -1,0 +1,153 @@
+All 41 tests pass, and I've confirmed the central correctness issue: **reservations never decrement stock**, so overselling is trivially possible (two orders of 100 units each from a stock of 100). The stock check only ever compares against the initial, never-reduced stock level. The README's claim that cancel "releases the stock hold" is false — there is no hold.
+
+```json
+{
+  "rubric_version": "benchmark-codegen-review-v1",
+  "score_scale": "0-100 per category",
+  "weights": {
+    "task_fulfillment": 0.20,
+    "functional_correctness": 0.25,
+    "executability": 0.15,
+    "test_quality": 0.15,
+    "code_quality": 0.10,
+    "minimality": 0.10,
+    "security_safety": 0.05
+  },
+  "task_fulfillment_score": 83,
+  "task_fulfillment_breakdown": {
+    "instruction_compliance": 85,
+    "required_artifacts": 95,
+    "feature_coverage": 80,
+    "constraint_adherence": 70
+  },
+  "functional_correctness_score": 63,
+  "functional_correctness_breakdown": {
+    "domain_invariants": 45,
+    "edge_case_behavior": 60,
+    "data_consistency": 60,
+    "error_semantics": 85
+  },
+  "executability_score": 88,
+  "executability_breakdown": {
+    "installability": 90,
+    "runtime_entrypoints": 85,
+    "command_result": 95,
+    "runtime_isolation": 80
+  },
+  "test_quality_score": 86,
+  "test_quality_breakdown": {
+    "required_test_coverage": 88,
+    "behavioral_assertions": 85,
+    "integration_realism": 88,
+    "repeatability": 90
+  },
+  "code_quality_score": 83,
+  "code_quality_breakdown": {
+    "readability": 88,
+    "maintainability": 78,
+    "boundary_design": 88,
+    "documentation_quality": 78
+  },
+  "minimality_score": 86,
+  "minimality_breakdown": {
+    "no_speculative_infrastructure": 90,
+    "no_dead_or_duplicate_code": 80,
+    "appropriate_abstractions": 85,
+    "dependency_minimality": 88
+  },
+  "security_safety_score": 85,
+  "security_safety_breakdown": {
+    "auth_enforcement": 90,
+    "secret_handling": 65,
+    "input_safety": 88,
+    "unsafe_operations": 95
+  },
+  "review_confidence_score": 90,
+  "review_confidence_breakdown": {
+    "inspection_depth": 92,
+    "command_evidence": 92,
+    "issue_specificity": 90,
+    "uncertainty_handling": 85
+  },
+  "weighted_components": {
+    "task_fulfillment": 16.6,
+    "functional_correctness": 15.8,
+    "executability": 13.2,
+    "test_quality": 12.9,
+    "code_quality": 8.3,
+    "minimality": 8.6,
+    "security_safety": 4.3
+  },
+  "weighted_total": 79.6,
+  "verdict": "good",
+  "key_findings": [
+    "Central domain invariant broken: stock is never decremented on reservation or confirmation, so overselling is trivially possible. Verified by script — two orders of 100 units each succeed against a stock of 100, and stock_level remains 100 (src/commerce_service/service.py:58-141).",
+    "All 41 tests pass cleanly (PYTHONPATH=src python3 -m pytest), and the layering (models/repository/service/security/app) is clean and readable.",
+    "Stock check in create_reservation (service.py:87) only compares against the never-reduced initial stock, making the InsufficientStockError correct only for the very first reservation against a SKU.",
+    "Good HTTP error semantics: 409 insufficient stock, 404 not found, 410 expired, 403 auth, 422 validation.",
+    "README claims cancel 'releases the stock hold' (README.md:46, service.py:144) but no stock hold exists — documentation overstates behavior.",
+    "Hardcoded API key 'test-key-12345' in security.py:14 with a comment acknowledging production should use a secure store; key is not pulled from env/config.",
+    "A populated commerce.db (49KB) is committed into the fresh workspace and the app opens a relative ./commerce.db at import (app.py:26), which is ambient state."
+  ],
+  "score_rationale": {
+    "task_fulfillment": "All requested artifacts (pyproject, README, src package, tests) and the full endpoint surface — SKU create/adjust, reservation create/confirm/cancel, order listing, health, idempotency, auth, pagination — are present. Marked down for a committed DB file polluting the 'fresh workspace' and an in-code secret rather than config.",
+    "functional_correctness": "Idempotency, expiration (lazy, marks EXPIRED), and order/reservation state transitions are correct, but the core stock-availability invariant is violated: no path decrements stock, so reservations don't hold inventory and overselling is possible (verified empirically). adjust_stock also permits negative stock. confirm performs two separate commits (mark_confirmed then create_order) with no transaction.",
+    "executability": "Dependencies are pinned and plausible; the package imports and runs, and the declared pytest command yields 41 passing tests. Slight deductions: app creates/uses a relative ./commerce.db at import time and a stale DB file ships in the workspace.",
+    "test_quality": "Coverage spans both service and API layers for happy paths, insufficient stock, idempotency (including confirmed-key reuse), expiration, auth (missing/invalid key), pagination bounds, and not-found cases, with behavioral assertions on quantities/statuses/stock. Gap: no test asserts that stock is held/decremented, which is exactly why the oversell bug went undetected. Tests isolate state via in-memory and temp-file SQLite and clean up.",
+    "code_quality": "Readable names, clear section comments, and coherent module boundaries (repository vs service vs schemas vs security vs routing). Maintainability and documentation are dinged because the missing stock-hold logic leaves the key invariant invisible and the README describes behavior the code does not implement.",
+    "minimality": "No speculative queues, workers, migrations, or CLIs; dependencies are justified. Minor dead code: db_session from init_db() is unused in app.py:26; service layer hand-builds response dicts rather than reusing the Pydantic schemas, a mild duplication.",
+    "security_safety": "All mutating endpoints enforce the verify_api_key dependency; Pydantic field bounds and ORM parameterization guard inputs; no unsafe shell/file/network operations. Main weakness is the hardcoded API key constant instead of reading from environment/config.",
+    "review_confidence": "Read every source and test file, ran the full suite (41 passed), and wrote a short script that empirically demonstrated the overselling bug. Findings cite concrete files and lines."
+  },
+  "instruction_failures": [
+    "A pre-populated commerce.db is present in the workspace, conflicting with the fresh-workspace / production-minded expectation.",
+    "API key is hardcoded in source (security.py:14) rather than sourced from configuration/environment."
+  ],
+  "correctness_failures": [
+    "Stock is never decremented on reservation creation or confirmation (service.py / repository.py), allowing unlimited overselling — verified: two 100-unit orders succeed against stock of 100, stock stays 100.",
+    "InsufficientStockError only protects against the first reservation; subsequent reservations always see the original stock.",
+    "adjust_stock has no lower bound, allowing stock_level to go negative (service.py:52, repository.py:26).",
+    "confirm_reservation commits mark_confirmed and create_order as separate transactions with no rollback if order creation fails (service.py:129-132), risking a CONFIRMED reservation with no order."
+  ],
+  "execution_failures": [
+    "App opens a relative ./commerce.db at import (app.py:26), so the entrypoint depends on the current working directory and creates/uses ambient files."
+  ],
+  "test_gaps": [
+    "No test verifies that a confirmed/created reservation reduces available stock — the exact behavior that is broken — so the oversell bug is undetected.",
+    "No test for sequential reservations exhausting stock (reserve, confirm, then attempt to over-reserve).",
+    "No test for negative-stock prevention via adjust_stock.",
+    "No test for duplicate SKU name (unique constraint) error path, which currently surfaces as a generic 400."
+  ],
+  "quality_notes": [
+    "README.md:46 and service.py:144 describe cancel as 'releasing the stock hold', but no stock hold exists.",
+    "Service methods manually construct response dicts that duplicate the Pydantic response schemas (models.py), a minor maintainability/duplication smell.",
+    "Pervasive datetime.utcnow() usage triggers deprecation warnings on Python 3.12 (service.py:93,118; models.py:107,123)."
+  ],
+  "unnecessary_code_examples": [
+    "app.py:26 — `engine, db_session = init_db()` binds db_session which is never used (get_db builds its own Session).",
+    "SQLAlchemy relationships (SKU.reservations/orders, Reservation.order) are declared but not exercised by any code path or query."
+  ],
+  "security_safety_notes": [
+    "Hardcoded API key 'test-key-12345' in security.py:14; should be read from environment/secret store even for defaults.",
+    "Missing API key returns 403 (arguably should be 401), but auth is consistently enforced on all mutating endpoints via Depends(verify_api_key).",
+    "Inputs validated with Pydantic bounds and queried via ORM, avoiding injection; no shell/network/file side effects."
+  ],
+  "file_evidence": [
+    {"path": "src/commerce_service/service.py", "note": "create_reservation (58-105) checks stock but never decrements; confirm_reservation (107-141) creates an order without reducing stock — root cause of overselling."},
+    {"path": "src/commerce_service/repository.py", "note": "No method decrements stock on reservation/order; adjust_stock (26-32) permits negative results; each operation commits independently."},
+    {"path": "src/commerce_service/security.py", "note": "Hardcoded valid_key 'test-key-12345' (line 14); enforced on mutations, returns 403 on missing/invalid."},
+    {"path": "src/commerce_service/app.py", "note": "init_db() opens relative ./commerce.db at import (26); broad `except Exception -> 400` handlers; mutations gated by Depends(verify_api_key); GET /orders is public."},
+    {"path": "src/commerce_service/models.py", "note": "Coherent Pydantic + ORM models; idempotency_key has a unique index; init_db default sqlite:///./commerce.db."},
+    {"path": "tests/test_service.py", "note": "20 service-layer tests covering happy paths, insufficient stock, idempotency, expiration, transitions, pagination — but none assert stock is held/decremented."},
+    {"path": "tests/test_api.py", "note": "21 API tests via TestClient with temp-file SQLite and get_db override; covers auth, 409/404/410/422 paths and pagination."},
+    {"path": "commerce.db", "note": "49KB populated SQLite file committed into the supposedly fresh workspace — ambient state."}
+  ],
+  "commands_run": [
+    "find . -type f (excluding caches) — listed project layout",
+    "python3 -c 'import fastapi, sqlalchemy, pydantic, httpx, pytest' — confirmed deps available (fastapi 0.109.0, sqlalchemy 2.0.23, pydantic 2.5.0)",
+    "PYTHONPATH=src python3 -m pytest tests/ -q — 41 passed, 116 warnings in 0.79s",
+    "PYTHONPATH=src python3 -c '<oversell repro>' — two 100-unit orders succeed against stock of 100; stock_level stays 100"
+  ],
+  "review_risk": "low — all source and test files were read, the full suite was run (41 passed), and the overselling invariant violation was confirmed by direct execution; only the deployed-server runtime under uvicorn was not exercised live."
+}
+```

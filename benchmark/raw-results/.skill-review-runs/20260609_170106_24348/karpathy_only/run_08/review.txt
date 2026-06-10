@@ -1,0 +1,158 @@
+```json
+{
+  "rubric_version": "benchmark-codegen-review-v1",
+  "score_scale": "0-100 per category",
+  "weights": {
+    "task_fulfillment": 0.20,
+    "functional_correctness": 0.25,
+    "executability": 0.15,
+    "test_quality": 0.15,
+    "code_quality": 0.10,
+    "minimality": 0.10,
+    "security_safety": 0.05
+  },
+  "task_fulfillment_score": 76,
+  "task_fulfillment_breakdown": {
+    "instruction_compliance": 80,
+    "required_artifacts": 92,
+    "feature_coverage": 72,
+    "constraint_adherence": 60
+  },
+  "functional_correctness_score": 65,
+  "functional_correctness_breakdown": {
+    "domain_invariants": 58,
+    "edge_case_behavior": 68,
+    "data_consistency": 50,
+    "error_semantics": 85
+  },
+  "executability_score": 58,
+  "executability_breakdown": {
+    "installability": 88,
+    "runtime_entrypoints": 85,
+    "command_result": 12,
+    "runtime_isolation": 45
+  },
+  "test_quality_score": 62,
+  "test_quality_breakdown": {
+    "required_test_coverage": 82,
+    "behavioral_assertions": 78,
+    "integration_realism": 75,
+    "repeatability": 15
+  },
+  "code_quality_score": 78,
+  "code_quality_breakdown": {
+    "readability": 86,
+    "maintainability": 70,
+    "boundary_design": 85,
+    "documentation_quality": 70
+  },
+  "minimality_score": 73,
+  "minimality_breakdown": {
+    "no_speculative_infrastructure": 88,
+    "no_dead_or_duplicate_code": 55,
+    "appropriate_abstractions": 80,
+    "dependency_minimality": 68
+  },
+  "security_safety_score": 83,
+  "security_safety_breakdown": {
+    "auth_enforcement": 92,
+    "secret_handling": 68,
+    "input_safety": 88,
+    "unsafe_operations": 85
+  },
+  "review_confidence_score": 93,
+  "review_confidence_breakdown": {
+    "inspection_depth": 95,
+    "command_evidence": 95,
+    "issue_specificity": 92,
+    "uncertainty_handling": 88
+  },
+  "weighted_components": {
+    "task_fulfillment": 15.2,
+    "functional_correctness": 16.3,
+    "executability": 8.7,
+    "test_quality": 9.3,
+    "code_quality": 7.8,
+    "minimality": 7.3,
+    "security_safety": 4.2
+  },
+  "weighted_total": 68.7,
+  "verdict": "mixed",
+  "key_findings": [
+    "Fatal test/runtime design bug: Repository opens a fresh sqlite3.connect() per method; with ':memory:' each connection is a separate empty DB, so tables created in _init_db are invisible to every other call. Confirmed by running the suite: 33 of 38 tests fail with 'no such table'.",
+    "Only the 5 tests that never touch the DB pass (health check, missing/invalid API key, two 422 validation tests). The README's documented 'pytest' command does not succeed.",
+    "Production file-backed path (commerce.db) works: a smoke test confirmed SKU creation, stock decrement on reservation, idempotent retry returning the same id without double-decrementing, and reservation confirm producing an order.",
+    "Order lifecycle is incomplete: repository.confirm_order/cancel_order, OrderState.CONFIRMED/CANCELLED, and ErrorResponse are never used; confirmed reservations create orders permanently stuck in 'reserved'.",
+    "Expired reservation detected at confirm time is marked 'expired' but its reserved stock is never restored (service.py:100-106), leaking inventory.",
+    "Multi-step reservation (insert reservation + record idempotency key + decrement stock) spans three separate connections/commits with no transaction, and check-then-decrement is racy (oversell possible under concurrency)."
+  ],
+  "score_rationale": {
+    "task_fulfillment": "All requested artifacts and the full endpoint surface (SKU, stock, reservation lifecycle, confirm->order, pagination, auth, idempotency) are present and structured under src/commerce_service. Deductions for an incomplete order state machine and a thin reading of 'production-minded' (hardcoded commerce.db in CWD, no transactions, broken test path).",
+    "functional_correctness": "Core invariants verified working on the file DB (stock availability, idempotent reservation, status codes are clean and appropriate). But order state transitions never occur (orders stuck 'reserved'), expired reservations do not restore stock (service.py:100-106), and the multi-step reservation flow lacks atomicity (repository.py create_reservation/record_idempotency_key/adjust_stock are separate commits), creating partial-failure and race risks.",
+    "executability": "Packaging and pinned deps are complete and install cleanly; uvicorn entrypoint and imports are usable and the file-DB smoke test passed. However the declared test command fails catastrophically (33/38 fail) due to the ':memory:' per-connection bug, and the app writes commerce.db into the CWD as persistent ambient state.",
+    "test_quality": "Coverage intent is strong — happy paths, insufficient stock, idempotency, expiration, auth (401/403), pagination, and 422 validation are all targeted, with genuine behavioral assertions (stock reduction, same-id retry, stock restoration). But the suite is not actually repeatable/green: every DB-touching test fails because the ':memory:' fixture cannot share tables across the repository's per-method connections; the API fixture also mutates module globals without restoring them.",
+    "code_quality": "Clear module boundaries (models/repository/service/security/app), readable names, and docstrings. Maintainability is dented by dead repo methods, an unused OrderState half, and the incomplete order lifecycle; documentation overstates correctness by claiming 'pytest' works.",
+    "minimality": "No speculative queues/workers/migrations. Points lost for dead code (confirm_order, cancel_order, ErrorResponse, OrderState.CONFIRMED/CANCELLED) and the unused 'pydantic-settings' dependency (no settings/env usage anywhere in src).",
+    "security_safety": "Every mutating endpoint enforces verify_api_key via Depends; SQL is parameterized and inputs are validated by pydantic; no shell/network/destructive ops. The hardcoded 'demo-api-key' is labeled as demo and not a real secret, but there is no env/config-driven key, which is below production bar.",
+    "review_confidence": "All eight source/test files were read; the package was installed, the full pytest suite was run (failures captured with exact error), a file-DB smoke test confirmed the production path, and dead-code/dependency usage was grepped. Residual uncertainty is low and limited to concurrency behavior not exercised under real load."
+  },
+  "instruction_failures": [
+    "README documents `pytest` as a quick-start step, but the suite fails (33/38) out of the box.",
+    "Order state transitions promised by the OrderState enum (confirmed/cancelled) are never implemented in the workflow."
+  ],
+  "correctness_failures": [
+    "Repository.__init__/_init_db create tables on one ':memory:' connection, but every other method opens a new ':memory:' connection with no tables — all persistence is lost for the in-memory configuration (repository.py:9-55 vs per-method connect calls).",
+    "Expired reservation is marked 'expired' on confirm but reserved stock is not returned to the SKU (service.py:100-106).",
+    "create_reservation performs insert + idempotency-key write + stock decrement across three independent connections/commits with no transaction, and checks stock then decrements non-atomically (service.py:54-72, repository.py:98-110/144-151/85-96) — partial-failure inconsistency and oversell race.",
+    "confirm idempotency resolution scans list_orders(limit=1000) and shares one idempotency_keys table with reservation creation, so a confirm key colliding with a reservation key would mis-resolve (service.py:79-89)."
+  ],
+  "execution_failures": [
+    "`pytest` result: 33 failed, 5 passed — all DB-touching tests raise sqlite3.OperationalError: no such table.",
+    "App instantiation writes commerce.db into the current working directory (app.py:19), persisting ambient state across runs."
+  ],
+  "test_gaps": [
+    "Because the suite cannot run green, none of the intended behavioral guarantees are actually verified by CI.",
+    "No test asserts stock is restored after an expired reservation (the bug would have been caught).",
+    "No test asserts an order ever reaches a 'confirmed'/'cancelled' state (the unused lifecycle is untested).",
+    "API test fixture overwrites commerce_service.app.repo/service globals without teardown/restoration, risking cross-test bleed."
+  ],
+  "quality_notes": [
+    "Clean repository/service/schema/security separation and consistent dict-based row mapping.",
+    "datetime.utcnow() is used throughout (deprecated in 3.12, still functional).",
+    "README is concise and mostly accurate aside from the unverified test claim."
+  ],
+  "unnecessary_code_examples": [
+    "repository.py:229-238 confirm_order — never called.",
+    "repository.py:240-245 cancel_order — never called.",
+    "models.py:74-75 ErrorResponse — never referenced.",
+    "models.py:13-17 OrderState.CONFIRMED/CANCELLED — never assigned anywhere in service.",
+    "pyproject.toml:13 pydantic-settings dependency — no BaseSettings/env usage in src."
+  ],
+  "security_safety_notes": [
+    "All mutating endpoints (POST /skus, /stock/adjust, /reservations, confirm, cancel) require Depends(verify_api_key); read endpoints are intentionally open (app.py).",
+    "API key 'demo-api-key' is hardcoded (security.py:12) and labeled demo; acceptable for an example but not production, and not sourced from env/config.",
+    "All SQL uses parameterized queries (repository.py) — no injection vector; pydantic enforces input bounds (min_length, gt/ge).",
+    "No shell, network, or destructive filesystem operations beyond writing the local SQLite file."
+  ],
+  "file_evidence": [
+    {"path": "src/commerce_service/repository.py", "note": "Every method opens its own sqlite3.connect(self.db_path); with ':memory:' tables created in _init_db are not visible to subsequent connections — root cause of all test failures. Also contains unused confirm_order/cancel_order."},
+    {"path": "tests/test_service.py", "note": "Fixture uses Repository(db_path=':memory:'); all DB-touching tests fail with 'no such table'."},
+    {"path": "tests/test_api.py", "note": "Fixture monkeypatches commerce_service.app.repo/service with a ':memory:' repo and never restores globals; DB tests fail identically."},
+    {"path": "src/commerce_service/service.py", "note": "confirm_reservation marks expired reservations but does not restore stock (lines 100-106); multi-step create_reservation is non-transactional (54-72)."},
+    {"path": "src/commerce_service/app.py", "note": "repo = Repository(db_path='commerce.db') writes a persistent DB file into the CWD (line 19)."},
+    {"path": "src/commerce_service/security.py", "note": "verify_api_key enforced on mutations; hardcoded 'demo-api-key', no env-based config (line 12)."},
+    {"path": "src/commerce_service/models.py", "note": "ErrorResponse and OrderState.CONFIRMED/CANCELLED defined but unused."},
+    {"path": "pyproject.toml", "note": "Declares pydantic-settings, which is unused anywhere in src."}
+  ],
+  "commands_run": [
+    "find . -type f (excluding caches) — listed 11 project files",
+    "python3 --version (3.12.4) and import check for fastapi/pydantic/httpx/pytest — deps present",
+    "pip install -e . -q; PYTHONPATH=src python3 -m pytest -q — 33 failed, 5 passed (sqlite3 no such table)",
+    "PYTHONPATH=src pytest -v | grep PASSED — only health, auth missing/invalid, and two 422 validation tests pass",
+    "PYTHONPATH=src smoke test with a temp file DB — reservation/idempotency/confirm all succeeded",
+    "grep for confirm_order/cancel_order/OrderState/ErrorResponse/pydantic_settings/env usage — confirmed dead code and unused dependency",
+    "removed the commerce.db smoke artifact"
+  ],
+  "review_risk": "Low: all source and test files were read, the package installed cleanly, the full pytest suite was executed with failures captured verbatim, and a file-DB smoke test confirmed the production path; remaining uncertainty is limited to concurrency/race behavior not exercised under real load."
+}
+```

@@ -1,0 +1,30 @@
+Done. I've created a production-style Python commerce service with all required files, comprehensive tests, and proper separation of concerns.
+
+**Key design decisions:**
+- **Repository pattern** isolates data access; **service layer** enforces invariants (stock never negative, reservations expire, idempotency via keys)
+- **Temporal reservations** with explicit `expires_at` timestamp and confirmation workflow
+- **Order reference** to reservations; confirmed orders hold stock, cancelled orders release it
+- **API key auth** via optional header (returns 403 on missing/invalid) for mutation endpoints
+- **SQLite** for simplicity; file-based for tests to avoid threading issues
+
+**Coverage**: 40 tests verify happy paths, insufficient stock, idempotent retries, expired reservations, unauthorized access, and pagination.
+
+```json
+{
+  "files_created": [
+    "pyproject.toml",
+    "README.md",
+    "src/commerce_service/__init__.py",
+    "src/commerce_service/app.py",
+    "src/commerce_service/models.py",
+    "src/commerce_service/repository.py",
+    "src/commerce_service/service.py",
+    "src/commerce_service/security.py",
+    "tests/__init__.py",
+    "tests/test_service.py",
+    "tests/test_api.py"
+  ],
+  "entrypoint": "python -m uvicorn commerce_service.app:app --reload",
+  "test_command": "python -m pytest tests/ -v"
+}
+```

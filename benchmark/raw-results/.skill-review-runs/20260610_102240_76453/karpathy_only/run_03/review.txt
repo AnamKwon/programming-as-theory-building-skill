@@ -1,0 +1,160 @@
+I have a complete picture. I inspected all 11 files, ran the test suite (29 pass with `src` on path), and reproduced a critical runtime defect: the default `Repository()` (in‑memory, exactly what `app.py` and the README's `uvicorn` command use) closes its shared connection on the first write and returns `400 "Cannot operate on a closed database"` for every DB operation. The tests only pass because they override the repo with a file path, masking the bug.
+
+```json
+{
+  "rubric_version": "benchmark-codegen-review-v1",
+  "score_scale": "0-100 per category",
+  "weights": {
+    "task_fulfillment": 0.20,
+    "functional_correctness": 0.25,
+    "executability": 0.15,
+    "test_quality": 0.15,
+    "code_quality": 0.10,
+    "minimality": 0.10,
+    "security_safety": 0.05
+  },
+  "task_fulfillment_score": 74,
+  "task_fulfillment_breakdown": {
+    "instruction_compliance": 70,
+    "required_artifacts": 90,
+    "feature_coverage": 65,
+    "constraint_adherence": 70
+  },
+  "functional_correctness_score": 64,
+  "functional_correctness_breakdown": {
+    "domain_invariants": 68,
+    "edge_case_behavior": 72,
+    "data_consistency": 50,
+    "error_semantics": 66
+  },
+  "executability_score": 64,
+  "executability_breakdown": {
+    "installability": 68,
+    "runtime_entrypoints": 35,
+    "command_result": 68,
+    "runtime_isolation": 85
+  },
+  "test_quality_score": 71,
+  "test_quality_breakdown": {
+    "required_test_coverage": 58,
+    "behavioral_assertions": 72,
+    "integration_realism": 80,
+    "repeatability": 74
+  },
+  "code_quality_score": 76,
+  "code_quality_breakdown": {
+    "readability": 82,
+    "maintainability": 72,
+    "boundary_design": 82,
+    "documentation_quality": 68
+  },
+  "minimality_score": 56,
+  "minimality_breakdown": {
+    "no_speculative_infrastructure": 55,
+    "no_dead_or_duplicate_code": 50,
+    "appropriate_abstractions": 72,
+    "dependency_minimality": 45
+  },
+  "security_safety_score": 83,
+  "security_safety_breakdown": {
+    "auth_enforcement": 90,
+    "secret_handling": 65,
+    "input_safety": 85,
+    "unsafe_operations": 90
+  },
+  "review_confidence_score": 91,
+  "review_confidence_breakdown": {
+    "inspection_depth": 95,
+    "command_evidence": 92,
+    "issue_specificity": 90,
+    "uncertainty_handling": 85
+  },
+  "weighted_components": {
+    "task_fulfillment": 14.8,
+    "functional_correctness": 16.0,
+    "executability": 9.6,
+    "test_quality": 10.7,
+    "code_quality": 7.6,
+    "minimality": 5.6,
+    "security_safety": 4.2
+  },
+  "weighted_total": 68.4,
+  "verdict": "mixed",
+  "key_findings": [
+    "CRITICAL: The default Repository() uses ':memory:' and shares one connection, but every repository method calls conn.close() at the end. The first write closes the shared connection, and all subsequent DB operations fail. Reproduced via TestClient against the shipped app: POST /skus returns 400 {'detail': 'Cannot operate on a closed database.'}. This is exactly the configuration used by app.py:26 and the README 'uvicorn commerce_service.app:app' command, so the runnable app is non-functional.",
+    "All 29 tests pass — but only because both fixtures override _repo/_service with a FILE-based sqlite path (tests/test_api.py:14-19, tests/test_service.py:18-21). The test suite never exercises the default in-memory mode, giving false confidence and hiding the production-breaking bug.",
+    "Orders cannot be created through the API. There is no POST /orders endpoint and the service never calls repo.create_order/confirm_order/cancel_order. Order state transitions (OPEN/CONFIRMED/CANCELLED) are unreachable; GET /orders always returns []. README's 'Orders aggregate multiple reservations' (README.md:36) describes a feature with no entry point.",
+    "Two declared dependencies are entirely unused: SQLAlchemy (pyproject.toml:15 — repository uses raw sqlite3) and pydantic-settings (pyproject.toml:14 — no Settings class anywhere).",
+    "Expiration is lazy and only swept inside confirm_reservation (service.py:85). get_reserved_stock counts all PENDING rows regardless of expiry (repository.py:106-119), so an expired-but-unswept reservation keeps holding stock against new reservations.",
+    "No test covers the expiration path (ReservationExpiredError / 410), which the rubric explicitly requires."
+  ],
+  "score_rationale": {
+    "task_fulfillment": "Project structure, README, SKU + reservation lifecycle, idempotency, auth, and pagination are present and match the described contract. Docked for the non-functional default runtime and the missing order-creation workflow despite the README advertising order aggregation.",
+    "functional_correctness": "Reservation/stock/idempotency/state-transition logic is correct in file-backed mode and edge cases (409 insufficient, 410 expired, 404 not found, 403 unauthorized) are handled. Heavily docked on data_consistency: the default in-memory mode is fully broken, expiration is lazy so stock accounting drifts, and the reserve path is read-then-write (TOCTOU) with per-call connections rather than a transaction.",
+    "executability": "pyproject pins deps and the app object imports cleanly, and tests pass with src on the path. But the documented runtime entrypoint is broken at first DB write (in-memory bug), and 'pytest tests/' as documented fails with ModuleNotFoundError unless the package is installed (src layout, no conftest/path shim); I had to set PYTHONPATH=src. Isolation itself is clean (tempdirs, no parent reads).",
+    "test_quality": "Good integration realism (TestClient + real sqlite) and behavioral assertions on stock/available/reserved. Missing the required expiration test, and the API pagination test (test_list_orders_pagination) creates SKUs instead of orders and only asserts the echoed offset/limit, proving nothing about order paging. Repeatability is fine but the fixtures mask the in-memory defect.",
+    "code_quality": "Clean module boundaries (models/repository/service/security/app), clear names, readable control flow. Docked for repetitive open/commit/close boilerplate in every repo method, a duplicated utc_now() helper in both repository.py and service.py, and README/design notes that overstate behavior (orders, expiration).",
+    "minimality": "Significant: SQLAlchemy and pydantic-settings are declared but never used; an entire order subsystem (order_reservations table, create/confirm/cancel/get order) is unreachable dead code; ErrorResponse model is unused; timedelta is imported but unused in repository.py.",
+    "security_safety": "All mutating endpoints and /orders enforce the X-API-Key dependency (403 on missing/invalid, covered by tests). SQL is parameterized and inputs are validated by pydantic (min_length, gt=0). Minor: the only valid key is hardcoded in security.py with no env/config path (pydantic-settings was available but unused).",
+    "review_confidence": "All 11 source/test files read, dependencies confirmed present, the full suite executed, and the critical in-memory bug reproduced directly against the shipped app. Remaining uncertainty is limited to whether hatchling's default packaging discovers src/commerce_service during 'pip install -e'."
+  },
+  "instruction_failures": [
+    "Documented run path 'pip install -e \".[dev]\"' then 'pytest tests/' is not verified to work; with the src layout and no path configuration, 'pytest tests/' fails ModuleNotFoundError unless the editable install succeeds and is run first.",
+    "README advertises order aggregation but no API exists to create orders."
+  ],
+  "correctness_failures": [
+    "Default in-memory Repository is unusable: shared connection is closed by the first conn.close(), so the running app (app.py:26) returns 400 'Cannot operate on a closed database.' for all DB operations (reproduced).",
+    "Expired reservations still occupy stock until a confirm call sweeps them; get_reserved_stock ignores expires_at (repository.py:106-119).",
+    "Order state transitions are dead — no path creates or transitions an order through the API."
+  ],
+  "execution_failures": [
+    "uvicorn commerce_service.app:app is non-functional for any DB write under the default in-memory repository.",
+    "pytest tests/ (as documented) fails to import commerce_service without an editable install / PYTHONPATH=src."
+  ],
+  "test_gaps": [
+    "No expiration test (ReservationExpiredError / HTTP 410) despite being a required scenario.",
+    "API-level order pagination is not genuinely tested: test_list_orders_pagination creates SKUs, never orders, and only asserts echoed offset/limit.",
+    "No test runs against the default in-memory repository, so the production-breaking connection bug is never caught.",
+    "No test for canceling a confirmed reservation, double-confirm/double-cancel state transitions via API, or stock release after cancellation.",
+    "No test for adjust_stock driving stock below already-reserved quantity."
+  ],
+  "quality_notes": [
+    "utc_now() is duplicated in repository.py:7 and service.py:14.",
+    "Repository repeats connect/commit/close boilerplate in ~15 methods; a context manager would localize it.",
+    "Broad 'except Exception -> 400' in every app.py handler masks internal errors (the closed-DB ProgrammingError surfaces to clients as a 400 business error).",
+    "README design notes overstate behavior: expiration is lazy (only on confirm), and order aggregation has no implementation."
+  ],
+  "unnecessary_code_examples": [
+    "SQLAlchemy dependency (pyproject.toml:15) — never imported; raw sqlite3 is used instead.",
+    "pydantic-settings dependency (pyproject.toml:14) — no settings class exists.",
+    "repository.py order subsystem: create_order/get_order/get_order_reservations/list_orders/confirm_order/cancel_order and the order_reservations table — confirm_order/cancel_order/get_order are unreachable from any endpoint.",
+    "ErrorResponse model (models.py:71-72) is never referenced.",
+    "Unused 'timedelta' import in repository.py:2.",
+    "OrderStatus imported in test_service.py:5 but never used."
+  ],
+  "security_safety_notes": [
+    "Auth dependency verify_api_key is applied to all SKU/reservation mutations and GET /orders; tested for missing and invalid keys (403).",
+    "All SQL uses parameterized placeholders; no string interpolation — no injection vector observed.",
+    "Inputs validated via pydantic constraints (Field min_length, gt=0) and Query bounds (ge/le) on pagination.",
+    "Only valid API key is hardcoded in security.py:6 with no environment override; acceptable as a placeholder but not production-configurable."
+  ],
+  "file_evidence": [
+    {"path": "src/commerce_service/repository.py", "note": "_get_connection() returns a shared self._connection for ':memory:' (lines 17-26) yet every method calls conn.close(); first write permanently closes the DB. timedelta imported (line 2) but unused. Order methods (214-281) partly unreachable."},
+    {"path": "src/commerce_service/app.py", "note": "Line 26 instantiates Repository() with the broken in-memory default; no POST /orders endpoint exists; every handler wraps logic in 'except Exception -> 400' (e.g. lines 39-40)."},
+    {"path": "src/commerce_service/service.py", "note": "Reservation/idempotency/state logic is sound; expiration swept only in confirm_reservation (line 85); duplicate utc_now() at line 14."},
+    {"path": "src/commerce_service/security.py", "note": "verify_api_key enforces X-API-Key, 403 on invalid; single hardcoded key at line 6."},
+    {"path": "src/commerce_service/models.py", "note": "Pydantic schemas with validation; ErrorResponse (71-72) unused."},
+    {"path": "tests/test_api.py", "note": "Fixture (14-19) overrides _repo/_service with a file DB, bypassing the in-memory bug; pagination test (212-224) creates SKUs not orders and only asserts echoed offset/limit."},
+    {"path": "tests/test_service.py", "note": "Covers stock/idempotency/cancel/confirm and real order pagination via direct repo.create_order; no expiration test."},
+    {"path": "pyproject.toml", "note": "Declares sqlalchemy and pydantic-settings (lines 14-15) that are never imported; hatchling build with src layout not verified."}
+  ],
+  "commands_run": [
+    "find . -type f (excluding caches) — listed 11 project files",
+    "python3 -c 'import fastapi, sqlalchemy, pydantic, httpx, pytest' — deps present",
+    "python3 -m pytest tests/ -q — 2 collection errors (ModuleNotFoundError: commerce_service)",
+    "PYTHONPATH=src python3 -m pytest tests/ -q — 29 passed",
+    "PYTHONPATH=src python3 -c '<TestClient against app.py default repo>' — POST /skus returned 400 'Cannot operate on a closed database.'"
+  ],
+  "review_risk": "low — all files read, the full suite was run both as-documented (fails to import) and with PYTHONPATH=src (29 pass), and the critical in-memory connection defect was reproduced directly; only residual uncertainty is whether hatchling's default packaging discovers src/commerce_service during an editable install."
+}
+```

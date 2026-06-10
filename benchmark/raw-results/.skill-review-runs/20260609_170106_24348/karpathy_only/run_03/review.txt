@@ -1,0 +1,150 @@
+The app works correctly against its real engine (full reservation→confirm→order flow, idempotency, insufficient-stock all behave correctly). The problem is the **API test suite is broken**: the in-memory SQLite fixture lacks `StaticPool`/`check_same_thread`, so TestClient's request thread sees "no such table" — 11 of 30 tests fail on the declared `pytest` command. Also, importing `app.py` creates `commerce.db` in CWD as an import side effect, and there's no expiration test. I have enough evidence to score.
+
+```json
+{
+  "rubric_version": "benchmark-codegen-review-v1",
+  "score_scale": "0-100 per category",
+  "weights": {
+    "task_fulfillment": 0.20,
+    "functional_correctness": 0.25,
+    "executability": 0.15,
+    "test_quality": 0.15,
+    "code_quality": 0.10,
+    "minimality": 0.10,
+    "security_safety": 0.05
+  },
+  "task_fulfillment_score": 86,
+  "task_fulfillment_breakdown": {
+    "instruction_compliance": 85,
+    "required_artifacts": 90,
+    "feature_coverage": 90,
+    "constraint_adherence": 80
+  },
+  "functional_correctness_score": 83,
+  "functional_correctness_breakdown": {
+    "domain_invariants": 88,
+    "edge_case_behavior": 85,
+    "data_consistency": 78,
+    "error_semantics": 82
+  },
+  "executability_score": 68,
+  "executability_breakdown": {
+    "installability": 90,
+    "runtime_entrypoints": 88,
+    "command_result": 35,
+    "runtime_isolation": 60
+  },
+  "test_quality_score": 66,
+  "test_quality_breakdown": {
+    "required_test_coverage": 70,
+    "behavioral_assertions": 80,
+    "integration_realism": 65,
+    "repeatability": 50
+  },
+  "code_quality_score": 86,
+  "code_quality_breakdown": {
+    "readability": 88,
+    "maintainability": 85,
+    "boundary_design": 90,
+    "documentation_quality": 80
+  },
+  "minimality_score": 87,
+  "minimality_breakdown": {
+    "no_speculative_infrastructure": 90,
+    "no_dead_or_duplicate_code": 82,
+    "appropriate_abstractions": 85,
+    "dependency_minimality": 90
+  },
+  "security_safety_score": 81,
+  "security_safety_breakdown": {
+    "auth_enforcement": 90,
+    "secret_handling": 60,
+    "input_safety": 88,
+    "unsafe_operations": 85
+  },
+  "review_confidence_score": 92,
+  "review_confidence_breakdown": {
+    "inspection_depth": 95,
+    "command_evidence": 92,
+    "issue_specificity": 90,
+    "uncertainty_handling": 90
+  },
+  "weighted_components": {
+    "task_fulfillment": 17.2,
+    "functional_correctness": 20.8,
+    "executability": 10.2,
+    "test_quality": 9.9,
+    "code_quality": 8.6,
+    "minimality": 8.7,
+    "security_safety": 4.1
+  },
+  "weighted_total": 79.4,
+  "verdict": "good",
+  "key_findings": [
+    "App is functionally correct: a live smoke test (create SKU -> reserve -> idempotent retry returns same id -> confirm decrements available_stock to 6 and reserved_stock to 0 -> order created -> insufficient stock returns 400) all passed against the real engine.",
+    "The declared test command (`pytest`) FAILS: 11 of 30 tests fail with 'no such table: skus' plus SQLite cross-thread errors, because the test_api.py fixture uses in-memory SQLite without StaticPool/check_same_thread, so TestClient's request thread gets a separate empty connection.",
+    "tests/test_service.py (13 tests) passes cleanly and asserts real stock/reserved deltas; the breakage is isolated to the API-layer fixture, not the application logic.",
+    "Importing commerce_service.app has a side effect: it creates engine on 'sqlite:///commerce.db' and runs Base.metadata.create_all at module import, writing commerce.db into the current working directory.",
+    "No test exercises reservation expiration, even though the service implements expiry handling (confirm_reservation and _cleanup_expired_reservations release reserved stock).",
+    "Clean layered design (models/repository/service/security/app) with appropriate auth on all mutating endpoints and pydantic input validation."
+  ],
+  "score_rationale": {
+    "task_fulfillment": "All requested artifacts and the full API surface are present (SKU create/get, stock adjust, reservation create/confirm/cancel, paginated orders, idempotency, API-key auth, expiration). Constraint adherence dinged for the import-time DB file creation and a hardcoded auth key rather than env-driven config.",
+    "functional_correctness": "Domain invariants verified correct via smoke test: stock/reserved transitions, idempotent retry returning the same reservation, order creation on confirm, expiry release, and insufficient-stock rejection. Data consistency lowered because there is no row locking (oversell risk under concurrency on SQLite) and repository.update_stock clamps with max(0, ...), which can silently mask invariant violations rather than failing loudly.",
+    "executability": "Dependencies are complete and pinned; the app boots and serves correctly under uvicorn/TestClient. command_result is heavily penalized because running the stated `pytest` yields 11 failures + 2 teardown errors. runtime_isolation penalized for writing commerce.db into CWD at import.",
+    "test_quality": "Coverage spans happy paths, insufficient stock, idempotency, auth, pagination, and cancel/confirm transitions, and service tests assert behavioral deltas (good). But the API suite is non-repeatable/broken due to the fixture, and expiration is untested, so repeatability and integration realism suffer.",
+    "code_quality": "Readable, well-named, cleanly separated layers with invariants centralized in the service. Minor: no docstrings and reliance on deprecated datetime.utcnow().",
+    "minimality": "Lean and focused: no speculative queues/workers/migrations, dependencies all used. Slight deduction for an unused OrderRepository.get_by_id helper.",
+    "security_safety": "Auth dependency enforced on every mutating endpoint (verified 403 without/with bad key) and inputs validated via pydantic with pagination bounds. Lowered for a hardcoded API key literal ('test-api-key') in security.py instead of configuration."
+  },
+  "instruction_failures": [
+    "No environment-based configuration for the API key or database URL; both are hardcoded literals, weakening the production-minded constraint."
+  ],
+  "correctness_failures": [
+    "Concurrent reservations are not serialized (no SELECT ... FOR UPDATE / locking); under concurrency two requests could both pass the availability check and oversell. Acceptable for single-process SQLite but a real consistency risk.",
+    "repository.update_stock clamps available/reserved to max(0, ...), which can hide negative-stock bugs instead of surfacing them; the guard in service.adjust_stock partially compensates but reservation paths rely on the clamp."
+  ],
+  "execution_failures": [
+    "`pytest` fails: tests/test_api.py has 11 failing tests with 'sqlite3.OperationalError: no such table: skus' and 'SQLite objects created in a thread can only be used in that same thread'. Root cause: db_session fixture uses create_engine('sqlite:///:memory:') without StaticPool/connect_args check_same_thread=False, so TestClient's worker thread opens a different empty in-memory DB.",
+    "Importing commerce_service.app creates a commerce.db file in the current working directory at import time (engine + Base.metadata.create_all run at module scope)."
+  ],
+  "test_gaps": [
+    "No test for reservation expiration (expired confirm releasing stock, or _cleanup_expired_reservations behavior), despite expiry being explicitly part of the domain and implemented.",
+    "API tests that touch the database never actually run successfully, so the integration layer is effectively unverified by the suite as shipped.",
+    "No test for the cancelled-idempotency-key reuse path (create_reservation raising 'already used and reservation was cancelled').",
+    "No test asserting stock is released back to available after cancellation at the API layer (only at service layer)."
+  ],
+  "quality_notes": [
+    "Service consistently re-fetches the entity after update (e.g., adjust_stock, confirm_reservation) to build the response; correct but slightly redundant given the ORM object is already in the session.",
+    "Uses deprecated datetime.utcnow() (DeprecationWarning emitted); timezone-naive datetimes are stored, which is acceptable but worth modernizing.",
+    "README accurately reflects endpoints and architecture without overclaiming."
+  ],
+  "unnecessary_code_examples": [
+    "OrderRepository.get_by_id (repository.py:86) is never called by the service or API.",
+    "confirm_reservation calls update_stock with available_delta=0 (service.py:88), a no-op delta that could be expressed more directly."
+  ],
+  "security_safety_notes": [
+    "Hardcoded API key literal 'test-api-key' in src/commerce_service/security.py:8 — a demo credential, not pulled from environment/config.",
+    "All mutating endpoints (/skus, /stock/adjust, /reservations*, confirm, cancel) require verify_api_key; GET endpoints are unauthenticated, which is reasonable for reads.",
+    "Inputs validated via pydantic (ge/gt/length constraints) and pagination bounds enforced in list_orders; SQLAlchemy parameterization avoids injection.",
+    "No shell/network/destructive operations; only local sqlite file writes."
+  ],
+  "file_evidence": [
+    {"path": "tests/test_api.py", "note": "Fixture (lines 11-17) creates 'sqlite:///:memory:' without StaticPool/check_same_thread, causing 11 failures under TestClient's threaded execution ('no such table: skus')."},
+    {"path": "src/commerce_service/app.py", "note": "Lines 19-23 create the engine and run Base.metadata.create_all at import, writing commerce.db into CWD as a side effect."},
+    {"path": "src/commerce_service/service.py", "note": "Core domain logic is correct: create_reservation idempotency (42-47), expiry cleanup (53,116-127), confirm decrements reserved and creates order (86-90), cancel releases stock (107-110). Verified via smoke test."},
+    {"path": "src/commerce_service/security.py", "note": "Line 8 hardcodes the expected API key 'test-api-key' instead of reading from config/env."},
+    {"path": "src/commerce_service/repository.py", "note": "update_stock clamps with max(0, ...) (lines 29-30), which can mask invariant violations; get_by_id at line 86 is unused."},
+    {"path": "tests/test_service.py", "note": "13 service-level tests pass and assert behavioral stock/reserved deltas; no expiration test present."}
+  ],
+  "commands_run": [
+    "python3 --version (3.12.4) and import check of fastapi/sqlalchemy/pytest/httpx (deps ok)",
+    "pip install -e . then PYTHONPATH=src python3 -m pytest -q -> 11 failed, 19 passed, 2 errors",
+    "PYTHONPATH=src python3 -m pytest tests/test_api.py::test_get_sku -> 'no such table: skus'",
+    "PYTHONPATH=src python3 -m pytest tests/test_service.py -> 13 passed",
+    "PYTHONPATH=src python3 -c '<TestClient smoke test of create/reserve/idempotent/confirm/orders/insufficient>' -> all behaviors correct",
+    "ls -la commerce.db -> confirmed stray DB file created in workspace"
+  ],
+  "review_risk": "low — all source and test files were read, dependencies were available, the declared test command was run (reproducing 11 failures), and a live TestClient smoke test confirmed the app's domain behavior; only concurrency/race behavior was reasoned about rather than load-tested."
+}
+```

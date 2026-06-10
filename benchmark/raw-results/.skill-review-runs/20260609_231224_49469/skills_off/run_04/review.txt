@@ -1,0 +1,160 @@
+I've reviewed all source and test files and executed the test suite. Test run: **4 failed, 33 passed**, with concrete failures confirming runtime bugs in the order-retrieval path.
+
+```json
+{
+  "rubric_version": "benchmark-codegen-review-v1",
+  "score_scale": "0-100 per category",
+  "weights": {
+    "task_fulfillment": 0.20,
+    "functional_correctness": 0.25,
+    "executability": 0.15,
+    "test_quality": 0.15,
+    "code_quality": 0.10,
+    "minimality": 0.10,
+    "security_safety": 0.05
+  },
+  "task_fulfillment_score": 81,
+  "task_fulfillment_breakdown": {
+    "instruction_compliance": 78,
+    "required_artifacts": 90,
+    "feature_coverage": 72,
+    "constraint_adherence": 85
+  },
+  "functional_correctness_score": 59,
+  "functional_correctness_breakdown": {
+    "domain_invariants": 55,
+    "edge_case_behavior": 55,
+    "data_consistency": 40,
+    "error_semantics": 85
+  },
+  "executability_score": 73,
+  "executability_breakdown": {
+    "installability": 70,
+    "runtime_entrypoints": 88,
+    "command_result": 55,
+    "runtime_isolation": 80
+  },
+  "test_quality_score": 69,
+  "test_quality_breakdown": {
+    "required_test_coverage": 65,
+    "behavioral_assertions": 68,
+    "integration_realism": 65,
+    "repeatability": 78
+  },
+  "code_quality_score": 76,
+  "code_quality_breakdown": {
+    "readability": 85,
+    "maintainability": 72,
+    "boundary_design": 65,
+    "documentation_quality": 82
+  },
+  "minimality_score": 78,
+  "minimality_breakdown": {
+    "no_speculative_infrastructure": 88,
+    "no_dead_or_duplicate_code": 70,
+    "appropriate_abstractions": 82,
+    "dependency_minimality": 72
+  },
+  "security_safety_score": 84,
+  "security_safety_breakdown": {
+    "auth_enforcement": 75,
+    "secret_handling": 78,
+    "input_safety": 88,
+    "unsafe_operations": 95
+  },
+  "review_confidence_score": 91,
+  "review_confidence_breakdown": {
+    "inspection_depth": 95,
+    "command_evidence": 90,
+    "issue_specificity": 92,
+    "uncertainty_handling": 85
+  },
+  "weighted_components": {
+    "task_fulfillment": 16.2,
+    "functional_correctness": 14.8,
+    "executability": 11.0,
+    "test_quality": 10.4,
+    "code_quality": 7.6,
+    "minimality": 7.8,
+    "security_safety": 4.2
+  },
+  "weighted_total": 71.9,
+  "verdict": "mixed",
+  "key_findings": [
+    "Order retrieval/listing is broken at runtime: the repository closes its Session before returning ORM objects, so accessing the lazy `order.reservations` relationship in app.py:56 raises sqlalchemy.orm.exc.DetachedInstanceError (confirmed for GET /orders and GET /orders/{id}).",
+    "Both the confirm-order workflow and the SKU availability accessor have contract gaps: ReservationResponse has no `order_id`, yet test_api expects `confirm_response.json()['order_id']` (KeyError); and SKUModel has no `available_stock` attribute, yet test_service reads `sku.available_stock` (AttributeError).",
+    "Test suite executes but 4 of 37 fail (test_api::test_get_order, test_api::test_list_orders_pagination, test_service::test_get_order, test_service::test_reservation_stock_tracking) — covering the entire order-read path.",
+    "Stock accounting leaks: confirming a reservation never decrements current_stock nor releases reserved_stock, and expired reservations never release reserved_stock, so available stock permanently shrinks.",
+    "No atomicity: each repository method opens its own session/transaction, so the availability check and reserve in create_reservation are not a single transaction — concurrent callers can oversell.",
+    "Clean layering (models/repository/service/security/app) and good error status semantics (404/409/410/401/403/422); reads run fine and 33 tests pass."
+  ],
+  "score_rationale": {
+    "task_fulfillment": "All requested artifacts exist (pyproject, README, src package, tests) and the full API surface — SKUs, reservations with idempotency/expiration, orders, pagination, API-key auth — is present. Deductions: the order workflow is incomplete from a client's view because the confirm response never exposes the created order_id, and SKU availability is computed only at the response layer (no model accessor), leaving feature edges unfinished.",
+    "functional_correctness": "Happy-path reservation, idempotent replay (returns existing), insufficient-stock 409, and auth all work. But data consistency is weak: order read endpoints crash with DetachedInstanceError (repository.py returns ORM objects after session.close()); confirm never converts reserved stock into a sale (current_stock unchanged, reserved_stock never released); expired reservations never release reserved_stock; and check-then-reserve spans separate transactions (race/oversell). Error status codes are the strongest sub-area.",
+    "executability": "Dependencies are installed and the app imports and serves; the `commerce_service.app:run` entrypoint exists. The pyproject mixes poetry-core build backend with a PEP 621 [project] table, which needs poetry-core>=2.0 for `pip install -e .` to succeed (fragile). Tests run but 4 fail, and the failures hit a core feature (order retrieval) rather than a peripheral edge.",
+    "test_quality": "Tests use a realistic TestClient + real SQLite with an autouse drop/create fixture (repeatable for single runs). Coverage spans happy paths, insufficient stock, idempotency, auth, cancel, and pagination, with genuine behavioral assertions (stock levels, status transitions, reservation linkage). Weaknesses: no expiration test at all, and several tests are themselves buggy (assert on nonexistent `order_id`/`available_stock`), so they fail rather than validate.",
+    "code_quality": "Readable, well-named, with coherent module boundaries and an accurate README. The main maintainability flaw is the repository pattern: opening a fresh Session per call and returning detached ORM entities is the root cause of the relationship-access bug and scatters stock-mutation logic, lowering boundary_design.",
+    "minimality": "No speculative queues/workers/migrations/CLIs. Some dead/unused elements: `pydantic-settings` is declared but never used, `Optional` is imported unused in models.py, `update_order_status` repository method and `OrderStatus.COMPLETED` are never used, and tests carry unused imports. Abstractions are otherwise proportionate.",
+    "security_safety": "Mutating admin endpoints (create_sku, adjust-stock, confirm, cancel, list orders) require the API-key dependency; inputs are validated via Pydantic and queries are ORM-parameterized; no unsafe shell/file/network use. Minor concerns: POST /reservations mutates reserved_stock without auth, the API key falls back to a hardcoded default 'test-key', and key comparison is not constant-time.",
+    "review_confidence": "All eight source/test files were read in full and the declared test command was run with dependencies present, directly reproducing each failure with stack traces. Remaining uncertainty is limited to packaging install behavior under an older poetry-core, which was not exercised."
+  },
+  "instruction_failures": [
+    "Confirm endpoint does not surface the created order_id in its response (ReservationResponse omits it), so a client cannot obtain the order id to later fetch the order — workflow contract gap.",
+    "pyproject.toml pairs poetry-core build backend with a PEP 621 [project] table; the documented `pip install -e \".[dev]\"` can fail unless poetry-core>=2.0 is used."
+  ],
+  "correctness_failures": [
+    "repository.py returns ORM objects after the Session is closed; app.py:56 `_order_to_response` and test access of `order.reservations` raise DetachedInstanceError — GET /orders and GET /orders/{order_id} are non-functional.",
+    "confirm_reservation (service.py:84) creates an order but never decrements current_stock nor releases reserved_stock, so confirmed stock stays 'reserved' indefinitely and is never deducted as sold.",
+    "Expired reservations never release reserved_stock; expiry is only detected lazily at confirm time (service.py:104), so available stock leaks downward over time.",
+    "create_reservation performs the availability check and the reserve in separate transactions (separate repository sessions), allowing concurrent oversell.",
+    "Idempotent replay returns the existing reservation without verifying the new request's sku_id/quantity match the original (service.py:46-53)."
+  ],
+  "execution_failures": [
+    "test_api::test_get_order fails with KeyError: 'order_id' (confirm response lacks order_id).",
+    "test_api::test_list_orders_pagination fails with sqlalchemy.orm.exc.DetachedInstanceError on order.reservations.",
+    "test_service::test_get_order fails with DetachedInstanceError on order.reservations.",
+    "test_service::test_reservation_stock_tracking fails with AttributeError: 'SKUModel' object has no attribute 'available_stock'."
+  ],
+  "test_gaps": [
+    "No test for expired-reservation behavior (410 GONE path / expiry release), despite expiration being a core requirement.",
+    "No test asserting that reserved_stock is released or current_stock is deducted after confirm — the missing stock-deduction bug goes uncaught.",
+    "No concurrency/race test for the non-atomic check-then-reserve path.",
+    "Two tests assert against fields/attributes that do not exist (order_id on confirm response, available_stock on SKUModel), so they fail instead of validating behavior."
+  ],
+  "quality_notes": [
+    "Repository opens a new Session per call and returns detached ORM entities; this anti-pattern is the direct cause of the DetachedInstanceError and spreads stock-mutation logic across update_sku_reserved_stock / adjust_sku_stock.",
+    "datetime.utcnow() is used throughout (deprecated in 3.12, emits warnings); not timezone-aware.",
+    "Layering (models/repository/service/security/app) and README are clear and accurate.",
+    "Stock invariants (reserve/release symmetry) are split between service and repository, making the reserved_stock lifecycle hard to follow."
+  ],
+  "unnecessary_code_examples": [
+    "pyproject.toml declares pydantic-settings==2.1.0 but no Settings class is defined or imported anywhere.",
+    "repository.py defines update_order_status which is never called.",
+    "models.py OrderStatus.COMPLETED is never assigned; orders remain 'pending' forever.",
+    "models.py imports Optional but does not use it; test files import Repository/SKUModel/ReservationModel/OrderModel that are unused."
+  ],
+  "security_safety_notes": [
+    "verify_api_key (security.py) protects create_sku, adjust-stock, confirm, cancel, and list-orders; reads (get_sku, get_order) and POST /reservations are intentionally unauthenticated.",
+    "API key defaults to hardcoded 'test-key' via os.getenv fallback — acceptable as a documented dev default but should not ship as a production default; comparison is not constant-time.",
+    "POST /reservations mutates reserved_stock without authentication, which could be abused to exhaust availability.",
+    "Inputs validated via Pydantic; SQLAlchemy ORM uses parameterized queries; no shell/file/network side effects."
+  ],
+  "file_evidence": [
+    {"path": "src/commerce_service/repository.py", "note": "Each method opens self.get_session() and closes it in finally, then returns the ORM object; relationship access afterward is detached. Also update_order_status (203-214) is unused."},
+    {"path": "src/commerce_service/app.py", "note": "_order_to_response (55-62) iterates order.reservations on a detached instance -> DetachedInstanceError for /orders and /orders/{id}."},
+    {"path": "src/commerce_service/service.py", "note": "confirm_reservation (84-116) creates order but never adjusts stock; expiry only checked here and reserved_stock never released; create_reservation (45-82) checks availability and reserves in separate transactions."},
+    {"path": "src/commerce_service/models.py", "note": "ReservationResponse has no order_id field; SKUModel has no available_stock; Optional imported but unused; OrderStatus.COMPLETED never used."},
+    {"path": "src/commerce_service/security.py", "note": "API key from env with hardcoded 'test-key' default; 401 on missing, 403 on invalid; non-constant-time comparison."},
+    {"path": "tests/test_service.py", "note": "Lines 147 and 175 reference order.reservations (detached) and sku.available_stock (nonexistent) -> failing tests; no expiration test."},
+    {"path": "tests/test_api.py", "note": "test_get_order line 208 reads confirm_response.json()['order_id'] which does not exist -> KeyError; test_list_orders_pagination hits DetachedInstanceError."},
+    {"path": "tests/conftest.py", "note": "autouse reset_db drops/creates tables on the shared on-disk ./commerce.db engine; repeatable per run but not isolated to in-memory."},
+    {"path": "pyproject.toml", "note": "poetry-core build backend combined with PEP 621 [project] table requires poetry-core>=2.0; pydantic-settings dependency is unused."}
+  ],
+  "commands_run": [
+    "find . -type f (excluding caches) — listed 12 project files",
+    "python3 --version && import check — Python 3.12.4, fastapi 0.109.0, sqlalchemy 2.0.23, httpx, pytest available",
+    "python3 -m pytest tests/ -v — 4 failed, 33 passed, 78 warnings"
+  ],
+  "review_risk": "low — all source and test files were read in full and the declared pytest command was run with dependencies present, reproducing each failure; the only unverified point is `pip install -e .` behavior under an older poetry-core (build was not exercised)."
+}
+```

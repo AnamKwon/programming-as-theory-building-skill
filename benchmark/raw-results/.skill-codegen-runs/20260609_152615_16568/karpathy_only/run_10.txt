@@ -1,0 +1,30 @@
+Perfect! I've created a production-style Python service for inventory reservation and order orchestration. Here's the output contract:
+
+```json
+{
+  "files_created": [
+    "pyproject.toml",
+    "README.md",
+    "src/commerce_service/__init__.py",
+    "src/commerce_service/app.py",
+    "src/commerce_service/models.py",
+    "src/commerce_service/repository.py",
+    "src/commerce_service/service.py",
+    "src/commerce_service/security.py",
+    "tests/__init__.py",
+    "tests/test_service.py",
+    "tests/test_api.py"
+  ],
+  "entrypoint": "commerce_service.app:app",
+  "test_command": "pytest"
+}
+```
+
+**Project summary:**
+- **FastAPI service** with health check, SKU management, reservation lifecycle, and order lookup
+- **Pydantic models** for request/response validation with clear HTTP error responses
+- **Repository pattern** encapsulating SQLite database access with schema for SKUs, reservations, orders, and idempotency tracking
+- **Service layer** enforcing business rules: stock availability checks, idempotency keys, reservation TTL (15 min default), state transitions (PENDING→CONFIRMED/CANCELLED/EXPIRED)
+- **API key dependency** (`X-API-Key: test-key-123`) protecting all mutation endpoints
+- **Pagination** on order listing with configurable limit (1-100) and offset
+- **Comprehensive tests** covering happy paths, stock insufficiency, idempotent retries, expired reservations, unauthorized access, and pagination

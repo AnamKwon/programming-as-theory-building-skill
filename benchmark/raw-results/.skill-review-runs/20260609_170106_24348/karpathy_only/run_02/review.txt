@@ -1,0 +1,166 @@
+I've inspected all source/test files and run the suite. Here's my evaluation.
+
+Key verified facts:
+- `pytest` (ambient deps: fastapi 0.104.1 / starlette 0.27.0) → **10 failed, 18 passed**.
+- Two failures are version-independent and genuine: missing `X-API-Key` returns **422, not 403** (FastAPI `Header(...)` required → validation error).
+- Eight service-test failures stem from asserting on `str(HTTPException)`, which is `''` on starlette 0.27 (would pass on the pinned starlette ~0.35).
+- **Overselling bug demonstrated**: confirming a reservation flips status to `confirmed`, which drops out of `count_active_by_sku` (pending-only), and physical stock is *never* decremented anywhere → the same stock can be reserved+confirmed indefinitely.
+- `StockAdjustmentRequest(delta=0)` is accepted — `Field(ne=...)` is not a real pydantic constraint, silently ignored.
+- `sqlalchemy` and `pydantic-settings` are declared dependencies but unused (raw `sqlite3`; `os.environ` directly).
+
+```json
+{
+  "rubric_version": "benchmark-codegen-review-v1",
+  "score_scale": "0-100 per category",
+  "weights": {
+    "task_fulfillment": 0.20,
+    "functional_correctness": 0.25,
+    "executability": 0.15,
+    "test_quality": 0.15,
+    "code_quality": 0.10,
+    "minimality": 0.10,
+    "security_safety": 0.05
+  },
+  "task_fulfillment_score": 82,
+  "task_fulfillment_breakdown": {
+    "instruction_compliance": 82,
+    "required_artifacts": 90,
+    "feature_coverage": 82,
+    "constraint_adherence": 78
+  },
+  "functional_correctness_score": 51,
+  "functional_correctness_breakdown": {
+    "domain_invariants": 35,
+    "edge_case_behavior": 62,
+    "data_consistency": 45,
+    "error_semantics": 62
+  },
+  "executability_score": 70,
+  "executability_breakdown": {
+    "installability": 85,
+    "runtime_entrypoints": 85,
+    "command_result": 35,
+    "runtime_isolation": 75
+  },
+  "test_quality_score": 74,
+  "test_quality_breakdown": {
+    "required_test_coverage": 85,
+    "behavioral_assertions": 55,
+    "integration_realism": 80,
+    "repeatability": 75
+  },
+  "code_quality_score": 79,
+  "code_quality_breakdown": {
+    "readability": 85,
+    "maintainability": 72,
+    "boundary_design": 85,
+    "documentation_quality": 72
+  },
+  "minimality_score": 71,
+  "minimality_breakdown": {
+    "no_speculative_infrastructure": 85,
+    "no_dead_or_duplicate_code": 70,
+    "appropriate_abstractions": 80,
+    "dependency_minimality": 50
+  },
+  "security_safety_score": 81,
+  "security_safety_breakdown": {
+    "auth_enforcement": 80,
+    "secret_handling": 70,
+    "input_safety": 82,
+    "unsafe_operations": 90
+  },
+  "review_confidence_score": 88,
+  "review_confidence_breakdown": {
+    "inspection_depth": 92,
+    "command_evidence": 90,
+    "issue_specificity": 88,
+    "uncertainty_handling": 82
+  },
+  "weighted_components": {
+    "task_fulfillment": 16.4,
+    "functional_correctness": 12.8,
+    "executability": 10.5,
+    "test_quality": 11.1,
+    "code_quality": 7.9,
+    "minimality": 7.1,
+    "security_safety": 4.1
+  },
+  "weighted_total": 69.8,
+  "verdict": "mixed",
+  "key_findings": [
+    "Central inventory invariant is broken: confirming a reservation neither decrements stock nor preserves the hold (count_active_by_sku counts 'pending' only), so the same stock can be reserved+confirmed repeatedly — demonstrated overselling 200 units from stock of 100.",
+    "Missing X-API-Key header returns HTTP 422 (FastAPI Header(...) required) instead of 403; two of the project's own tests fail on this regardless of dependency versions.",
+    "Declared test command does not pass cleanly: 10 failed / 18 passed under ambient deps; ~8 failures are fragile str(HTTPException) assertions that depend on starlette version.",
+    "Field(ne=0) on StockAdjustmentRequest is not a valid pydantic constraint and is silently ignored — delta=0 (no-op adjustment) is accepted.",
+    "sqlalchemy and pydantic-settings are declared dependencies but never imported/used (raw sqlite3 + os.environ are used instead).",
+    "Cancelling a confirmed reservation sets the reservation to 'cancelled' but leaves the created order 'confirmed' — inconsistent state."
+  ],
+  "score_rationale": {
+    "task_fulfillment": "All requested endpoints, files, and the package layout exist, and idempotency/expiration/pagination/auth surfaces are present (README, app.py, service.py). Production-mindedness is weakened by module-import DB side effect and unused deps, but the requested contract is largely met.",
+    "functional_correctness": "Insufficient-stock, idempotent retry, expiration-on-confirm, and pagination work, but the core domain invariant fails: stock is never decremented and confirmed reservations stop counting against availability (service.py:53-54 vs repository.py:164-174, confirm at service.py:81-87), enabling unlimited overselling. Per-call connections create a TOCTOU race on availability-then-insert, and cancel of a confirmed reservation leaves the order confirmed.",
+    "executability": "Packaging and the uvicorn entrypoint are plausible and installable, and the app imports cleanly. However the declared `pytest` command fails (10 failed locally), and even with exact pinned deps the unauthorized 422-vs-403 cases would still fail. init_db() runs at import time (app.py:21) creating ./commerce.db in cwd.",
+    "test_quality": "Good breadth (happy paths, insufficient stock, idempotency, expiration, auth, pagination, duplicate/nonexistent). But behavioral depth is limited: service tests assert on str(exception) (fragile/version-dependent, fails on starlette 0.27) and no test verifies stock decrement or post-confirm availability — the suite misses the overselling defect entirely.",
+    "code_quality": "Clean module boundaries (models/repository/service/security/app), readable names and control flow. Maintainability is mid: the availability rule is implicit and split between repository counting and service arithmetic; README slightly overclaims 'full validation of availability'.",
+    "minimality": "No speculative queues/workers/CLIs. Penalized by two unused dependencies (sqlalchemy, pydantic-settings), dead OrderStatus.RESERVED/CANCELLED states, the transient 'reserved'->'confirmed' double write, and empty Confirm/CancelReservationRequest models.",
+    "security_safety": "All mutating endpoints carry Depends(verify_api_key) and SQL is parameterized (no injection). Minor concerns: a hardcoded placeholder default API key ('test-key-change-in-production') and the unenforced delta!=0 constraint.",
+    "review_confidence": "All source and test files were read, the suite was executed, and the oversell bug, ne-constraint no-op, and empty str(HTTPException) were each reproduced directly. Main uncertainty is exact behavior under the pinned (uninstalled) dependency versions."
+  },
+  "instruction_failures": [
+    "Unauthorized (missing API key) returns 422 rather than the 403 the project's own tests/spec expect (security.py:8 uses Header(...) required).",
+    "Declared `pytest` command does not pass out of the box."
+  ],
+  "correctness_failures": [
+    "Stock is never decremented; confirmed reservations leave count_active_by_sku and stock untouched, allowing unbounded overselling (reproduced: 200 confirmed from stock 100).",
+    "cancel_reservation on a 'confirmed' reservation does not update the associated order, leaving order status 'confirmed' while reservation is 'cancelled'.",
+    "Availability check and reservation insert use separate sqlite connections with no locking/transaction — concurrent reservations can both pass the check (TOCTOU).",
+    "StockAdjustmentRequest delta=0 accepted because Field(ne=0) is not enforced by pydantic."
+  ],
+  "execution_failures": [
+    "tests/test_api.py::test_create_sku_unauthorized and test_unauthorized_mutations fail: assert 422 == 403.",
+    "tests/test_service.py duplicate/nonexistent/insufficient/expired/cancel tests fail under starlette 0.27 because str(HTTPException) is empty (version-sensitive).",
+    "init_db() executes at import (app.py:21), writing ./commerce.db relative to the current working directory as an import side effect."
+  ],
+  "test_gaps": [
+    "No test asserts that a confirmed/active reservation reduces subsequent availability or that stock is decremented — the overselling bug is untested.",
+    "Service-layer error tests assert on str(exception) (fragile) rather than the raised HTTPException.status_code/detail.",
+    "No test for expired reservation freeing reserved capacity, nor for cancel restoring availability.",
+    "No test for delta=0 stock adjustment rejection (would currently fail/expose the unenforced constraint)."
+  ],
+  "quality_notes": [
+    "Good separation of concerns across models.py / repository.py / service.py / security.py / app.py.",
+    "README claims 'Full validation of availability before reservation', which is misleading given post-confirm overselling.",
+    "datetime.utcnow() used throughout (deprecation warnings); acceptable but dated.",
+    "ConfirmReservationRequest / CancelReservationRequest are empty models that force an unnecessary JSON body."
+  ],
+  "unnecessary_code_examples": [
+    "pyproject.toml:16 sqlalchemy==2.0.23 — declared but never imported (repository.py uses raw sqlite3).",
+    "pyproject.toml:15 pydantic-settings==2.1.0 — declared but unused (security.py reads os.environ directly).",
+    "models.py:13-17 OrderStatus.RESERVED and CANCELLED are never reachable end states; orders are created and immediately set to 'confirmed' (repository.py:187 then service.py:87).",
+    "OrderRepository.create writes status 'reserved' then update_status sets 'confirmed' immediately — redundant double write."
+  ],
+  "security_safety_notes": [
+    "All mutating endpoints use dependencies=[Depends(verify_api_key)] (app.py:31,36,41,55,71).",
+    "SQL is parameterized everywhere (repository.py) — no obvious injection risk.",
+    "security.py:5 hardcodes a placeholder default key 'test-key-change-in-production'; overridable via COMMERCE_API_KEY but unsafe if deployed unset.",
+    "Missing-header path returns 422 not 403, but the mutation is still blocked, so auth is enforced in practice."
+  ],
+  "file_evidence": [
+    {"path": "src/commerce_service/service.py", "note": "Lines 53-62: availability = stock - count_active(pending only); no stock decrement on confirm (81-87), so confirmed reservations stop reducing availability -> overselling."},
+    {"path": "src/commerce_service/repository.py", "note": "Line 169: count_active_by_sku counts status='pending' only; stock column is never decremented anywhere."},
+    {"path": "src/commerce_service/security.py", "note": "Line 8: Header(...) required -> missing key yields 422; line 5 hardcoded default API key."},
+    {"path": "src/commerce_service/models.py", "note": "Line 34: Field(ne=0) is not a valid pydantic constraint; delta=0 accepted (verified)."},
+    {"path": "src/commerce_service/app.py", "note": "Line 21: init_db() runs at module import, creating ./commerce.db as a side effect."},
+    {"path": "pyproject.toml", "note": "Lines 15-16: pydantic-settings and sqlalchemy declared but unused in source."},
+    {"path": "tests/test_service.py", "note": "Lines 32-34 etc.: error tests assert on str(exc_info.value); empty on starlette 0.27 -> failures."}
+  ],
+  "commands_run": [
+    "find . -type f (list project files)",
+    "python3 --version; import checks for fastapi/pydantic/httpx/pytest/sqlalchemy/pydantic_settings versions",
+    "PYTHONPATH=src python3 -m pytest -q  (result: 10 failed, 18 passed)",
+    "python3 -c repr(str(HTTPException(...)))  (returned '') and StockAdjustmentRequest(delta=0) acceptance check",
+    "PYTHONPATH=src python3 -c demonstrate overselling (reserved+confirmed 200 units from stock 100)"
+  ],
+  "review_risk": "Tests were executed against ambient dependencies (fastapi 0.104.1 / starlette 0.27.0), not the pinned 0.109.0; ~8 service-test failures are version-sensitive (str(HTTPException)), but the overselling bug, unenforced ne constraint, and 422-vs-403 auth failure were reproduced directly and are version-independent."
+}
+```

@@ -1,0 +1,38 @@
+```json
+{
+  "files_created": [
+    "pyproject.toml",
+    "README.md",
+    "src/commerce_service/__init__.py",
+    "src/commerce_service/app.py",
+    "src/commerce_service/models.py",
+    "src/commerce_service/repository.py",
+    "src/commerce_service/security.py",
+    "src/commerce_service/service.py",
+    "tests/test_service.py",
+    "tests/test_api.py"
+  ],
+  "entrypoint": "src/commerce_service/app.py (uvicorn commerce_service.app:app --reload)",
+  "test_command": "pytest tests/ -v"
+}
+```
+
+## Summary
+
+Created a complete, production-style inventory reservation and order orchestration API with:
+
+**Architecture:**
+- Clean layering: Pydantic models → SQLite repository → service logic → FastAPI endpoints
+- Repository pattern isolating database access
+- Service layer enforcing business rules (stock availability, idempotency, expiration, state transitions)
+- API key authentication for mutations
+
+**Features:**
+- SKU management with stock tracking
+- Idempotent reservation creation with 15-minute expiration
+- Reservation confirmation flow with order creation
+- Paginated order listing with validation
+- Clear HTTP error responses (404, 409, 410, 401)
+- Comprehensive test suite: 33 tests covering happy paths, insufficient stock, idempotent retry, expired rejections, unauthorized access, and pagination
+
+All tests passing. Ready to run with `pip install -e ".[dev]"` and `uvicorn commerce_service.app:app --reload`.

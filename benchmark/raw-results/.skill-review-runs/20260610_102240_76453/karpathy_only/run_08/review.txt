@@ -1,0 +1,156 @@
+All 23 tests pass. I've gathered enough evidence. Here is my evaluation.
+
+```json
+{
+  "rubric_version": "benchmark-codegen-review-v1",
+  "score_scale": "0-100 per category",
+  "weights": {
+    "task_fulfillment": 0.20,
+    "functional_correctness": 0.25,
+    "executability": 0.15,
+    "test_quality": 0.15,
+    "code_quality": 0.10,
+    "minimality": 0.10,
+    "security_safety": 0.05
+  },
+  "task_fulfillment_score": 85,
+  "task_fulfillment_breakdown": {
+    "instruction_compliance": 85,
+    "required_artifacts": 92,
+    "feature_coverage": 90,
+    "constraint_adherence": 72
+  },
+  "functional_correctness_score": 65,
+  "functional_correctness_breakdown": {
+    "domain_invariants": 62,
+    "edge_case_behavior": 68,
+    "data_consistency": 62,
+    "error_semantics": 68
+  },
+  "executability_score": 81,
+  "executability_breakdown": {
+    "installability": 62,
+    "runtime_entrypoints": 88,
+    "command_result": 95,
+    "runtime_isolation": 78
+  },
+  "test_quality_score": 84,
+  "test_quality_breakdown": {
+    "required_test_coverage": 78,
+    "behavioral_assertions": 82,
+    "integration_realism": 85,
+    "repeatability": 90
+  },
+  "code_quality_score": 80,
+  "code_quality_breakdown": {
+    "readability": 85,
+    "maintainability": 78,
+    "boundary_design": 85,
+    "documentation_quality": 72
+  },
+  "minimality_score": 76,
+  "minimality_breakdown": {
+    "no_speculative_infrastructure": 85,
+    "no_dead_or_duplicate_code": 70,
+    "appropriate_abstractions": 82,
+    "dependency_minimality": 65
+  },
+  "security_safety_score": 81,
+  "security_safety_breakdown": {
+    "auth_enforcement": 90,
+    "secret_handling": 68,
+    "input_safety": 72,
+    "unsafe_operations": 95
+  },
+  "review_confidence_score": 90,
+  "review_confidence_breakdown": {
+    "inspection_depth": 92,
+    "command_evidence": 90,
+    "issue_specificity": 90,
+    "uncertainty_handling": 85
+  },
+  "weighted_components": {
+    "task_fulfillment": 17.0,
+    "functional_correctness": 16.3,
+    "executability": 12.2,
+    "test_quality": 12.6,
+    "code_quality": 8.0,
+    "minimality": 7.6,
+    "security_safety": 4.1
+  },
+  "weighted_total": 77.7,
+  "verdict": "good",
+  "key_findings": [
+    "Coherent layered FastAPI project (models/repository/service/security/app) with full requested surface: SKU CRUD, stock adjustment, idempotent reservations with TTL/expiration, confirm-to-order, cancel, paginated order listing, API-key auth, and health check.",
+    "All 23 tests pass locally (pytest: 23 passed) covering happy paths, insufficient stock, idempotent retry, expiration, auth rejection, and pagination.",
+    "Real correctness gap: confirm_reservation on an already-CONFIRMED reservation creates a second OrderRecord (service.py:73-82) — confirm is not idempotent and yields duplicate orders for one reservation.",
+    "Real correctness gap: cancel_reservation permits cancelling a CONFIRMED reservation and restores stock again (service.py:114-126) while the order remains, inflating stock and leaving inconsistent state.",
+    "Installability defect: aiosqlite is required by both the default DATABASE_URL (app.py:12) and the test fixtures, but is not declared in pyproject.toml dependencies (tests passed only because it happened to be in the local env).",
+    "Input validation gaps: ReservationRequest.quantity, SKUCreate.stock, and StockAdjustment.delta have no value constraints, so zero/negative quantities and negative initial stock are accepted (models.py:63-82)."
+  ],
+  "score_rationale": {
+    "task_fulfillment": "Implements every requested endpoint and workflow with the expected files and structure, and README documents operation. Points off for 'production-ready' claims undercut by a missing runtime dependency and a committed commerce.db artifact in what should be a fresh workspace.",
+    "functional_correctness": "Core invariants (stock decrement on reserve, idempotent reservation by key, lazy expiration with stock restore) generally hold and are exercised, but two genuine bugs exist: duplicate order creation on repeated confirm, and stock double-restore when cancelling a confirmed reservation. Error codes are coarse (all ValueError->400; SKU-not-found should be 404, state conflicts 409). No row-level locking, so concurrent reservations could oversell.",
+    "executability": "App entrypoint, lifespan table creation, and config defaults are usable and the full suite runs green. Lowered by the undeclared aiosqlite dependency (default app/tests cannot install cleanly from pyproject alone) and a stale committed commerce.db file in the workspace.",
+    "test_quality": "Two test modules (API via TestClient with dependency override, and service-level) use realistic in-memory DB sessions, assert behavior beyond status codes (stock restoration, status transitions, pagination totals/ids), and isolate per-fixture. Missing coverage for the duplicate-confirm and cancel-of-confirmed bugs and for confirm-expired via the HTTP layer.",
+    "code_quality": "Clean, readable, well-separated layers with clear names and invariants concentrated in the service layer. Minor duplication in confirm_reservation's two order-creation branches and the repeated OrderResponse construction; no docstrings and the README overstates 'production-ready'.",
+    "minimality": "No speculative queues/workers/CLIs/migrations. Deductions for an unused selectinload import (repository.py:6), an unused pydantic-settings dependency, the missing-yet-needed aiosqlite, and duplicated order-creation logic.",
+    "security_safety": "All mutating endpoints enforce the verify_api_key dependency and reads are appropriately open; ORM use avoids SQL injection and ttl is bounded. Lowered by a hardcoded default API key fallback ('test-key-12345') shipped in code and unbounded numeric inputs.",
+    "review_confidence": "All source and test files were read, the test command was run successfully, and specific defects were confirmed by inspecting pyproject.toml and the commerce.db contents. Findings cite concrete file/line references."
+  },
+  "instruction_failures": [
+    "Workspace is not clean: a populated-schema commerce.db (empty tables) is committed alongside source, conflicting with a fresh-workspace expectation.",
+    "'Production-ready' README claim (README.md:3) is undercut by a missing runtime dependency and an insecure default API key."
+  ],
+  "correctness_failures": [
+    "confirm_reservation creates a new OrderRecord every time it is called on a CONFIRMED reservation (service.py:73-82); confirm is non-idempotent and produces duplicate orders.",
+    "cancel_reservation allows cancelling a CONFIRMED reservation and restores stock again (service.py:114-126), leaving the already-created order in place and inflating available stock.",
+    "No constraints on quantity/stock/delta (models.py:63-82) allow zero or negative reservations and negative stock on creation.",
+    "Coarse error semantics: SKU-not-found and state-conflict errors all surface as HTTP 400 rather than 404/409 (app.py:51-52, 89-90, 107-108).",
+    "Potential oversell under concurrency: stock check and decrement (service.py:47-58) are not protected by row locking or a single atomic transaction."
+  ],
+  "execution_failures": [
+    "aiosqlite is undeclared in pyproject.toml though required by the default DATABASE_URL and the tests; a clean install from packaging metadata would not provide it.",
+    "get_session commits in a finally block (app.py:29-34) with no rollback path, so partially-applied changes could be committed when a handler raises."
+  ],
+  "test_gaps": [
+    "No test for confirming an already-confirmed reservation (would expose duplicate-order bug).",
+    "No test for cancelling a confirmed reservation (would expose stock double-restore bug).",
+    "No HTTP-layer test for expired reservation confirm or unauthorized confirm/cancel/adjust.",
+    "No test asserting rejection of zero/negative quantity or negative stock.",
+    "Pagination test does not assert non-overlapping item ids across pages."
+  ],
+  "quality_notes": [
+    "confirm_reservation duplicates the order-creation block across the already-confirmed and freshly-confirmed branches (service.py:77-82 and 101-105).",
+    "cancel_reservation route returns ReservationResponse with sku=\"\" hardcoded (app.py:124), a placeholder that leaks into the response contract.",
+    "No docstrings on modules/functions; README claims exceed the implementation's robustness."
+  ],
+  "unnecessary_code_examples": [
+    "repository.py:6 imports selectinload but it is never used.",
+    "pydantic-settings is declared as a dependency (pyproject.toml:17) but no settings class is defined or used.",
+    "ReservationRecord.confirmed_at and OrderRecord.reservation_id are stored but never surfaced via any response/endpoint."
+  ],
+  "security_safety_notes": [
+    "Default API key fallback 'test-key-12345' is hardcoded in security.py:10; if API_KEY is unset in production the service runs with a known key.",
+    "Read endpoints (/orders, /orders/{id}) are unauthenticated by design — acceptable for the stated 'mutations require key' contract but worth noting.",
+    "Numeric inputs (quantity/stock/delta) are unbounded, allowing data-integrity issues such as zero/negative reservations."
+  ],
+  "file_evidence": [
+    {"path": "src/commerce_service/service.py", "note": "confirm_reservation (73-82) creates duplicate orders on re-confirm; cancel_reservation (114-126) restores stock for confirmed reservations; lazy expiration restores stock at confirm (84-91)."},
+    {"path": "src/commerce_service/app.py", "note": "All mutating routes guarded by Depends(verify_api_key); get_session commits in finally with no rollback (29-34); default DATABASE_URL uses aiosqlite (12)."},
+    {"path": "src/commerce_service/models.py", "note": "Pydantic request models lack value constraints on quantity/stock/delta (63-82); ttl_seconds is bounded (82)."},
+    {"path": "src/commerce_service/security.py", "note": "Hardcoded default API key fallback 'test-key-12345' (10)."},
+    {"path": "src/commerce_service/repository.py", "note": "Unused selectinload import (6); list_orders counts by loading all rows then len() (116-117)."},
+    {"path": "pyproject.toml", "note": "aiosqlite not declared though required at runtime/tests; pydantic-settings declared but unused (12-18)."},
+    {"path": "tests/test_api.py", "note": "TestClient with get_session override and in-memory DB; covers auth, insufficient stock, idempotency, pagination; no duplicate-confirm/cancel-confirmed tests."},
+    {"path": "commerce.db", "note": "Committed SQLite artifact with empty skus/reservations/orders tables present in the workspace."}
+  ],
+  "commands_run": [
+    "find . -type f (project listing)",
+    "python3 -c 'import fastapi, sqlalchemy, aiosqlite, httpx, pytest, pytest_asyncio' (dependency probe — all present in env)",
+    "python3 -m pytest -q (23 passed, 152 warnings)",
+    "grep aiosqlite/pydantic_settings/selectinload + sqlite3 inspection of commerce.db (empty tables)"
+  ],
+  "review_risk": "low — all source and tests were read, the full suite was run green, and key defects (undeclared aiosqlite, unused deps, duplicate-confirm/cancel-confirmed bugs, committed db artifact) were directly verified; concurrency oversell risk is reasoned rather than reproduced."
+}
+```

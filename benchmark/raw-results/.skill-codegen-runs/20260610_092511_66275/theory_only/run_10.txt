@@ -1,0 +1,31 @@
+```json
+{
+  "files_created": 12,
+  "entrypoint": "src.commerce_service.app:app",
+  "test_command": "pytest"
+}
+```
+
+Complete! All required files have been created with a production-ready inventory and order orchestration API built on FastAPI and SQLite. The service includes:
+
+**Architecture:**
+- **Models layer**: SQLAlchemy ORM with Pydantic validation schemas
+- **Repository layer**: Data access abstraction with CRUD operations
+- **Service layer**: Business logic enforcing stock validation, reservation expiration, idempotency, and state transitions
+- **Security**: API-key header validation for mutations
+- **API layer**: FastAPI endpoints with proper HTTP error handling
+
+**Key Features:**
+- Stock reservation with automatic inventory locking/release
+- Idempotent reservation creation (same key = same result)
+- Reservation expiration enforcement
+- Order state cascade (confirms when all reservations confirmed)
+- Pagination support for order listing
+- Clear separation between read (public) and write (authenticated) endpoints
+
+**Testing:**
+- 20+ test cases covering happy paths, edge cases, error conditions
+- Integration tests validating API contracts
+- Unit tests for business logic and data access
+
+Install with `pip install -e ".[dev]"`, run with `uvicorn src.commerce_service.app:app`, and test with `pytest`.

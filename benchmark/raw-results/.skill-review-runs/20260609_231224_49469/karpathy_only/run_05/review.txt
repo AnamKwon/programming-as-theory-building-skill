@@ -1,0 +1,153 @@
+All 27 tests pass. I've reviewed every source and test file, run the suite, and inspected packaging and the stray `commerce.db`. Here is the evaluation.
+
+```json
+{
+  "rubric_version": "benchmark-codegen-review-v1",
+  "score_scale": "0-100 per category",
+  "weights": {
+    "task_fulfillment": 0.20,
+    "functional_correctness": 0.25,
+    "executability": 0.15,
+    "test_quality": 0.15,
+    "code_quality": 0.10,
+    "minimality": 0.10,
+    "security_safety": 0.05
+  },
+  "task_fulfillment_score": 89,
+  "task_fulfillment_breakdown": {
+    "instruction_compliance": 90,
+    "required_artifacts": 95,
+    "feature_coverage": 92,
+    "constraint_adherence": 80
+  },
+  "functional_correctness_score": 83,
+  "functional_correctness_breakdown": {
+    "domain_invariants": 88,
+    "edge_case_behavior": 82,
+    "data_consistency": 80,
+    "error_semantics": 82
+  },
+  "executability_score": 89,
+  "executability_breakdown": {
+    "installability": 92,
+    "runtime_entrypoints": 92,
+    "command_result": 95,
+    "runtime_isolation": 78
+  },
+  "test_quality_score": 88,
+  "test_quality_breakdown": {
+    "required_test_coverage": 90,
+    "behavioral_assertions": 85,
+    "integration_realism": 88,
+    "repeatability": 90
+  },
+  "code_quality_score": 86,
+  "code_quality_breakdown": {
+    "readability": 85,
+    "maintainability": 82,
+    "boundary_design": 90,
+    "documentation_quality": 85
+  },
+  "minimality_score": 81,
+  "minimality_breakdown": {
+    "no_speculative_infrastructure": 85,
+    "no_dead_or_duplicate_code": 75,
+    "appropriate_abstractions": 88,
+    "dependency_minimality": 75
+  },
+  "security_safety_score": 89,
+  "security_safety_breakdown": {
+    "auth_enforcement": 92,
+    "secret_handling": 88,
+    "input_safety": 88,
+    "unsafe_operations": 88
+  },
+  "review_confidence_score": 91,
+  "review_confidence_breakdown": {
+    "inspection_depth": 95,
+    "command_evidence": 90,
+    "issue_specificity": 90,
+    "uncertainty_handling": 88
+  },
+  "weighted_components": {
+    "task_fulfillment": 17.8,
+    "functional_correctness": 20.8,
+    "executability": 13.4,
+    "test_quality": 13.2,
+    "code_quality": 8.6,
+    "minimality": 8.1,
+    "security_safety": 4.5
+  },
+  "weighted_total": 86.3,
+  "verdict": "good",
+  "key_findings": [
+    "Complete, coherent FastAPI project: clean models/repository/service/security/app separation; all 27 tests pass locally (pytest tests/ -> 27 passed).",
+    "Full requested API surface implemented: SKU create, stock adjust, reservation create/confirm/cancel, order listing with pagination, health, and bearer API-key auth on all mutations.",
+    "Stock invariants are correct and tested: reserve (available-=q, reserved+=q), confirm (reserved-=q), cancel/expire (available+=q, reserved-=q); idempotency, insufficient-stock, and expiry paths all handled.",
+    "Concurrency/transaction risk unaddressed: TOCTOU between service-level stock check (service.py:49) and repo decrement (repository.py:96-97); multi-commit confirm (repository.py:121-128) is non-atomic. Acceptable for single-threaded SQLite scope but undocumented.",
+    "Minor leftover/dead artifacts: committed commerce.db (45KB) present in workspace; ErrorResponse model imported but never used; pydantic-settings declared but unused.",
+    "No background expiry sweep: expired-but-PENDING reservations hold stock until a confirm attempt triggers release (repository.py:113-119); cancel does not consider expiry."
+  ],
+  "score_rationale": {
+    "task_fulfillment": "Every requested artifact and endpoint exists and matches the README contract; deductions only for the committed commerce.db leftover state, which dents the fresh-workspace expectation (constraint_adherence).",
+    "functional_correctness": "Core domain invariants, idempotency (including IntegrityError fallback at app.py:78-79), insufficient stock, expiry, and state transitions are correct and verified. Lost points for non-atomic multi-commit confirm and check-then-act race (no row locking), and adjust-stock on a missing SKU returning 400 rather than 404 (app.py:62).",
+    "executability": "pip install -e . and PYTHONPATH=src pytest both succeed; entrypoint python -m commerce_service.app is valid; defaults usable. runtime_isolation reduced because the default db is cwd-relative sqlite:///commerce.db and a populated commerce.db is shipped in the tree.",
+    "test_quality": "Two suites (service + API) cover happy paths, insufficient stock, idempotency, expiry, auth (401/scheme), pagination, and stock-reserved/released invariants with real persistence over isolated per-test in-memory DBs. Gaps: no assertion that confirming an expired reservation restores stock, no re-confirm/double-cancel 409 path, no explicit 403 wrong-key test.",
+    "code_quality": "Readable, well-bounded layers and accurate README. Minor: class typo CommercService (consistent so harmless), string-matching for error-to-status mapping (app.py:75,90-93), and deprecated datetime.utcnow throughout.",
+    "minimality": "Largely lean, but ErrorResponse is dead (imported app.py:9, never returned) and pydantic-settings is an unused dependency (os.getenv used directly in security.py/app.py); committed db adds noise.",
+    "security_safety": "All mutating endpoints depend on verify_api_key; key sourced from env with a clearly-test default; pydantic validates inputs and SQLAlchemy ORM avoids injection. Minor: non-constant-time key comparison (security.py:25) and host 0.0.0.0 bind.",
+    "review_confidence": "All source and test files were read; the declared test command ran to completion with captured output; findings cite specific files and lines."
+  },
+  "instruction_failures": [
+    "Workspace not fully clean: a populated commerce.db (45KB) is committed alongside source, conflicting with a fresh-workspace expectation.",
+    "README documents API_KEY but not DATABASE_URL (app.py:22-23), a minor config-contract gap."
+  ],
+  "correctness_failures": [
+    "Check-then-act race: stock availability validated in service.py:49 but decremented later in repository.py:96-97 with no locking; under concurrency could oversell.",
+    "confirm_reservation performs two separate commits (repository.py:121-128); a failure after the first leaves reserved decremented without a created order.",
+    "adjust_stock on a nonexistent SKU raises ValueError mapped to 400 (app.py:62) rather than 404.",
+    "Expired reservations are only reclaimed when a confirm is attempted; no sweep and cancel ignores expiry, so stock can stay reserved indefinitely."
+  ],
+  "execution_failures": [],
+  "test_gaps": [
+    "No test asserting that confirming an expired reservation releases the held stock back to available (test_service.py:76-91 only asserts the raised error).",
+    "No test for confirming/cancelling an already-confirmed or already-cancelled reservation (409 conflict path).",
+    "No test asserting 403 for a wrong (non-empty) API key; only missing/invalid-scheme 401 cases are covered.",
+    "No test for adjust-stock against a nonexistent SKU."
+  ],
+  "quality_notes": [
+    "Service class is misspelled CommercService (service.py:7, used consistently in app.py/tests).",
+    "Error-to-HTTP mapping relies on substring matching of exception text (app.py:75,90-93,105), which is brittle to message changes.",
+    "datetime.utcnow() is deprecated on the running Python; 77 deprecation warnings emitted during tests."
+  ],
+  "unnecessary_code_examples": [
+    "ErrorResponse model (models.py:45-47) is imported in app.py:9 but never used in any response.",
+    "pydantic-settings==2.1.0 dependency (pyproject.toml:14) is unused; config is read via os.getenv.",
+    "Committed commerce.db (45KB) is build/runtime byproduct shipped in the source tree."
+  ],
+  "security_safety_notes": [
+    "All mutating routes attach Depends(verify_api_key) (app.py:45,56,67,84,99); /orders and /health are intentionally open.",
+    "API key default is the clearly-non-secret 'test-key' and overridable via API_KEY env (security.py:5-6); no real secret leaked.",
+    "API key comparison uses a plain != (security.py:25), not constant-time; low risk but noted.",
+    "Inputs validated via pydantic Field constraints (models.py) and ORM parameterization avoids SQL injection; no shell/file/network side effects."
+  ],
+  "file_evidence": [
+    {"path": "src/commerce_service/repository.py", "note": "Stock invariants and state transitions correct; confirm uses two commits (121-128); decrement without locking (96-97)."},
+    {"path": "src/commerce_service/service.py", "note": "Idempotency short-circuit (35-44) and insufficient-stock check (49); session-per-call with finally close; class typo CommercService."},
+    {"path": "src/commerce_service/app.py", "note": "Auth dependency on all mutations; substring-based status mapping (75,90-93); ErrorResponse imported but unused (9); 400 for missing SKU (62)."},
+    {"path": "src/commerce_service/security.py", "note": "Bearer scheme -> 401, wrong key -> 403; env-sourced key with test default; non-constant-time compare (25)."},
+    {"path": "tests/test_service.py", "note": "Behavioral coverage incl. stock reserved/released invariants (119-141) and expiry (76-91); expiry test asserts raise only, not stock restoration."},
+    {"path": "tests/test_api.py", "note": "Integration via TestClient with per-test isolated shared-cache in-memory DB; covers auth, idempotency, pagination, confirm/cancel."},
+    {"path": "pyproject.toml", "note": "hatchling packaging of src/commerce_service; pinned deps; pydantic-settings declared but unused."},
+    {"path": "commerce.db", "note": "45KB populated SQLite file committed into the workspace; default app db is cwd-relative."}
+  ],
+  "commands_run": [
+    "find . -type f (excluding caches) -> 12 project files",
+    "python3 -c import fastapi,sqlalchemy,pydantic,httpx,pytest -> deps ok (Python 3.12.4)",
+    "ls -la commerce.db -> 45056 bytes present",
+    "pip install -e . -q",
+    "PYTHONPATH=src python3 -m pytest tests/ -q -> 27 passed, 77 warnings in 0.62s"
+  ],
+  "review_risk": "low — all source and test files were read and the full test suite ran green; remaining uncertainty is only about concurrency behavior under real multi-worker load, which was reasoned about but not load-tested."
+}
+```

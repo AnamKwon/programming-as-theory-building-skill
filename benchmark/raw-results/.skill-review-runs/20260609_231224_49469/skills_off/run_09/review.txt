@@ -1,0 +1,158 @@
+All 33 tests pass. I've inspected every source and test file, run the suite, and examined the leftover `commerce.db` (empty tables, created at import time in CWD). Here is the evaluation.
+
+```json
+{
+  "rubric_version": "benchmark-codegen-review-v1",
+  "score_scale": "0-100 per category",
+  "weights": {
+    "task_fulfillment": 0.20,
+    "functional_correctness": 0.25,
+    "executability": 0.15,
+    "test_quality": 0.15,
+    "code_quality": 0.10,
+    "minimality": 0.10,
+    "security_safety": 0.05
+  },
+  "task_fulfillment_score": 87,
+  "task_fulfillment_breakdown": {
+    "instruction_compliance": 88,
+    "required_artifacts": 92,
+    "feature_coverage": 88,
+    "constraint_adherence": 80
+  },
+  "functional_correctness_score": 74,
+  "functional_correctness_breakdown": {
+    "domain_invariants": 68,
+    "edge_case_behavior": 72,
+    "data_consistency": 65,
+    "error_semantics": 90
+  },
+  "executability_score": 86,
+  "executability_breakdown": {
+    "installability": 82,
+    "runtime_entrypoints": 88,
+    "command_result": 95,
+    "runtime_isolation": 80
+  },
+  "test_quality_score": 88,
+  "test_quality_breakdown": {
+    "required_test_coverage": 85,
+    "behavioral_assertions": 88,
+    "integration_realism": 88,
+    "repeatability": 92
+  },
+  "code_quality_score": 81,
+  "code_quality_breakdown": {
+    "readability": 80,
+    "maintainability": 75,
+    "boundary_design": 88,
+    "documentation_quality": 80
+  },
+  "minimality_score": 70,
+  "minimality_breakdown": {
+    "no_speculative_infrastructure": 70,
+    "no_dead_or_duplicate_code": 60,
+    "appropriate_abstractions": 82,
+    "dependency_minimality": 68
+  },
+  "security_safety_score": 83,
+  "security_safety_breakdown": {
+    "auth_enforcement": 70,
+    "secret_handling": 90,
+    "input_safety": 88,
+    "unsafe_operations": 82
+  },
+  "review_confidence_score": 91,
+  "review_confidence_breakdown": {
+    "inspection_depth": 95,
+    "command_evidence": 92,
+    "issue_specificity": 92,
+    "uncertainty_handling": 85
+  },
+  "weighted_components": {
+    "task_fulfillment": 17.4,
+    "functional_correctness": 18.5,
+    "executability": 12.9,
+    "test_quality": 13.2,
+    "code_quality": 8.1,
+    "minimality": 7.0,
+    "security_safety": 4.2
+  },
+  "weighted_total": 81.3,
+  "verdict": "good",
+  "key_findings": [
+    "Clean layered architecture (models/repository/service/security/app) with all requested endpoints; the full test suite passes (33 passed in 0.56s).",
+    "Core domain invariants hold on happy paths: reservation checks available = current_stock - reserved_count, confirm deducts stock and creates a confirmed order, cancel releases reserved stock (service.py:51-148).",
+    "Broken latent code in the already-confirmed branch of confirm_reservation: `self.repo.db.query(__import__('sqlalchemy').orm.Session).first()` (service.py:95) queries a non-mapped Session class and would raise at runtime; the surrounding `sku`/`orders` locals are unused. This idempotent-confirm path is untested.",
+    "Expired reservations never release their reserved stock: repository.get_pending_expired_reservations (repository.py:98-107) is defined but never called anywhere, and confirm of an expired reservation raises without decrementing reserved_count — reserved stock leaks permanently.",
+    "Excellent HTTP error semantics: 401 missing key, 404 not found, 409 insufficient stock, 410 gone (expired), 400 validation (app.py:105-145).",
+    "Unused declared dependencies: pydantic-settings and python-dotenv are in pyproject.toml but never imported anywhere.",
+    "API-key auth is a no-op stub that accepts any non-empty key (security.py:12-20); the dependency is correctly attached to every mutation but performs no real validation."
+  ],
+  "score_rationale": {
+    "task_fulfillment": "All requested files, project structure, and the full endpoint surface (SKU create, stock adjust, reservation create/confirm/cancel, paginated orders, API-key auth, SQLite persistence) are present and match the README. Points deducted for a leftover commerce.db artifact created in CWD on import and for production-minded gaps (no-op auth, non-atomic writes).",
+    "functional_correctness": "Happy-path invariants and error codes are strong, but there are real correctness gaps: the broken __import__ line in the idempotent-confirm branch, expired reservations never releasing reserved stock (dead sweeper method), non-atomic two-commit reserve flow, and adjust_stock guarding only current_stock<0 while ignoring reserved_count (allowing current_stock to fall below reserved_count).",
+    "executability": "pytest passes 33/33; uvicorn entrypoint and init_db default are usable. Tests import via the src.* path rather than the installed package, so packaging risk (hatchling src-layout autodetection) is low-impact. Importing app.py eagerly creates commerce.db in the working directory, a mild isolation smell.",
+    "test_quality": "Two suites cover happy paths, insufficient stock, idempotent retry, expiration (service level), auth, and pagination, with behavioral assertions on stock/reserved counts and status transitions over a realistic in-memory DB with StaticPool isolation. Gaps: idempotent confirm (the broken path), cancel idempotency, and API-level expiration are untested.",
+    "code_quality": "Readable, coherently separated layers and accurate concise README. Lowered by the maintainability blemishes: the dynamic-import broken line, an unused repository method, the class-name typo CommercService, and the loose response_model=dict on the confirm endpoint.",
+    "minimality": "Mostly lean and free of speculative frameworks/queues/CLIs, but it carries two unused dependencies (pydantic-settings, python-dotenv), a dead repository method, dead/broken locals in confirm, and an unused timedelta import in models.py.",
+    "security_safety": "No hardcoded secrets; Pydantic validation and SQLAlchemy parameterization mitigate injection/integrity risks; no shell/network/destructive ops. The auth dependency is enforced on all mutating routes but only checks for a non-empty key, so it provides no real authentication.",
+    "review_confidence": "All source and test files were read, the declared test command was run successfully, and the leftover DB was inspected directly; specific file:line evidence supports each finding. Residual uncertainty is limited to concurrency/transaction behavior under real load and packaging via pip install."
+  },
+  "instruction_failures": [
+    "A non-empty commerce.db SQLite file is present in the workspace (created in CWD at module import via SessionLocal = init_db()), slightly at odds with a clean/fresh workspace expectation."
+  ],
+  "correctness_failures": [
+    "service.py:95 — confirm_reservation's already-CONFIRMED idempotent branch executes `self.repo.db.query(__import__('sqlalchemy').orm.Session).first()`, querying a non-mapped class; this would raise at runtime and is never exercised by tests.",
+    "Expired pending reservations never release reserved_count: get_pending_expired_reservations (repository.py:98) is never invoked, and confirm_reservation raises ReservationExpired (service.py:113) without decrementing reserved stock — reserved units leak indefinitely.",
+    "adjust_stock (service.py:40-49) validates only current_stock + adjustment >= 0 and ignores reserved_count, allowing current_stock to drop below reserved_count and yield negative availability.",
+    "reserve_inventory performs two separate commits (create_reservation then update_sku_stock, service.py:76-80) with no transaction wrapping; a failure between them leaves a reservation without a corresponding reserved_count update."
+  ],
+  "execution_failures": [
+    "No execution failures observed: `python3 -m pytest -q` returned 33 passed. Importing the app writes commerce.db into the current directory, which is an ambient side effect rather than a failure."
+  ],
+  "test_gaps": [
+    "No test for confirming an already-confirmed reservation (the broken __import__ path), so that runtime bug is undetected.",
+    "No test that an expired reservation's reserved stock is released (the feature is in fact absent).",
+    "No test for cancel idempotency (cancel of an already-cancelled reservation) at either service or API level.",
+    "No API-level test for confirming an expired reservation (410 path)."
+  ],
+  "quality_notes": [
+    "Class name typo: CommercService (missing 'e') in service.py:30, propagated through app.py and tests.",
+    "confirm endpoint uses response_model=dict (app.py:113), losing schema typing/OpenAPI fidelity for that response.",
+    "models.py imports timedelta but does not use it (models.py:1).",
+    "OrderStatus.PENDING is effectively transient — every order is set to CONFIRMED immediately after creation, so the pending order state has no observable lifecycle."
+  ],
+  "unnecessary_code_examples": [
+    "repository.py:98-107 get_pending_expired_reservations — defined but never called (dead code).",
+    "service.py:94-95 — unused `sku` local and the broken `orders = ...query(Session)` assignment in the idempotent-confirm branch.",
+    "pyproject.toml:18-19 — pydantic-settings and python-dotenv declared but never imported.",
+    "models.py:1 — unused timedelta import."
+  ],
+  "security_safety_notes": [
+    "verify_api_key (security.py:4-20) accepts any non-empty header value; the comment acknowledges it is a demo stub, but it provides no real authentication and no constant-time comparison against a configured key.",
+    "No hardcoded real secrets anywhere; the test key 'test-api-key-123' is confined to tests.",
+    "Inputs are validated via Pydantic (gt/ge constraints, min_length) and persistence uses parameterized SQLAlchemy queries, avoiding injection.",
+    "No shell, network, or destructive operations; the only filesystem side effect is creating/opening commerce.db in CWD on import."
+  ],
+  "file_evidence": [
+    {"path": "src/commerce_service/service.py", "note": "Core invariants for reserve/confirm/cancel; broken __import__ query at line 95 in the idempotent-confirm branch; expired confirm raises without releasing reserved_count (line 113); adjust_stock ignores reserved_count (lines 40-49)."},
+    {"path": "src/commerce_service/repository.py", "note": "Clean data-access layer; get_pending_expired_reservations (lines 98-107) is unused dead code; create_reservation and update_sku_stock commit independently."},
+    {"path": "src/commerce_service/app.py", "note": "All mutations depend on verify_api_key; good HTTP status mapping (401/404/409/410/400); confirm uses response_model=dict; SessionLocal=init_db() at import creates commerce.db."},
+    {"path": "src/commerce_service/security.py", "note": "API-key dependency accepts any non-empty key (no real validation)."},
+    {"path": "src/commerce_service/models.py", "note": "ORM + Pydantic schemas with validation constraints; unused timedelta import; init_db default sqlite:///./commerce.db."},
+    {"path": "tests/test_service.py", "note": "Strong behavioral assertions on stock/reserved counts and status transitions; covers expiration, insufficient stock, idempotency, cancel-confirmed."},
+    {"path": "tests/test_api.py", "note": "Integration tests via TestClient with in-memory StaticPool DB; covers auth, pagination, insufficient stock, idempotent retry."},
+    {"path": "pyproject.toml", "note": "Pinned deps and pytest/ruff config; pydantic-settings and python-dotenv are declared but unused."},
+    {"path": "commerce.db", "note": "Leftover empty SQLite DB (24KB, 0 rows in skus/reservations/orders) created in CWD on import."}
+  ],
+  "commands_run": [
+    "find . -type f ... | sort",
+    "ls -la commerce.db",
+    "python3 -c 'import fastapi, sqlalchemy, httpx, pytest' (deps OK)",
+    "python3 -m pytest -q (33 passed in 0.56s)",
+    "python3 -c 'sqlite3 row counts for skus/reservations/orders' (all 0)"
+  ],
+  "review_risk": "low — all source and tests were read, the declared test command passed (33/33), and the leftover DB was inspected; residual uncertainty is limited to untested concurrency/transaction behavior and pip-install packaging, which tests bypass by importing via the src.* path."
+}
+```

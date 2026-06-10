@@ -1,0 +1,46 @@
+I've created a production-style Python inventory and order orchestration API with all required components:
+
+**Architecture:**
+- **Models** (`models.py`): SQLAlchemy ORM models (SKU, Reservation, Order) and Pydantic validation schemas
+- **Repository** (`repository.py`): Data access layer with CRUD operations
+- **Service** (`service.py`): Business logic including stock validation, idempotency, expiration checks, and state transitions
+- **Security** (`security.py`): API key authentication
+- **App** (`app.py`): FastAPI endpoints with dependency injection and error handling
+- **Tests**: Comprehensive coverage of service layer (14 tests) and API endpoints (16 tests) including edge cases
+
+**Key Features:**
+- SKU management with stock tracking
+- Reservation system with idempotency keys and TTL expiration
+- Order creation and state management
+- API key protection for mutations
+- Paginated order lookup (validated 1-100 items per page)
+- Clear error responses with appropriate HTTP status codes
+- SQLite backend with automatic table creation
+
+**Test Coverage:**
+- Happy paths for all operations
+- Insufficient stock scenarios
+- Idempotent reservation retry (returns existing, rejects expired ones)
+- Expired reservation rejection on confirmation
+- Unauthorized mutation (missing/wrong API key)
+- Pagination validation and boundary conditions
+
+```json
+{
+  "files_created": [
+    "pyproject.toml",
+    "README.md",
+    "src/commerce_service/__init__.py",
+    "src/commerce_service/models.py",
+    "src/commerce_service/repository.py",
+    "src/commerce_service/service.py",
+    "src/commerce_service/security.py",
+    "src/commerce_service/app.py",
+    "tests/__init__.py",
+    "tests/test_service.py",
+    "tests/test_api.py"
+  ],
+  "entrypoint": "python -m uvicorn commerce_service.app:app --reload",
+  "test_command": "pytest -v"
+}
+```

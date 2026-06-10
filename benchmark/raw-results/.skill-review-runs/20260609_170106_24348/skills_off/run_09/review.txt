@@ -1,0 +1,159 @@
+I have enough evidence. All files inspected, tests executed, and the two principal bugs reproduced directly. Here is the evaluation.
+
+```json
+{
+  "rubric_version": "benchmark-codegen-review-v1",
+  "score_scale": "0-100 per category",
+  "weights": {
+    "task_fulfillment": 0.20,
+    "functional_correctness": 0.25,
+    "executability": 0.15,
+    "test_quality": 0.15,
+    "code_quality": 0.10,
+    "minimality": 0.10,
+    "security_safety": 0.05
+  },
+  "task_fulfillment_score": 81,
+  "task_fulfillment_breakdown": {
+    "instruction_compliance": 80,
+    "required_artifacts": 75,
+    "feature_coverage": 88,
+    "constraint_adherence": 82
+  },
+  "functional_correctness_score": 50,
+  "functional_correctness_breakdown": {
+    "domain_invariants": 45,
+    "edge_case_behavior": 50,
+    "data_consistency": 40,
+    "error_semantics": 65
+  },
+  "executability_score": 51,
+  "executability_breakdown": {
+    "installability": 25,
+    "runtime_entrypoints": 80,
+    "command_result": 30,
+    "runtime_isolation": 70
+  },
+  "test_quality_score": 78,
+  "test_quality_breakdown": {
+    "required_test_coverage": 85,
+    "behavioral_assertions": 78,
+    "integration_realism": 72,
+    "repeatability": 85
+  },
+  "code_quality_score": 80,
+  "code_quality_breakdown": {
+    "readability": 85,
+    "maintainability": 72,
+    "boundary_design": 85,
+    "documentation_quality": 78
+  },
+  "minimality_score": 76,
+  "minimality_breakdown": {
+    "no_speculative_infrastructure": 88,
+    "no_dead_or_duplicate_code": 65,
+    "appropriate_abstractions": 82,
+    "dependency_minimality": 70
+  },
+  "security_safety_score": 88,
+  "security_safety_breakdown": {
+    "auth_enforcement": 85,
+    "secret_handling": 90,
+    "input_safety": 88,
+    "unsafe_operations": 92
+  },
+  "review_confidence_score": 91,
+  "review_confidence_breakdown": {
+    "inspection_depth": 92,
+    "command_evidence": 92,
+    "issue_specificity": 92,
+    "uncertainty_handling": 88
+  },
+  "weighted_components": {
+    "task_fulfillment": 16.2,
+    "functional_correctness": 12.5,
+    "executability": 7.7,
+    "test_quality": 11.7,
+    "code_quality": 8.0,
+    "minimality": 7.6,
+    "security_safety": 4.4
+  },
+  "weighted_total": 68.1,
+  "verdict": "mixed",
+  "score_rationale": {
+    "task_fulfillment": "All requested layers (repository/service/API/security) and endpoints exist and the README documents them, but the missing-key path returns 422 instead of the contract-implied 403, and pyproject.toml is malformed, weakening the 'usable artifacts' claim.",
+    "functional_correctness": "A swapped-argument call in confirm_reservation corrupts every order and triggers a UNIQUE-constraint crash whenever two reservations share a SKU. Reserved stock is never reconciled on confirm or expiry (permanent stock leak). Idempotency, insufficient-stock, expiry detection, and pagination otherwise behave correctly.",
+    "executability": "pyproject.toml is invalid TOML (multiline inline table at line 16), so `pip install -e .[dev]` and the declared `pytest tests/` both fail to start. The app imports and serves fine, but the declared test command does not run, and even with config bypassed 4/33 tests fail.",
+    "test_quality": "Coverage is genuinely good — happy paths, insufficient stock, idempotency, expiration, auth, and pagination — with behavioral assertions on stock levels and state transitions, and isolated temp databases. The suite correctly catches the confirm bug. Slightly marred by a convoluted setup_db patch and a dead no-op assertion line in test_api.",
+    "code_quality": "Clean layering, clear names, and consistent docstrings. Maintainability suffers because the reserved-stock lifecycle is incomplete and the order-creation contract between layers is easy to mis-call (as proven by the bug). README is accurate apart from minor over-claiming ('full audit trail').",
+    "minimality": "No speculative queues/workers/CLIs. But IdempotencyError and ErrorResponse are defined/imported yet never used, the pydantic-settings dependency is declared but unused, and the two Reservation row-mapping blocks are duplicated.",
+    "security_safety": "All mutating endpoints enforce the X-API-Key dependency, the key is read from the environment with no hardcoded secret, inputs are validated by pydantic, and all SQL is parameterized. Minor: non-constant-time key comparison and 422 (not 403) for a missing header.",
+    "review_confidence": "All eight source/test files were read, the broken TOML and both functional bugs were reproduced with direct execution, and the full pytest run was captured. Confidence is high; only concurrency/transaction behavior under load was reasoned about rather than load-tested."
+  },
+  "key_findings": [
+    "confirm_reservation passes arguments in the wrong order to repository.create_order, corrupting order.sku_id/quantity and causing a UNIQUE-constraint crash when two reservations share a SKU (service.py:123 vs repository.py:189).",
+    "pyproject.toml is invalid TOML (line 16 multiline inline table), breaking `pip install -e .[dev]` and the declared `pytest tests/` command.",
+    "Reserved stock is never decremented on confirm and never released on expiry, leaking inventory permanently (service.py:104-125).",
+    "Missing X-API-Key header returns 422 instead of 403 because the header is declared required (security.py:16).",
+    "Test suite is reasonably thorough and actually catches the confirm bug; 4 of 33 tests fail when run with config bypassed."
+  ],
+  "instruction_failures": [
+    "pyproject.toml does not parse, so the documented install/test workflow in README cannot be followed as written.",
+    "Unauthorized mutation returns 422 rather than a 401/403 auth error for the missing-key case."
+  ],
+  "correctness_failures": [
+    "service.py:123 calls create_order(reservation.sku_id, reservation.quantity, reservation_id) but repository signature is create_order(reservation_id, sku_id, quantity) — verified order.sku_id=50, order.quantity=1 for a 50-unit reservation of SKU 1.",
+    "Confirming a second reservation for the same SKU raises sqlite3.IntegrityError: UNIQUE constraint failed: orders.reservation_id (because sku_id is stored in the reservation_id column).",
+    "On confirm, reserved_stock is left untouched (goods sold but inventory counters never settle).",
+    "On expiry detection in confirm_reservation, status is set to EXPIRED but reserved stock is never returned to available.",
+    "create_reservation performs the reservation INSERT and the SKU stock update as two separate committed connections (non-atomic), and the get_sku/availability check is not race-safe (TOCTOU)."
+  ],
+  "execution_failures": [
+    "`python -m pytest tests/` aborts with UsageError: pyproject.toml invalid initial character for a key part (line 16, column 26).",
+    "With config bypassed: FAILED test_service.py::test_confirm_reservation_success, test_service.py::test_get_orders_pagination, test_api.py::test_list_orders_with_pagination, test_api.py::test_create_sku_missing_api_key (4 failed, 29 passed)."
+  ],
+  "test_gaps": [
+    "No test asserts reserved_stock is settled after a successful confirm (the missing reconciliation goes undetected).",
+    "No test verifies that expiring a reservation releases reserved stock back to available.",
+    "No test confirms two reservations for the same SKU can both be confirmed (the exact scenario the order bug breaks).",
+    "Idempotency test does not assert that reusing a key with a different quantity/SKU is rejected (IdempotencyError is never exercised).",
+    "test_api.py line 190 is a dead no-op that intends to verify post-idempotency stock but asserts nothing."
+  ],
+  "quality_notes": [
+    "Layer separation (models/repository/service/security/app) is clean and readable.",
+    "datetime.utcnow() is used throughout and emits DeprecationWarnings on Python 3.12.",
+    "Module-level Repository(\"commerce.db\") in app.py creates a DB file in the CWD at import time, coupling import to filesystem state.",
+    "Broad `except Exception` handlers in create_sku and create_reservation collapse distinct errors into generic 400s."
+  ],
+  "unnecessary_code_examples": [
+    "IdempotencyError defined in service.py:40 and imported in app.py:23 but never raised or handled.",
+    "ErrorResponse model (models.py:63) is never used as a response_model.",
+    "pydantic-settings is declared as a dependency but no Settings class exists.",
+    "get_reservation and get_reservation_by_idempotency_key contain duplicated row-to-Reservation mapping (repository.py:145-176)."
+  ],
+  "security_safety_notes": [
+    "All mutating endpoints use Depends(verify_api_key); read endpoints (/health, /orders) are intentionally open.",
+    "API key is sourced from the API_KEY env var with no hardcoded secret.",
+    "API key comparison uses a plain != (not constant-time); low risk at this scope.",
+    "All SQL uses parameterized queries; no injection vector observed. Inputs validated via pydantic Field constraints."
+  ],
+  "file_evidence": [
+    {"path": "src/commerce_service/service.py", "note": "Line 123 swaps create_order args; lines 104-125 omit reserved-stock reconciliation on confirm/expiry."},
+    {"path": "src/commerce_service/repository.py", "note": "create_order signature (189) is (reservation_id, sku_id, quantity); orders table has UNIQUE(reservation_id) (61) which the swapped call violates."},
+    {"path": "pyproject.toml", "note": "Line 16 'optional-dependencies = {' uses an illegal multiline inline table; tomllib raises TOMLDecodeError, pytest raises UsageError."},
+    {"path": "src/commerce_service/security.py", "note": "verify_api_key uses Header(...) (required), so a missing header yields 422 not 403."},
+    {"path": "src/commerce_service/app.py", "note": "Imports IdempotencyError (23) but never uses it; module-level Repository('commerce.db') (32) writes to CWD at import."},
+    {"path": "tests/test_api.py", "note": "Line 190 dead no-op assertion; setup_db fixture (14-30) uses a convoluted triple patch."},
+    {"path": "tests/test_service.py", "note": "test_confirm_reservation_success (117-132) and test_get_orders_pagination (210-232) fail due to the order-creation bug."}
+  ],
+  "commands_run": [
+    "find . -type f (excluding caches) — listed 11 project files",
+    "python3 -c 'import fastapi,pydantic,httpx,pytest' — deps present; Python 3.12.4",
+    "python3 -m pytest tests/ — aborts: invalid pyproject.toml TOML",
+    "python3 -c 'import tomllib; tomllib.load(...)' — confirms TOMLDecodeError at line 16",
+    "python3 -m pytest tests/ -c /dev/null -o asyncio_mode=auto — 4 failed, 29 passed",
+    "inline python trace — confirmed order.sku_id=50/order.quantity=1 swap and missing-key=422"
+  ],
+  "review_risk": "low — all source and test files were read and the malformed pyproject, the confirm-order argument swap, and the 422-vs-403 auth behavior were reproduced via executed commands; only multi-client concurrency/transaction behavior was reasoned about rather than load-tested."
+}
+```

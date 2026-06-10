@@ -1,0 +1,50 @@
+Perfect! All files have been created. Here's the project summary:
+
+```json
+{
+  "files_created": [
+    "pyproject.toml",
+    "README.md",
+    "src/commerce_service/__init__.py",
+    "src/commerce_service/models.py",
+    "src/commerce_service/repository.py",
+    "src/commerce_service/service.py",
+    "src/commerce_service/security.py",
+    "src/commerce_service/app.py",
+    "tests/__init__.py",
+    "tests/test_service.py",
+    "tests/test_api.py"
+  ],
+  "entrypoint": "python -m uvicorn commerce_service.app:app --reload",
+  "test_command": "pytest tests/ -v"
+}
+```
+
+## Project Summary
+
+I've built a production-grade commerce service with:
+
+**Architecture:**
+- Clean layering: API → Service → Repository → Database
+- Dependency injection for testability
+- Type hints throughout
+- Pydantic validation on all inputs
+
+**Key Features:**
+- SKU management with stock tracking
+- Idempotent reservation creation (prevents duplicates)
+- Automatic reservation expiration (10 min TTL)
+- Order confirmation with stock deduction
+- Paginated order lookup
+- API key authentication on mutations
+- Comprehensive test coverage (happy paths + edge cases)
+
+**Data Flow:**
+1. Create SKUs with initial stock
+2. Reserve stock (holds for 10 minutes, accounts for concurrent reservations)
+3. Confirm reservation → creates Order and deducts stock
+4. Or cancel before expiration
+
+**Database:** SQLite with SQLAlchemy ORM (in-memory for tests, `./commerce.db` for dev)
+
+All business rules are enforced at the service layer, and the repository pattern keeps data access clean and testable.

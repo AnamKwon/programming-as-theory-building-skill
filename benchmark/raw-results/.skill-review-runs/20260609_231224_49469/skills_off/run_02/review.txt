@@ -1,0 +1,156 @@
+All suspicions confirmed. I have sufficient evidence to score.
+
+Key findings: tests pass (27/27), but `confirm_reservation` creates an order without ever decrementing stock (`service.py:89` — no `update_stock` call), and `get_reserved_quantity` only counts `PENDING` reservations (`repository.py:80-86`). Once a reservation is confirmed it stops counting as reserved and stock was never reduced, so confirmed quantities are re-sellable — an oversell invariant break. Plus unused dependency (`python-dateutil`), three unused Pydantic response schemas, and two unused imports.
+
+```json
+{
+  "rubric_version": "benchmark-codegen-review-v1",
+  "score_scale": "0-100 per category",
+  "weights": {
+    "task_fulfillment": 0.20,
+    "functional_correctness": 0.25,
+    "executability": 0.15,
+    "test_quality": 0.15,
+    "code_quality": 0.10,
+    "minimality": 0.10,
+    "security_safety": 0.05
+  },
+  "task_fulfillment_score": 89,
+  "task_fulfillment_breakdown": {
+    "instruction_compliance": 90,
+    "required_artifacts": 95,
+    "feature_coverage": 90,
+    "constraint_adherence": 80
+  },
+  "functional_correctness_score": 74,
+  "functional_correctness_breakdown": {
+    "domain_invariants": 60,
+    "edge_case_behavior": 82,
+    "data_consistency": 65,
+    "error_semantics": 88
+  },
+  "executability_score": 89,
+  "executability_breakdown": {
+    "installability": 90,
+    "runtime_entrypoints": 90,
+    "command_result": 95,
+    "runtime_isolation": 80
+  },
+  "test_quality_score": 85,
+  "test_quality_breakdown": {
+    "required_test_coverage": 88,
+    "behavioral_assertions": 78,
+    "integration_realism": 85,
+    "repeatability": 90
+  },
+  "code_quality_score": 83,
+  "code_quality_breakdown": {
+    "readability": 85,
+    "maintainability": 78,
+    "boundary_design": 85,
+    "documentation_quality": 82
+  },
+  "minimality_score": 77,
+  "minimality_breakdown": {
+    "no_speculative_infrastructure": 88,
+    "no_dead_or_duplicate_code": 65,
+    "appropriate_abstractions": 85,
+    "dependency_minimality": 70
+  },
+  "security_safety_score": 90,
+  "security_safety_breakdown": {
+    "auth_enforcement": 92,
+    "secret_handling": 85,
+    "input_safety": 88,
+    "unsafe_operations": 95
+  },
+  "review_confidence_score": 91,
+  "review_confidence_breakdown": {
+    "inspection_depth": 95,
+    "command_evidence": 90,
+    "issue_specificity": 92,
+    "uncertainty_handling": 88
+  },
+  "weighted_components": {
+    "task_fulfillment": 17.8,
+    "functional_correctness": 18.5,
+    "executability": 13.4,
+    "test_quality": 12.8,
+    "code_quality": 8.3,
+    "minimality": 7.7,
+    "security_safety": 4.5
+  },
+  "weighted_total": 82.9,
+  "verdict": "good",
+  "key_findings": [
+    "All 27 tests pass cleanly (PYTHONPATH=src python3 -m pytest tests/ -q -> 27 passed); deps (fastapi, sqlalchemy, httpx, pytest) already importable.",
+    "Clean layering: app.py (FastAPI) -> service.py (CommerceService) -> repository.py (SQLAlchemy) -> models.py, with security.py for API-key auth. Full requested endpoint surface present.",
+    "Correctness gap: confirm_reservation (service.py:74-102) creates an Order but never decrements stock, and get_reserved_quantity (repository.py:79-86) counts only PENDING reservations. After confirmation the quantity is neither held nor deducted, so available stock resets and the same units can be oversold.",
+    "Reservation availability check (read) and create_reservation (write) are not atomic; concurrent requests can oversell (TOCTOU). Not covered by tests and not noted in README design notes.",
+    "Dead code / unused deps: python-dateutil declared but never imported; ReservationResponse/OrderResponse/OrderListResponse defined (models.py:78-99) but never wired as response_model; unused imports create_engine (models.py:5) and OrderStatus (service.py:3).",
+    "Idempotency, insufficient stock (409), expired confirm (410), missing/invalid API key (401), and pagination all behave correctly and are tested."
+  ],
+  "score_rationale": {
+    "task_fulfillment": "All requested artifacts exist (pyproject, README, src package, two test modules) and the full API surface (SKU, stock, reservations create/confirm/cancel, orders list/get, health) is implemented. Knocked down for a leftover commerce.db in the workspace and the app defaulting to writing ./commerce.db in cwd, which dings the 'fresh/production-minded' constraint.",
+    "functional_correctness": "Edge cases (insufficient stock, idempotent retry, expired confirm, auth, pagination) are handled with sensible status codes. Main deduction is the oversell invariant: confirming a reservation creates an order without decrementing stock while also dropping out of the pending-reserved count (service.py:89, repository.py:80-86), so confirmed units become re-sellable. The non-atomic check-then-write reservation path is an additional consistency risk.",
+    "executability": "pyproject pins all deps with hatchling build; src/ layout is auto-discoverable; uvicorn entrypoint is valid; tests run green. Minor: app writes commerce.db to cwd by default and a stale db file is present, so runtime isolation is slightly less than clean.",
+    "test_quality": "Two layers (service-level with in-memory sqlite, API-level with temp-file sqlite and dependency_overrides) cover all required scenarios and isolate state per test (drop_all + unlink). Assertions check some domain values (quantities, totals, ids) but lean on status codes; notably there is no test asserting stock decreases after confirmation, which is exactly why the oversell bug slipped through.",
+    "code_quality": "Readable, well-separated modules with clear names and consistent error-to-HTTP mapping. Maintainability suffers from the stock invariant being split across service and repository without a single authoritative deduction point, unused response schemas that imply an unfinished contract, and a README design note ('read-only order endpoints do not require it') that contradicts GET /orders requiring a key.",
+    "minimality": "No speculative queues/workers/CLIs. But there is real dead code: an unused dependency (python-dateutil), three unused Pydantic response models, two unused imports, and a duplicated get_sku_by_id call per row in list_orders (service.py:140).",
+    "security_safety": "All mutating endpoints enforce verify_api_key; key is env-configurable with a dev default ('test-key', not a real secret). Inputs validated via Pydantic constraints; ORM parameterization avoids injection. No unsafe shell/file/network operations.",
+    "review_confidence": "Read every source and test file, ran the full suite, and confirmed each finding with targeted greps (unused dateutil, unused schemas/imports, absence of update_stock in confirm). Remaining uncertainty is limited to concurrency behavior, which was reasoned about rather than load-tested."
+  },
+  "instruction_failures": [
+    "README design note claims read-only order endpoints do not require an API key, but GET /orders enforces verify_api_key (app.py:151-157) while GET /orders/{order_id} does not — inconsistent and partially contradicts the doc.",
+    "A generated commerce.db (45 KB) is left in the workspace, contrary to a clean/fresh-workspace expectation."
+  ],
+  "correctness_failures": [
+    "confirm_reservation does not decrement stock and the confirmed reservation no longer counts as reserved (service.py:74-102 + repository.py:80-86), allowing oversell of previously sold units.",
+    "Availability check and reservation insert are not transactionally atomic; concurrent reservations against the same SKU can both pass the availability check and oversell.",
+    "create_reservation returns a still-PENDING-but-time-expired reservation as-is on idempotent retry (service.py:47-51); only reservations already marked EXPIRED raise 410, so an unexpired-status-but-past-expiry hold can be returned as valid."
+  ],
+  "execution_failures": [],
+  "test_gaps": [
+    "No test asserts that available stock decreases / cannot be re-reserved after a reservation is confirmed (would have caught the oversell bug).",
+    "No concurrency/race test for simultaneous reservations against the same SKU.",
+    "Expiration is only exercised at the service layer via a hand-crafted past expiry; no API-level expiry test and no test of the idempotent-retry-of-expired path.",
+    "No test for duplicate SKU creation (409 UNIQUE path in app.py:74-75) or for adjusting stock below zero clamping."
+  ],
+  "quality_notes": [
+    "list_orders builds OrderResponse-shaped dicts manually and calls get_sku_by_id twice per order (service.py:140), an N+1 plus duplicated lookup.",
+    "Order count uses len(scalars().all()) (repository.py:99-100) instead of a SQL COUNT, loading all rows to count them.",
+    "Pydantic response schemas exist but endpoints return raw dicts with no response_model, so the response contract is unenforced and the schemas are dead."
+  ],
+  "unnecessary_code_examples": [
+    "python-dateutil listed in dependencies but never imported anywhere in src or tests.",
+    "ReservationResponse, OrderResponse, OrderListResponse defined in models.py:78-99 but never referenced as response_model.",
+    "Unused import create_engine in models.py:5.",
+    "Unused import OrderStatus in service.py:3."
+  ],
+  "security_safety_notes": [
+    "All mutating endpoints depend on verify_api_key (app.py:64-145); missing key -> 401, wrong key -> 401, verified by tests.",
+    "API key sourced from env API_KEY with default 'test-key' (security.py:8) — a placeholder dev default, not a leaked real secret.",
+    "Inputs validated via Pydantic Field constraints (lengths, gt/ge bounds) and queries use SQLAlchemy parameter binding, avoiding injection; no shell/network/file side effects beyond the local sqlite file."
+  ],
+  "file_evidence": [
+    {"path": "src/commerce_service/service.py", "note": "confirm_reservation (74-102) creates order without decrementing stock; list_orders (140) calls get_sku_by_id twice per row; OrderStatus imported (3) but unused."},
+    {"path": "src/commerce_service/repository.py", "note": "get_reserved_quantity (79-86) counts only PENDING + unexpired reservations, so confirmed holds vanish from accounting; list_orders counts via len(all()) (99-100)."},
+    {"path": "src/commerce_service/app.py", "note": "Full endpoint set with verify_api_key on mutations and GET /orders; GET /orders/{id} omits auth; defaults DATABASE_URL to sqlite:///./commerce.db written in cwd (25-26)."},
+    {"path": "src/commerce_service/models.py", "note": "Unused create_engine import (5); ReservationResponse/OrderResponse/OrderListResponse (78-99) defined but never used as response_model."},
+    {"path": "src/commerce_service/security.py", "note": "APIKeyAuth reads API_KEY env with 'test-key' default; verify raises 401 on mismatch."},
+    {"path": "pyproject.toml", "note": "Pins all runtime/dev deps with hatchling; python-dateutil==2.8.2 declared but unused; asyncio_mode=auto, testpaths=tests."},
+    {"path": "tests/test_service.py", "note": "In-memory sqlite service tests including expiry (104-116) and pending-blocks-others (86-91); no post-confirm stock-decrement assertion."},
+    {"path": "tests/test_api.py", "note": "TestClient + temp-file sqlite with dependency_overrides and teardown drop_all/unlink (15-42); covers auth, insufficient stock, idempotency, pagination."},
+    {"path": "commerce.db", "note": "45 KB generated sqlite artifact left in workspace; not used by tests but reflects default cwd write behavior."},
+    {"path": "README.md", "note": "Design note 'read-only order endpoints do not require it' conflicts with GET /orders enforcing the API key."}
+  ],
+  "commands_run": [
+    "find . -type f (excluding venv/git/pycache) — listed 11 project files",
+    "ls -la commerce.db — confirmed 45 KB leftover db",
+    "python3 -c 'import fastapi, sqlalchemy, httpx, pytest' — deps ok",
+    "PYTHONPATH=src python3 -m pytest tests/ -q — 27 passed, 297 warnings (datetime.utcnow deprecation)",
+    "grep for dateutil / response_model / create_engine / OrderStatus / update_stock — confirmed unused deps/imports and absence of stock decrement on confirm"
+  ],
+  "review_risk": "low — all source and test files were read, the full suite was run green, and every deduction was confirmed via grep; the oversell and concurrency findings were reasoned from code rather than reproduced under load, but the stock-decrement omission is directly verifiable in service.py:74-102."
+}
+```

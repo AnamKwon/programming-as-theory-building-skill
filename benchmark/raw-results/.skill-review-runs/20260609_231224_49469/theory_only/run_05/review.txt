@@ -1,0 +1,158 @@
+I have sufficient evidence. The suite runs (35/36 pass) with one test/code mismatch, and I've confirmed several correctness and minimality issues. Here is the evaluation.
+
+```json
+{
+  "rubric_version": "benchmark-codegen-review-v1",
+  "score_scale": "0-100 per category",
+  "weights": {
+    "task_fulfillment": 0.20,
+    "functional_correctness": 0.25,
+    "executability": 0.15,
+    "test_quality": 0.15,
+    "code_quality": 0.10,
+    "minimality": 0.10,
+    "security_safety": 0.05
+  },
+  "task_fulfillment_score": 85,
+  "task_fulfillment_breakdown": {
+    "instruction_compliance": 85,
+    "required_artifacts": 92,
+    "feature_coverage": 78,
+    "constraint_adherence": 85
+  },
+  "functional_correctness_score": 66,
+  "functional_correctness_breakdown": {
+    "domain_invariants": 55,
+    "edge_case_behavior": 70,
+    "data_consistency": 62,
+    "error_semantics": 78
+  },
+  "executability_score": 82,
+  "executability_breakdown": {
+    "installability": 90,
+    "runtime_entrypoints": 88,
+    "command_result": 68,
+    "runtime_isolation": 80
+  },
+  "test_quality_score": 79,
+  "test_quality_breakdown": {
+    "required_test_coverage": 80,
+    "behavioral_assertions": 72,
+    "integration_realism": 85,
+    "repeatability": 80
+  },
+  "code_quality_score": 84,
+  "code_quality_breakdown": {
+    "readability": 88,
+    "maintainability": 80,
+    "boundary_design": 88,
+    "documentation_quality": 78
+  },
+  "minimality_score": 75,
+  "minimality_breakdown": {
+    "no_speculative_infrastructure": 88,
+    "no_dead_or_duplicate_code": 60,
+    "appropriate_abstractions": 80,
+    "dependency_minimality": 70
+  },
+  "security_safety_score": 88,
+  "security_safety_breakdown": {
+    "auth_enforcement": 88,
+    "secret_handling": 82,
+    "input_safety": 90,
+    "unsafe_operations": 95
+  },
+  "review_confidence_score": 92,
+  "review_confidence_breakdown": {
+    "inspection_depth": 95,
+    "command_evidence": 92,
+    "issue_specificity": 92,
+    "uncertainty_handling": 88
+  },
+  "weighted_components": {
+    "task_fulfillment": 17.0,
+    "functional_correctness": 16.5,
+    "executability": 12.3,
+    "test_quality": 11.9,
+    "code_quality": 8.4,
+    "minimality": 7.5,
+    "security_safety": 4.4
+  },
+  "weighted_total": 78.0,
+  "verdict": "good",
+  "key_findings": [
+    "Coherent, well-layered FastAPI project (models/repository/service/security/app) with all requested endpoints; app imports cleanly and exposes 13 routes.",
+    "35 of 36 tests pass; one test fails out of the box due to a code/test mismatch: service.confirm_reservation raises ReservationAlreadyConfirmedError (service.py:110) but test_confirm_already_confirmed_reservation expects InvalidReservationStateError (test_service.py:126). The two exception classes are unrelated, so the author's own suite was evidently not run before submission.",
+    "Core domain-invariant gap: reservations do NOT hold stock. create_reservation only checks total physical stock (service.py:77) and never decrements; stock is deducted only at confirm (service.py:115). Two pending reservations for the full stock can both be created and both confirmed, driving stock negative — overselling. No test exercises this scenario, so it is masked.",
+    "Order state transitions are incomplete: orders are always created 'pending'; OrderState.CONFIRMED/SHIPPED and Repository.update_order_state are never used. The state-tracking feature is effectively inert.",
+    "Several dead artifacts: ErrorResponse imported but unused (app.py:10), get_expired_reservations and Repository.close never called, and dependencies pydantic-settings and python-dotenv are declared but never imported anywhere in src/."
+  ],
+  "score_rationale": {
+    "task_fulfillment": "All requested files, src layout, README, and the full endpoint surface (SKU, reservation, confirm/cancel, order create/get/list, health) are present and match the prompt. Docked for incomplete order state-transition workflow and a 'production-grade' README claim that overstates the weak auth and oversell behavior.",
+    "functional_correctness": "Happy paths, idempotency (reservation+order), expiry, and pagination behave correctly, and HTTP status mapping (404/409/410) is appropriate. But the reservation does not reserve stock, allowing overselling and negative stock (adjust_stock has no floor); plus a shipped test fails. These are real invariant gaps, hence the mid score.",
+    "executability": "Dependencies install cleanly and were already available; app imports and uvicorn entrypoint are valid. The single failing test is well isolated (a wrong-exception assertion), and the SQLite DB is auto-created. Docked for the failing test and a hardcoded commerce.db in cwd shared across test runs.",
+    "test_quality": "Coverage spans the required areas at both service and API levels using TestClient with real SQLite and per-test drop/create isolation. Weakened by one failing test (suite not run pre-submission), no test for the overselling/concurrent-reservation case, and reliance on the shared production DB file rather than a temp DB.",
+    "code_quality": "Readable names, clear module boundaries, and consistent error-to-HTTP mapping. Slightly loose use of untyped dict returns from the service despite typed response_models, and documentation overstates production-readiness.",
+    "minimality": "No speculative queues/workers/CLIs. But notable dead code (ErrorResponse import, get_expired_reservations, update_order_state, Repository.close, unused OrderState values) and two unused declared dependencies (pydantic-settings, python-dotenv) pull this down.",
+    "security_safety": "All mutating endpoints enforce the X-API-Key dependency; pydantic validates inputs and SQLAlchemy ORM avoids injection; no hardcoded secrets and no unsafe shell/file/network operations. The accept-any-nonempty-key scheme is explicitly documented as a stub, which is acceptable for the exercise but not production auth.",
+    "review_confidence": "All source and test files were read, the declared test command was run with dependencies present, imports were verified, and unused symbols/deps were confirmed via grep. Findings cite concrete files and lines."
+  },
+  "instruction_failures": [
+    "README advertises 'production-grade' but auth accepts any non-empty key (security.py:13) and there is no configuration/secret management despite declaring pydantic-settings/python-dotenv.",
+    "Order state-transition workflow implied by OrderState (CONFIRMED/SHIPPED) is not implemented; no endpoint or service path transitions an order beyond 'pending'."
+  ],
+  "correctness_failures": [
+    "Overselling: create_reservation checks but does not hold stock (service.py:74-83); multiple concurrent/pending reservations can exceed available stock and all confirm, deducting below zero.",
+    "adjust_stock and confirm allow stock to go negative — no non-negativity guard (repository.py:85, service.py:115).",
+    "test_confirm_already_confirmed_reservation fails: ReservationAlreadyConfirmedError raised (service.py:109-112) vs InvalidReservationStateError expected (test_service.py:126).",
+    "get_session is a plain callable returning a Session (repository.py:55) used as a FastAPI dependency; it is never closed per request (no yield/finally), leaking sessions."
+  ],
+  "execution_failures": [
+    "pytest: 1 failed, 35 passed — TestReservationConfirmation::test_confirm_already_confirmed_reservation.",
+    "288 DeprecationWarnings from datetime.utcnow() usage (repository.py:22/33/48/98, service.py:104/119); non-fatal but flagged for future Python removal."
+  ],
+  "test_gaps": [
+    "No test for the overselling scenario (two pending reservations whose combined quantity exceeds stock, both confirmed).",
+    "No assertion that stock cannot go negative.",
+    "Expiration is only tested by manually mutating expires_at; the unused get_expired_reservations sweep path is untested.",
+    "No test for duplicate SKU creation (would raise IntegrityError -> generic 400 via catch-all).",
+    "Tests use the shared production commerce.db rather than an isolated temp/in-memory database."
+  ],
+  "quality_notes": [
+    "Service methods return plain dicts that are then re-validated by FastAPI response_models — mildly redundant but harmless.",
+    "Broad `except Exception -> 400` blocks (app.py:55,78,107,140,168,195) can mask unexpected errors as client errors.",
+    "Confirm/cancel reuse the reservation's idempotency_key as a pseudo-authorization check (service.py:100,137); reasonable but conflates idempotency with authorization."
+  ],
+  "unnecessary_code_examples": [
+    "ErrorResponse model imported in app.py:10 but never used as a response schema.",
+    "Repository.get_expired_reservations (repository.py:130) never called.",
+    "Repository.update_order_state (repository.py:169) and Repository.close (repository.py:185) never called.",
+    "OrderState.CONFIRMED / OrderState.SHIPPED (models.py:17-18) never assigned anywhere.",
+    "Dependencies pydantic-settings and python-dotenv (pyproject.toml:14-16) are unused — grep found no env/config code."
+  ],
+  "security_safety_notes": [
+    "All mutating routes use Depends(verify_api_key); read-only /orders and /orders/{id} are unauthenticated, which is a reasonable design choice.",
+    "verify_api_key accepts any non-empty key (security.py:13) — documented stub, not real authentication.",
+    "No hardcoded real secrets; inputs validated by pydantic; ORM parameterization avoids SQL injection.",
+    "No shell/file/network/destructive operations beyond local SQLite file creation."
+  ],
+  "file_evidence": [
+    {"path": "src/commerce_service/service.py", "note": "create_reservation (74-83) checks stock but never holds it; confirm deducts at 115 — enables overselling and negative stock. confirm raises ReservationAlreadyConfirmedError (110) mismatching the test."},
+    {"path": "tests/test_service.py", "note": "Line 126 expects InvalidReservationStateError where code raises ReservationAlreadyConfirmedError — this is the single failing test."},
+    {"path": "src/commerce_service/repository.py", "note": "Hardcoded sqlite:///./commerce.db (7); get_session returns an unclosed Session (55); get_expired_reservations (130) and update_order_state (169) unused; utcnow deprecation sources."},
+    {"path": "src/commerce_service/app.py", "note": "Unused ErrorResponse import (10); broad except->400 blocks; proper verify_api_key on all mutating endpoints; pagination via Query bounds (217-218)."},
+    {"path": "src/commerce_service/security.py", "note": "verify_api_key accepts any non-empty key (13) — documented demo stub."},
+    {"path": "pyproject.toml", "note": "Declares pydantic-settings and python-dotenv (14-16) that are never imported in src/."},
+    {"path": "src/commerce_service/models.py", "note": "OrderState.CONFIRMED/SHIPPED (17-18) defined but never set; orders remain 'pending'."}
+  ],
+  "commands_run": [
+    "find . -type f (project listing)",
+    "python3 -c 'import fastapi, sqlalchemy, httpx, pydantic' (deps present)",
+    "python3 -m pytest tests/ -q (1 failed, 35 passed, 288 warnings)",
+    "python3 -m pytest tests/test_service.py::...::test_confirm_already_confirmed_reservation -q (failure detail)",
+    "python3 -c 'from src.commerce_service.app import app' (import ok, 13 routes)",
+    "grep for unused symbols and env/config usage"
+  ],
+  "review_risk": "low — all source and tests were read, dependencies were available, the declared pytest command and import smoke checks were run, and unused code/deps were confirmed by grep; only concurrency/transaction behavior under real load is reasoned about rather than load-tested."
+}
+```

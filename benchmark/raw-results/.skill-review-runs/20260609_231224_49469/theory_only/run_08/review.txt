@@ -1,0 +1,151 @@
+All 29 tests pass. I've reviewed every source and test file, run the suite, and inspected the runtime artifact. Here is my evaluation.
+
+```json
+{
+  "rubric_version": "benchmark-codegen-review-v1",
+  "score_scale": "0-100 per category",
+  "weights": {
+    "task_fulfillment": 0.20,
+    "functional_correctness": 0.25,
+    "executability": 0.15,
+    "test_quality": 0.15,
+    "code_quality": 0.10,
+    "minimality": 0.10,
+    "security_safety": 0.05
+  },
+  "task_fulfillment_score": 89,
+  "task_fulfillment_breakdown": {
+    "instruction_compliance": 90,
+    "required_artifacts": 95,
+    "feature_coverage": 92,
+    "constraint_adherence": 80
+  },
+  "functional_correctness_score": 83,
+  "functional_correctness_breakdown": {
+    "domain_invariants": 85,
+    "edge_case_behavior": 85,
+    "data_consistency": 72,
+    "error_semantics": 90
+  },
+  "executability_score": 88,
+  "executability_breakdown": {
+    "installability": 82,
+    "runtime_entrypoints": 90,
+    "command_result": 95,
+    "runtime_isolation": 85
+  },
+  "test_quality_score": 91,
+  "test_quality_breakdown": {
+    "required_test_coverage": 95,
+    "behavioral_assertions": 90,
+    "integration_realism": 90,
+    "repeatability": 90
+  },
+  "code_quality_score": 86,
+  "code_quality_breakdown": {
+    "readability": 90,
+    "maintainability": 85,
+    "boundary_design": 90,
+    "documentation_quality": 80
+  },
+  "minimality_score": 86,
+  "minimality_breakdown": {
+    "no_speculative_infrastructure": 90,
+    "no_dead_or_duplicate_code": 72,
+    "appropriate_abstractions": 85,
+    "dependency_minimality": 95
+  },
+  "security_safety_score": 91,
+  "security_safety_breakdown": {
+    "auth_enforcement": 95,
+    "secret_handling": 82,
+    "input_safety": 90,
+    "unsafe_operations": 95
+  },
+  "review_confidence_score": 91,
+  "review_confidence_breakdown": {
+    "inspection_depth": 95,
+    "command_evidence": 90,
+    "issue_specificity": 90,
+    "uncertainty_handling": 88
+  },
+  "weighted_components": {
+    "task_fulfillment": 17.8,
+    "functional_correctness": 20.8,
+    "executability": 13.2,
+    "test_quality": 13.7,
+    "code_quality": 8.6,
+    "minimality": 8.6,
+    "security_safety": 4.6
+  },
+  "weighted_total": 87.2,
+  "verdict": "good",
+  "key_findings": [
+    "Coherent, well-layered FastAPI project (models/repository/service/app/security) with all requested endpoints; 29/29 tests pass locally.",
+    "Lazy expiration via expire_stale() called inside reserve()/confirm() is a sound, minimal alternative to a background worker; expiry correctly releases reserved_count.",
+    "All mutating endpoints plus GET /orders require the X-API-Key dependency; auth is consistently enforced.",
+    "reserve() performs a non-atomic read-check-then-increment across two separate commits with no row locking, creating an oversell/orphan-reserved_count risk under concurrency that is never acknowledged.",
+    "A leftover runtime artifact commerce.db (40KB) sits in the 'fresh workspace'; the app creates it on import and there is no .gitignore.",
+    "Several unused imports (models in app.py; OrderStatus in service.py) reduce minimality."
+  ],
+  "score_rationale": {
+    "task_fulfillment": "All required artifacts and endpoints exist (skus, adjust-stock, reservations, confirm, cancel, orders, health) with idempotency, expiration, and pagination. Docked mainly for the stray commerce.db artifact and absence of .gitignore in a workspace meant to be fresh/production-minded.",
+    "functional_correctness": "Core invariants hold: availability = stock - reserved_count, idempotent reserve via unique key, expiry releases stock, status-guarded transitions. Main weaknesses are the non-atomic two-commit reserve path (service.py:60-64) with no locking, and adjust_stock allowing stock to drop below reserved_count (repository.py:26-33) producing negative availability. Error statuses (409/404/400/401) are appropriate.",
+    "executability": "pytest runs green (29 passed). App imports cleanly and uvicorn entrypoint is documented. Installability is plausible but pyproject declares no explicit setuptools package discovery for the src/ layout, relying on modern auto-discovery; pip install -e was not verified. Tests are isolated via in-memory StaticPool and dependency override, but importing the app writes commerce.db into cwd.",
+    "test_quality": "Both unit (test_service.py) and integration (test_api.py) layers cover happy path, insufficient stock, idempotency, expiry stock-release, auth rejection, and multi-page pagination. Assertions check domain state (reserved_count, statuses, stock totals), not just HTTP codes. autouse reset_db fixture makes runs repeatable.",
+    "code_quality": "Clear naming and clean separation of repository/service/schema/security boundaries; invariants centralized in CommerceService. README is accurate and not padded. Minor: Pydantic v2 uses legacy class Config, sparse docstrings.",
+    "minimality": "No speculative queues/workers/CLIs; dependency set is fully used. Lowered by unused model imports in app.py and OrderStatus in service.py, and per-entity repositories that are slightly heavy but defensible.",
+    "security_safety": "API-key dependency guards every mutation and the orders listing; pydantic constrains inputs (length, ge) and ORM avoids injection. Minor concerns: a non-constant-time key comparison (security.py:10) and a weak default key 'test-key' (documented, dev-only).",
+    "review_confidence": "All source and test files were read; the full suite was executed with captured output. Remaining uncertainty is around install-from-scratch and true concurrent behavior, which were not exercised."
+  },
+  "instruction_failures": [
+    "Left a generated commerce.db in the workspace and provided no .gitignore, weakening the 'fresh/clean workspace' expectation."
+  ],
+  "correctness_failures": [
+    "reserve() increments sku.reserved_count and commits, then creates the Reservation in a second commit (service.py:60-64); a failure or concurrent duplicate between the two leaves reserved_count over-incremented.",
+    "No locking/atomicity on availability check means concurrent reservations can oversell with the SQLite default isolation.",
+    "adjust_stock allows reducing stock below reserved_count (repository.py:26-33), yielding negative effective availability with no guard.",
+    "confirm_reservation has an unreachable-but-unsafe branch: if status is CONFIRMED with no existing order it falls through and would attempt a second order insert, violating the unique reservation_id constraint (service.py:91-97)."
+  ],
+  "execution_failures": [
+    "pyproject.toml declares no [tool.setuptools.packages.find]/package-dir for the src/ layout; editable install relies on setuptools>=61 auto-discovery and was not verified (tests were run via PYTHONPATH=src)."
+  ],
+  "test_gaps": [
+    "No test for adjusting stock below reserved_count or for negative availability.",
+    "No concurrency/race test around the reserve check-then-increment.",
+    "No test that confirming does NOT release reserved_count (the stock-accounting model after confirm is unasserted).",
+    "API-layer expiration path is untested (expiry only covered in service tests)."
+  ],
+  "quality_notes": [
+    "Pydantic v2 models use legacy `class Config: from_attributes` rather than model_config.",
+    "datetime.utcnow() is deprecated on Python 3.12 and emits many warnings; timezone-aware datetimes would be cleaner.",
+    "Per-entity repository classes plus a service layer is slightly more structure than the surface needs, but boundaries are clean."
+  ],
+  "unnecessary_code_examples": [
+    "app.py imports SKU, Reservation, Order, ReservationStatus, OrderStatus (and HTTPException, status) that are unused.",
+    "service.py imports OrderStatus which it never references.",
+    "SKU.reservations / SKU.orders relationships are declared but not exercised by any code path."
+  ],
+  "security_safety_notes": [
+    "verify_api_key uses a plain `!=` comparison (security.py:10) rather than a constant-time compare; low risk but noted.",
+    "Default API key 'test-key' is documented as a dev default sourced from env var API_KEY; no real secret is hardcoded.",
+    "Inputs are validated via pydantic constraints and persisted through SQLAlchemy ORM, avoiding injection."
+  ],
+  "file_evidence": [
+    {"path": "src/commerce_service/service.py", "note": "reserve() commits reserved_count increment (line 61) separately from reservation create (line 64); confirm does not decrement stock/reserved_count."},
+    {"path": "src/commerce_service/repository.py", "note": "expire_stale() (lines 85-103) lazily expires pending reservations and releases reserved_count; adjust_stock has no floor against reserved_count."},
+    {"path": "src/commerce_service/security.py", "note": "API-key header dependency with env-configurable key; non-constant-time comparison."},
+    {"path": "src/commerce_service/app.py", "note": "Module-level Base.metadata.create_all writes ./commerce.db on import; several unused model imports."},
+    {"path": "tests/test_api.py", "note": "Integration tests with in-memory StaticPool, get_db override, autouse reset_db; covers auth, idempotency, pagination, insufficient stock."},
+    {"path": "tests/test_service.py", "note": "Unit tests covering expiry stock-release, confirm idempotency, cancel-after-confirm rejection, pagination."},
+    {"path": "commerce.db", "note": "40KB leftover SQLite artifact present in the supposedly fresh workspace; no .gitignore."},
+    {"path": "pyproject.toml", "note": "Pinned deps; no explicit setuptools src-layout package discovery configuration."}
+  ],
+  "commands_run": [
+    "find . -type f (excluding caches) — listed project layout",
+    "ls -la commerce.db; python3 -c 'import fastapi, sqlalchemy, httpx, pytest' — confirmed artifact and deps available",
+    "PYTHONPATH=src python3 -m pytest -q — 29 passed, 339 deprecation warnings in 0.72s"
+  ],
+  "review_risk": "Low: all files read and the full test suite passed locally, but editable install (pip install -e) and real concurrent reservation behavior were not exercised, so installability and the oversell risk are assessed by inspection rather than execution."
+}
+```

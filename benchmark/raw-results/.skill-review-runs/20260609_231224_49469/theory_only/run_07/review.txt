@@ -1,0 +1,157 @@
+Confirmed both: `Header` is imported but unused in `app.py:4`, and `expire_pending_reservations` is defined but never invoked anywhere in `src/` (no endpoint, no scheduler) — so expired holds are never reclaimed in the running app.
+
+```json
+{
+  "rubric_version": "benchmark-codegen-review-v1",
+  "score_scale": "0-100 per category",
+  "weights": {
+    "task_fulfillment": 0.20,
+    "functional_correctness": 0.25,
+    "executability": 0.15,
+    "test_quality": 0.15,
+    "code_quality": 0.10,
+    "minimality": 0.10,
+    "security_safety": 0.05
+  },
+  "task_fulfillment_score": 84,
+  "task_fulfillment_breakdown": {
+    "instruction_compliance": 78,
+    "required_artifacts": 90,
+    "feature_coverage": 88,
+    "constraint_adherence": 80
+  },
+  "functional_correctness_score": 67,
+  "functional_correctness_breakdown": {
+    "domain_invariants": 62,
+    "edge_case_behavior": 72,
+    "data_consistency": 62,
+    "error_semantics": 70
+  },
+  "executability_score": 65,
+  "executability_breakdown": {
+    "installability": 88,
+    "runtime_entrypoints": 80,
+    "command_result": 30,
+    "runtime_isolation": 60
+  },
+  "test_quality_score": 61,
+  "test_quality_breakdown": {
+    "required_test_coverage": 85,
+    "behavioral_assertions": 85,
+    "integration_realism": 30,
+    "repeatability": 45
+  },
+  "code_quality_score": 82,
+  "code_quality_breakdown": {
+    "readability": 88,
+    "maintainability": 78,
+    "boundary_design": 88,
+    "documentation_quality": 75
+  },
+  "minimality_score": 77,
+  "minimality_breakdown": {
+    "no_speculative_infrastructure": 70,
+    "no_dead_or_duplicate_code": 68,
+    "appropriate_abstractions": 80,
+    "dependency_minimality": 88
+  },
+  "security_safety_score": 88,
+  "security_safety_breakdown": {
+    "auth_enforcement": 92,
+    "secret_handling": 78,
+    "input_safety": 88,
+    "unsafe_operations": 95
+  },
+  "review_confidence_score": 90,
+  "review_confidence_breakdown": {
+    "inspection_depth": 92,
+    "command_evidence": 92,
+    "issue_specificity": 90,
+    "uncertainty_handling": 85
+  },
+  "weighted_components": {
+    "task_fulfillment": 16.8,
+    "functional_correctness": 16.8,
+    "executability": 9.8,
+    "test_quality": 9.2,
+    "code_quality": 8.2,
+    "minimality": 7.7,
+    "security_safety": 4.4
+  },
+  "weighted_total": 72.8,
+  "verdict": "mixed",
+  "key_findings": [
+    "Running the declared `pytest` command yields 14 failed / 19 passed: the entire test_api.py integration layer fails. test_service.py (16 tests) passes cleanly.",
+    "Root cause of API test failures: test_api.py builds `create_engine('sqlite:///:memory:')` with no StaticPool and no check_same_thread=False. Each new session gets a fresh empty in-memory DB ('no such table: skus') and TestClient's threadpool triggers 'SQLite objects created in a thread can only be used in that same thread'.",
+    "Stated inventory invariant `available + reserved = total` is violated during the pending state: reserve_inventory only deducts `available` while `reserved` stays 0, so the derived total drops until the reservation is confirmed (service.py:49,69; observed in test_service.py:71-72).",
+    "expire_pending_reservations (service.py:99) is never invoked anywhere in src/ — no endpoint, no scheduler. Held stock from expired-but-unswept reservations is never reclaimed in the running app; confirm of an expired reservation raises without releasing stock.",
+    "Importing the app writes a real commerce.db file into the working directory via module-level Base.metadata.create_all against sqlite:///./commerce.db (app.py:20-24) — a runtime-isolation side effect.",
+    "Clean layered design (models / repository / service / security / app) with good docstrings and API-key enforcement on all mutating endpoints."
+  ],
+  "score_rationale": {
+    "task_fulfillment": "All requested artifacts (pyproject, README, src package, two test files) and the full endpoint surface — SKUs, reservations, confirm/cancel, paginated orders, idempotency, auth — are present and match the README contract. Docked for the 'production-grade' overclaim, the unwired expiration sweep, and the CWD database side effect.",
+    "functional_correctness": "Core flows are internally consistent for available-stock restoration on cancel/expire, and inline expiry rejection works. But the README invariant available+reserved=total does not hold during pending state, expired holds are never reclaimed (no sweep wiring), unknown SKU on reserve returns 400 rather than 404, and there is no row locking — concurrent reserves could oversell and an idempotency-key race would raise an uncaught IntegrityError (500).",
+    "executability": "Dependencies are pinned and packaging is valid; app imports and exposes 12 routes; uvicorn entrypoint is usable. Heavily docked because the declared `pytest` command fails 14/33 tests and the app writes commerce.db into CWD on import.",
+    "test_quality": "Intended coverage is excellent — happy paths, insufficient stock, idempotency, expiration, auth, and pagination are all exercised, and service tests assert real stock/status behavior rather than just status codes. Severely undercut because the integration suite does not execute at all (misconfigured in-memory engine), and test_api.py relies on a shared module-level engine with inconsistent per-class resets, so it is not repeatable.",
+    "code_quality": "Readable names, coherent repository/service/schema/security boundaries, and an extracted RESERVATION_EXPIRATION_MINUTES constant. Maintainability is slightly hurt by the available/reserved transition being split across reserve and confirm, and the README overstates production-readiness without noting the unwired sweep.",
+    "minimality": "Mostly proportionate, but expire_pending_reservations is dead in production, app.py imports Header without using it (app.py:4), and ReservationRepository.create_reservation re-checks idempotency redundantly with the service path. Dependencies are all justified.",
+    "security_safety": "verify_api_key guards every mutating endpoint (and the order reads); inputs are validated via Pydantic constraints (ge/gt, pagination bounds) and ORM queries are parameterized. Minor concern: a hardcoded default API key 'dev-key-12345', though it is env-overridable.",
+    "review_confidence": "Read every source and test file, ran the full suite plus isolated tests, captured the exact SQLite thread/missing-table errors, and confirmed the unused import and unwired sweep via grep. Main residual uncertainty is concurrent-runtime behavior under a real server, which was not load-tested."
+  },
+  "instruction_failures": [
+    "README advertises a 'production-grade' service, but the shipped integration test suite does not run and expired reservations are never reclaimed.",
+    "README invariant `available + reserved = total` is not actually upheld during the pending reservation window."
+  ],
+  "correctness_failures": [
+    "Inventory invariant available+reserved=total is broken while a reservation is pending (service.py:49 deducts available; reserved only incremented at confirm, service.py:69).",
+    "Expired reservations holding stock are never auto-released: expire_pending_reservations is unreferenced in src/, and confirm_reservation on an expired hold raises without restoring available stock (service.py:65-66).",
+    "No row-level locking around reserve/confirm; concurrent reservations could oversell, and a concurrent idempotency-key collision would raise an uncaught IntegrityError surfacing as HTTP 500.",
+    "Reserving an unknown SKU returns 400 'not found' rather than 404 (app.py:64-65 maps all ValueError to 400)."
+  ],
+  "execution_failures": [
+    "`pytest` (the declared command) fails: 14 failed, 19 passed — all of tests/test_api.py errors.",
+    "test_api.py engine 'sqlite:///:memory:' lacks StaticPool/check_same_thread, so each session connection is a separate empty DB ('no such table: skus') and TestClient threadpool triggers 'SQLite objects created in a thread can only be used in that same thread'.",
+    "Importing commerce_service.app creates a commerce.db file in the current working directory (module-level create_all at app.py:24)."
+  ],
+  "test_gaps": [
+    "Because the integration suite cannot execute, no API-level behavior is actually verified (auth, pagination, idempotency over HTTP all fail at runtime).",
+    "No test asserts the README invariant available+reserved=total across the pending window — the existing assertions (test_service.py:71-72) actually encode the invariant violation as expected behavior.",
+    "No test for an unauthenticated/invalid key on every mutating endpoint individually (only /skus and one /orders case).",
+    "No test exercises expire_pending_reservations being triggered through any production code path (it is only callable directly in tests)."
+  ],
+  "quality_notes": [
+    "Clean separation: models.py (ORM + Pydantic), repository.py (data access), service.py (rules/state machine), security.py (auth), app.py (routes).",
+    "Uses deprecated datetime.utcnow() and Pydantic v1-style from_orm/Config across models.py and app.py, emitting many deprecation warnings.",
+    "RESERVATION_EXPIRATION_MINUTES constant and per-aggregate repositories make rule changes localizable.",
+    "README does not document that the expiration sweep is not wired to any endpoint or background task."
+  ],
+  "unnecessary_code_examples": [
+    "app.py:4 imports Header but never uses it.",
+    "service.py expire_pending_reservations is dead in the running application (no caller in src/).",
+    "repository.py ReservationRepository.create_reservation re-checks idempotency_key (lines 87-93), duplicating the check the service already performs (service.py:37-39)."
+  ],
+  "security_safety_notes": [
+    "All mutating endpoints and order reads enforce verify_api_key (app.py Depends on every route except /health).",
+    "Default API key 'dev-key-12345' is hardcoded as the Settings default (security.py:10); env-overridable but a weak default if deployed unchanged.",
+    "Inputs validated via Pydantic (quantity ge=0/gt=0, pagination 1-100); SQLAlchemy ORM queries are parameterized, no injection vectors observed.",
+    "No shell/file/network side effects beyond writing the configured SQLite file."
+  ],
+  "file_evidence": [
+    {"path": "tests/test_api.py", "note": "Lines 11-13 create sqlite:///:memory: with no StaticPool/check_same_thread; cause of all 14 integration-test failures (missing table + cross-thread errors)."},
+    {"path": "src/commerce_service/service.py", "note": "reserve_inventory (49) deducts available only; confirm_reservation (69) increments reserved — invariant available+reserved=total breaks during pending. expire_pending_reservations (99) never called in src/."},
+    {"path": "src/commerce_service/app.py", "note": "Line 4 unused Header import; lines 20-24 module-level create_all writes commerce.db into CWD on import; line 64-65 maps unknown-SKU ValueError to 400 instead of 404."},
+    {"path": "src/commerce_service/repository.py", "note": "create_reservation (87-93) redundantly re-checks idempotency_key already handled by the service layer."},
+    {"path": "tests/test_service.py", "note": "16 passing unit tests with strong behavioral assertions on stock/status; lines 71-72 encode the pending-state invariant violation as expected."},
+    {"path": "src/commerce_service/security.py", "note": "verify_api_key dependency with default key 'dev-key-12345'; enforced on all mutating routes."}
+  ],
+  "commands_run": [
+    "python3 --version; python3 -c 'import fastapi,sqlalchemy,pydantic,httpx,pytest' (deps present, Python 3.12.4)",
+    "PYTHONPATH=src python3 -m pytest -q (14 failed, 19 passed)",
+    "PYTHONPATH=src python3 -m pytest tests/test_api.py::TestSKUEndpoints::test_create_sku -q (captured 'no such table: skus' + cross-thread ProgrammingError)",
+    "PYTHONPATH=src python3 -m pytest tests/test_service.py -q (16 passed)",
+    "PYTHONPATH=src python3 -c 'from commerce_service.app import app' (imports OK, 12 routes; created commerce.db in CWD)",
+    "grep -n Header src/commerce_service/app.py; grep -rn expire_pending_reservations src/"
+  ],
+  "review_risk": "low — all source and test files were read, the full and isolated test runs were executed with failures root-caused, and dead code/side effects were confirmed by grep; only concurrent-runtime behavior under a live server was not load-tested."
+}
+```

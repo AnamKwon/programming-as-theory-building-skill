@@ -1,0 +1,154 @@
+Importing the app created `commerce.db` in the working directory — a confirmed import-time side effect. I have enough evidence to finalize.
+
+```json
+{
+  "rubric_version": "benchmark-codegen-review-v1",
+  "score_scale": "0-100 per category",
+  "weights": {
+    "task_fulfillment": 0.20,
+    "functional_correctness": 0.25,
+    "executability": 0.15,
+    "test_quality": 0.15,
+    "code_quality": 0.10,
+    "minimality": 0.10,
+    "security_safety": 0.05
+  },
+  "task_fulfillment_score": 84,
+  "task_fulfillment_breakdown": {
+    "instruction_compliance": 85,
+    "required_artifacts": 95,
+    "feature_coverage": 80,
+    "constraint_adherence": 75
+  },
+  "functional_correctness_score": 51,
+  "functional_correctness_breakdown": {
+    "domain_invariants": 35,
+    "edge_case_behavior": 45,
+    "data_consistency": 50,
+    "error_semantics": 75
+  },
+  "executability_score": 61,
+  "executability_breakdown": {
+    "installability": 85,
+    "runtime_entrypoints": 80,
+    "command_result": 20,
+    "runtime_isolation": 60
+  },
+  "test_quality_score": 59,
+  "test_quality_breakdown": {
+    "required_test_coverage": 80,
+    "behavioral_assertions": 70,
+    "integration_realism": 55,
+    "repeatability": 30
+  },
+  "code_quality_score": 76,
+  "code_quality_breakdown": {
+    "readability": 80,
+    "maintainability": 70,
+    "boundary_design": 80,
+    "documentation_quality": 75
+  },
+  "minimality_score": 79,
+  "minimality_breakdown": {
+    "no_speculative_infrastructure": 85,
+    "no_dead_or_duplicate_code": 75,
+    "appropriate_abstractions": 85,
+    "dependency_minimality": 70
+  },
+  "security_safety_score": 85,
+  "security_safety_breakdown": {
+    "auth_enforcement": 90,
+    "secret_handling": 75,
+    "input_safety": 80,
+    "unsafe_operations": 95
+  },
+  "review_confidence_score": 91,
+  "review_confidence_breakdown": {
+    "inspection_depth": 95,
+    "command_evidence": 95,
+    "issue_specificity": 90,
+    "uncertainty_handling": 85
+  },
+  "weighted_components": {
+    "task_fulfillment": 16.8,
+    "functional_correctness": 12.8,
+    "executability": 9.2,
+    "test_quality": 8.9,
+    "code_quality": 7.6,
+    "minimality": 7.9,
+    "security_safety": 4.3
+  },
+  "weighted_total": 67.5,
+  "verdict": "mixed",
+  "key_findings": [
+    "Confirmed runtime failure: `service.py:100` compares an offset-aware `now` against `reservation.expires_at`, which is read back as naive from the SQLAlchemy `DateTime` (naive) columns in models.py, raising `TypeError: can't compare offset-naive and offset-aware datetimes`. This breaks the entire confirm-reservation workflow (stock deduction + order creation) and expiration handling.",
+    "API test fixture is broken: tests inject an in-memory SQLite session but the TestClient executes endpoints in a worker thread, producing `sqlite3.ProgrammingError: SQLite objects created in a thread can only be used in that same thread` and `no such table: skus`. 11 of the test_api.py tests fail outright.",
+    "Test run result: 14 failed, 10 passed, 1 error (`PYTHONPATH=src python3 -m pytest tests/`). The central order/reservation lifecycle is not actually exercised successfully.",
+    "Weak reservation invariant: `reserve()` (service.py:48) checks stock but never holds/decrements it; stock is only deducted at confirm. Multiple concurrent PENDING reservations can collectively exceed available stock (oversell at reservation level), only caught at confirm time.",
+    "Import-time side effect: importing `commerce_service.app` runs `Base.metadata.create_all` against `sqlite:///./commerce.db` (app.py:19-23), creating `commerce.db` in the CWD on import — verified present after the test run."
+  ],
+  "score_rationale": {
+    "task_fulfillment": "All requested artifacts and the full endpoint surface (skus, stock/adjust, reservations + confirm/cancel, orders get/list, health) are present with a clean src layout, README, and pyproject. Idempotency, expiration, auth, and pagination are all addressed in code. Knocked down because 'production-minded' is undermined by a broken core path and an import-time DB file write.",
+    "functional_correctness": "Error status codes are well chosen (409/410/404/400/403) and insufficient-stock and idempotent-retry paths work. But the confirm path — the heart of the order workflow — fails at runtime due to the naive/aware datetime comparison, expiration checking is broken by the same bug, and reservations do not actually hold stock, so the stock-availability invariant is only partially enforced.",
+    "executability": "Dependencies and packaging are plausible and the app imports and would serve. However the declared test command fails for the majority of tests (datetime bug + thread-bound in-memory session), and importing the app writes commerce.db into the CWD, weakening isolation.",
+    "test_quality": "Coverage intent is good — happy paths, insufficient stock, idempotency, expiration, auth, and pagination are all targeted, with some behavioral assertions (stock deducted, state transitions). But the API fixture does not isolate state correctly across threads and the suite is not repeatably green; a large fraction of tests error/fail rather than validating behavior.",
+    "code_quality": "Clear module boundaries (models/repository/service/security/app) and readable control flow. Detractors: `Repository` is imported at the bottom of app.py (line 209) after being used in endpoints, naive DateTime columns drive the runtime bug, and Order reuses the ReservationState enum for order state (conceptual conflation).",
+    "minimality": "No speculative queues/workers/CLIs. Mostly tight. The bottom-of-file import in app.py and the Order/Reservation enum reuse are minor smells, and `pydantic-settings` is declared as a dependency but never used (config reads `os.getenv` directly).",
+    "security_safety": "All mutating endpoints require `Depends(verify_api_key)` (verified in app.py:104-162) and unauthorized tests return 403. Pydantic validates request bodies. Only soft issues: a hardcoded `dev-key` default fallback in security.py and no rate/secret-strength handling, which is acceptable for the stated dev scope.",
+    "review_confidence": "All source and test files were read, the suite was executed with concrete tracebacks captured, root causes isolated to specific lines, and the import side effect verified on disk."
+  },
+  "instruction_failures": [
+    "Production-mindedness undermined: app import unconditionally creates ./commerce.db in the working directory (app.py:19-23) rather than deferring engine/table creation, a non-isolated side effect."
+  ],
+  "correctness_failures": [
+    "service.py:100 `if now > reservation.expires_at` raises TypeError (aware vs naive) because models.py DateTime columns are timezone-naive; confirm and expiration are non-functional.",
+    "reserve() does not decrement or hold stock (service.py:48-91); available stock is not reduced by pending reservations, permitting oversell across multiple pending reservations until confirm.",
+    "Check-then-act sequences (stock check then deduct in confirm_reservation) are not atomic / not row-locked; under concurrency two confirms could race, though SQLite serialization masks this in practice."
+  ],
+  "execution_failures": [
+    "`PYTHONPATH=src python3 -m pytest tests/` → 14 failed, 10 passed, 1 error.",
+    "test_api.py (11 tests): `sqlite3.ProgrammingError: SQLite objects created in a thread can only be used in that same thread` and `OperationalError: no such table: skus` — fixture session is created in the test thread but used in the TestClient worker thread; test engine omits check_same_thread and a shared in-memory connection.",
+    "test_service.py confirm/cancel-after-confirm tests fail with the datetime TypeError."
+  ],
+  "test_gaps": [
+    "No passing end-to-end coverage of the confirm → order-creation → stock-deduction path (the relevant tests error).",
+    "Expired-reservation behavior is asserted at the service layer only and currently fails to execute; no working API-level expiration test.",
+    "No test for stock-availability across multiple concurrent pending reservations (the oversell gap is unobserved).",
+    "API tests are not repeatable due to the thread/in-memory wiring defect."
+  ],
+  "quality_notes": [
+    "app.py:209 imports Repository at the bottom of the file after using it in get_order/list_orders — works only because module-level import executes before any request, but it is fragile and surprising.",
+    "Order.state reuses ReservationState enum (models.py:54); order lifecycle states are conceptually distinct and should not borrow the reservation enum.",
+    "Naive DateTime columns combined with aware datetimes throughout is the root design flaw; using DateTime(timezone=True) or consistently naive UTC would fix it.",
+    "Endpoints construct response dicts inline (app.py:171-205) duplicating the order-serialization shape between get_order and list_orders."
+  ],
+  "unnecessary_code_examples": [
+    "`pydantic-settings>=2.0.0` is declared in pyproject.toml dependencies but never imported; configuration uses os.getenv directly (app.py:19, security.py:9).",
+    "`from sqlalchemy import and_` in repository.py:2 is imported but unused.",
+    "`from sqlalchemy.exc import IntegrityError` in service.py:4 is imported but unused.",
+    "`timedelta` imported in models.py:1 is unused."
+  ],
+  "security_safety_notes": [
+    "All mutating endpoints enforce the X-API-Key dependency (app.py:104,113,122,140,155); unauthorized requests return 403 (verified by passing test_create_sku_unauthorized).",
+    "API key default falls back to hardcoded 'dev-key' (security.py:9) — documented as dev-only in README, but a missing API_KEY in production would silently accept the default.",
+    "Request bodies validated by Pydantic models; pagination bounded via Query(ge=0, ge=1/le=100). No shell/network/destructive operations."
+  ],
+  "file_evidence": [
+    {"path": "src/commerce_service/service.py", "note": "Line 100 naive/aware datetime comparison TypeError breaks confirm/expiration; reserve() (48-91) never holds stock."},
+    {"path": "src/commerce_service/models.py", "note": "DateTime columns are timezone-naive while aware UTC datetimes are stored; Order.state reuses ReservationState enum (line 54); unused timedelta import."},
+    {"path": "src/commerce_service/app.py", "note": "Import-time create_all writes ./commerce.db (19-23); Repository imported at bottom (209) after use in endpoints."},
+    {"path": "tests/test_api.py", "note": "Fixture returns a thread-bound in-memory session; 11 tests fail with cross-thread/no-such-table SQLite errors."},
+    {"path": "tests/test_service.py", "note": "confirm/expired/cancel-after-confirm tests fail due to the datetime comparison bug."},
+    {"path": "repository.py", "note": "Unused `and_` import; clean CRUD/data-access separation otherwise."},
+    {"path": "pyproject.toml", "note": "Declares unused pydantic-settings dependency; otherwise plausible packaging with src layout."}
+  ],
+  "commands_run": [
+    "find . -type f (excluding caches) — listed 11 project files",
+    "python3 --version (3.12.4) and import check for fastapi/sqlalchemy/httpx/pytest — deps available",
+    "PYTHONPATH=src python3 -m pytest tests/ -q — 14 failed, 10 passed, 1 error",
+    "PYTHONPATH=src python3 -m pytest tests/test_api.py::test_create_sku_authorized -q — captured no-such-table / cross-thread error",
+    "ls -la commerce.db — confirmed import-time DB file creation in CWD"
+  ],
+  "review_risk": "low — all source and test files were read, the declared test command was executed with tracebacks captured, root causes were isolated to specific lines, and the import side effect was verified on disk; only concurrency behavior is inferred rather than directly stress-tested."
+}
+```

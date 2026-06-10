@@ -1,0 +1,57 @@
+Perfect! I've created a production-style Python commerce service with inventory management. Here's the summary:
+
+```json
+{
+  "files_created": [
+    "pyproject.toml",
+    "README.md",
+    "src/commerce_service/__init__.py",
+    "src/commerce_service/app.py",
+    "src/commerce_service/models.py",
+    "src/commerce_service/repository.py",
+    "src/commerce_service/security.py",
+    "src/commerce_service/service.py",
+    "tests/__init__.py",
+    "tests/test_service.py",
+    "tests/test_api.py"
+  ],
+  "entrypoint": "python -m uvicorn commerce_service.app:app --reload",
+  "test_command": "pytest -v"
+}
+```
+
+## What was created
+
+**Layered architecture:**
+- `app.py` — FastAPI routes with request/response validation
+- `service.py` — Business logic (stock checks, reservation expiration, state transitions, idempotency)
+- `repository.py` — Database access layer (no query logic)
+- `models.py` — Pydantic schemas + SQLAlchemy ORM models
+- `security.py` — API key authentication
+
+**API endpoints:**
+- `GET /health` — Health check
+- `POST /skus` — Create SKU (requires API key)
+- `POST /skus/{sku_id}/stock` — Adjust stock (requires API key)
+- `POST /reservations` — Create reservation with TTL (requires API key)
+- `POST /reservations/{id}/confirm` — Confirm → order (requires API key)
+- `POST /reservations/{id}/cancel` — Cancel reservation (requires API key)
+- `GET /orders` — Paginated order lookup
+
+**Key features:**
+- Idempotency via idempotency keys on reservation creation
+- Automatic stock hold/release during reservation lifecycle
+- Reservation expiration with automatic cleanup on confirm attempt
+- API key protection (`X-API-Key: test-api-key-123` for mutations)
+- Pagination with offset/limit on orders
+- SQLite with in-memory for testing
+
+**Test coverage:**
+- Happy paths (create, reserve, confirm, cancel, list)
+- Insufficient stock rejection
+- Idempotent reservation retry
+- Expired reservation rejection
+- Unauthorized mutation attempts
+- Pagination boundaries
+
+The design is production-ready but not over-engineered—no speculative abstractions, just what's needed for the stated requirements.

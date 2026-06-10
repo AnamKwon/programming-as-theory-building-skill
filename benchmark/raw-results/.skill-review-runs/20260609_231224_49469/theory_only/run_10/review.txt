@@ -1,0 +1,163 @@
+I have thorough evidence now. Both test files fail catastrophically, and I've confirmed the two root-cause bugs plus a missing feature. Let me compile the evaluation.
+
+Key confirmed issues:
+1. **Timezone bug** (`service.py:132`): `datetime.now(UTC) > reservation.expires_at` — `expires_at` round-trips through SQLite as naive, so the comparison raises `TypeError` on every reservation create/confirm/cancel. Confirmed by `test_service.py::test_create_reservation_success` failing on the happy path.
+2. **Broken test isolation** (`test_api.py:23`): `app.dependency_overrides[get_session]` is a no-op because endpoints call `get_session()` as a context manager (`app.py:50` etc.), not via `Depends`. The API hits the on-disk `commerce.db` with no tables → `OperationalError: no such table: skus`. All 19 API tests fail.
+3. **Order workflow missing**: no endpoint/service creates orders; `create_order`/`get_order`/`update_order_status`/`OrderStatus` are dead at the app layer; `test_list_orders_pagination` falsely assumes reservations create orders; README claims a "completed" state that doesn't exist.
+4. **Stock never decremented**: reservations only point-check `sku.quantity`; no held/reserved accounting, so over-reservation is possible.
+
+Result: **28 failed, 17 passed**.
+
+```json
+{
+  "rubric_version": "benchmark-codegen-review-v1",
+  "score_scale": "0-100 per category",
+  "weights": {
+    "task_fulfillment": 0.20,
+    "functional_correctness": 0.25,
+    "executability": 0.15,
+    "test_quality": 0.15,
+    "code_quality": 0.10,
+    "minimality": 0.10,
+    "security_safety": 0.05
+  },
+  "task_fulfillment_score": 64,
+  "task_fulfillment_breakdown": {
+    "instruction_compliance": 60,
+    "required_artifacts": 85,
+    "feature_coverage": 50,
+    "constraint_adherence": 60
+  },
+  "functional_correctness_score": 46,
+  "functional_correctness_breakdown": {
+    "domain_invariants": 35,
+    "edge_case_behavior": 35,
+    "data_consistency": 45,
+    "error_semantics": 70
+  },
+  "executability_score": 50,
+  "executability_breakdown": {
+    "installability": 85,
+    "runtime_entrypoints": 75,
+    "command_result": 10,
+    "runtime_isolation": 30
+  },
+  "test_quality_score": 48,
+  "test_quality_breakdown": {
+    "required_test_coverage": 70,
+    "behavioral_assertions": 65,
+    "integration_realism": 30,
+    "repeatability": 25
+  },
+  "code_quality_score": 70,
+  "code_quality_breakdown": {
+    "readability": 80,
+    "maintainability": 60,
+    "boundary_design": 80,
+    "documentation_quality": 60
+  },
+  "minimality_score": 60,
+  "minimality_breakdown": {
+    "no_speculative_infrastructure": 55,
+    "no_dead_or_duplicate_code": 45,
+    "appropriate_abstractions": 55,
+    "dependency_minimality": 85
+  },
+  "security_safety_score": 85,
+  "security_safety_breakdown": {
+    "auth_enforcement": 90,
+    "secret_handling": 75,
+    "input_safety": 80,
+    "unsafe_operations": 95
+  },
+  "review_confidence_score": 89,
+  "review_confidence_breakdown": {
+    "inspection_depth": 90,
+    "command_evidence": 90,
+    "issue_specificity": 90,
+    "uncertainty_handling": 85
+  },
+  "weighted_components": {
+    "task_fulfillment": 12.8,
+    "functional_correctness": 11.5,
+    "executability": 7.5,
+    "test_quality": 7.2,
+    "code_quality": 7.0,
+    "minimality": 6.0,
+    "security_safety": 4.3
+  },
+  "weighted_total": 56.3,
+  "verdict": "mixed",
+  "key_findings": [
+    "Running the declared test command (pytest) yields 28 failed / 17 passed — the suite does not pass.",
+    "Timezone bug in service.py:132: datetime.now(UTC) compared against expires_at which is naive after SQLite round-trip, raising TypeError on the core reservation create/confirm/cancel happy paths.",
+    "Test dependency override is a no-op: endpoints use get_session() as a context manager (app.py:50), not Depends(get_session), so app.dependency_overrides[get_session] in tests is ignored; the API hits the on-disk commerce.db with no tables -> OperationalError: no such table.",
+    "Order creation/lifecycle is entirely missing at the API/service layer; repository create_order/get_order/update_order_status and OrderStatus are dead code only exercised by a test.",
+    "Reservations never decrement stock; only a single point-check on sku.quantity, so the same inventory can be over-reserved across distinct idempotency keys.",
+    "Clean layering (app/service/repository/models/security) and good HTTP status-code mapping are genuine strengths."
+  ],
+  "score_rationale": {
+    "task_fulfillment": "Required files and layered structure are present and most SKU/stock/reservation endpoints exist, but the order workflow named in the brief (coordinate reservations into orders, order state transitions) is unimplemented, and the app writes a hardcoded on-disk commerce.db rather than a configurable/isolated store.",
+    "functional_correctness": "Error-status mapping is well designed (400/401/404/409/410), but core invariants fail: the tz comparison crashes the reservation happy path with a 500, stock is never decremented (over-reservation possible), and order state transitions do not exist. Most domain behavior cannot complete successfully.",
+    "executability": "Dependencies/packaging are plausible and the app imports/boots, but the declared pytest command fails 28/45 tests, and runtime isolation is poor: a hardcoded sqlite:///./commerce.db in cwd plus a broken test override means tests hit the wrong database.",
+    "test_quality": "Tests enumerate the required scenarios (happy, insufficient stock, idempotency, expiration, auth, pagination) with reasonable assertions, but the integration tests are non-functional due to the no-op session override, are not isolated/repeatable (on-disk db), and one pagination test assumes reservations create orders, which the code never does.",
+    "code_quality": "Readable names and coherent module boundaries (repository/service/app/security/models) are the strongest aspect; maintainability is dragged down by dead order code and the latent tz bug, and the README overstates behavior (claims a 'completed' order state that no enum or code provides).",
+    "minimality": "Dependencies are all used, but the order machinery (OrderModel, OrderStatus, create/get/update_order) is speculative/dead relative to the exposed API, and ORM relationships exist without being exercised by service logic.",
+    "security_safety": "All mutating endpoints enforce the verify_api_key dependency, inputs are validated via Pydantic with bounds, and there are no unsafe shell/file/network operations; only minor note is the dev-default 'test-key' fallback and non-constant-time comparison.",
+    "review_confidence": "All source and test files were read and the declared test command was executed with failures captured to specific files/lines; remaining uncertainty is limited to non-tested runtime edge cases."
+  },
+  "instruction_failures": [
+    "Order coordination/lifecycle workflow from the brief is not exposed via any endpoint or service method.",
+    "README design notes claim an order state 'reserved -> confirmed -> completed (or cancelled)', but OrderStatus has no 'completed' value and no order transition logic exists.",
+    "App persists to a hardcoded ./commerce.db in the working directory with no configurable path, conflicting with a clean/isolated-workspace expectation."
+  ],
+  "correctness_failures": [
+    "service.py:130-132 _is_reservation_expired compares tz-aware datetime.now(UTC) with naive expires_at read back from SQLite -> TypeError, crashing create/confirm/cancel reservation (confirmed by test_service.py::test_create_reservation_success).",
+    "Stock is not decremented on reservation create or confirm (service.py:63-85); the availability invariant is only a momentary check, allowing over-reservation beyond available quantity.",
+    "Orders cannot be created through the application; GET /api/orders will always be empty in real use, and order status transitions are unreachable.",
+    "test_api.py::test_list_orders_pagination assumes creating reservations creates orders, which the implementation never does — the assertion total==5 is unfounded."
+  ],
+  "execution_failures": [
+    "pytest result: 28 failed, 17 passed (PYTHONPATH=src python3 -m pytest).",
+    "All API tests fail with sqlalchemy.exc.OperationalError: no such table: skus because app.dependency_overrides[get_session] does not affect the direct context-manager use of get_session() in app.py.",
+    "All reservation/order-path service tests fail with TypeError from the timezone comparison."
+  ],
+  "test_gaps": [
+    "No working integration test actually exercises the API against an isolated DB; the override mechanism is incorrect so coverage is illusory.",
+    "No test asserts that reserving stock reduces available inventory (because the behavior is absent).",
+    "Tests are not repeatable/isolated: they target an on-disk commerce.db and depend on auto-increment ids starting at 1.",
+    "No test for an actual order lifecycle transition (confirm/complete/cancel an order)."
+  ],
+  "quality_notes": [
+    "Deprecated @app.on_event('startup') (app.py:29) and Pydantic class-based Config (models.py) emit deprecation warnings.",
+    "Custom HTTPException handler reshapes errors to {'error': ...}, but 422 validation errors bypass it, yielding an inconsistent error body shape.",
+    "README is clear and well-structured but contains an inaccurate claim about order states and the orders feature."
+  ],
+  "unnecessary_code_examples": [
+    "repository.py:134-161 create_order / get_order / update_order_status and OrderStatus enum are never invoked by service.py or app.py (dead at the application layer).",
+    "ORM relationships (SKUModel.reservations, ReservationModel.order, OrderModel.reservations) are defined but not used by service logic, which queries by foreign key instead.",
+    "get_sku_by_name is fine, but list_reservations_by_order is only meaningful for the unreachable order-listing-with-items path."
+  ],
+  "security_safety_notes": [
+    "All mutation endpoints declare dependencies=[Depends(verify_api_key)] (app.py:47,83,104,131,156); reads are intentionally open per spec.",
+    "API key default falls back to 'test-key' (security.py:7) — acceptable as a dev default, but it is a predictable secret and uses non-constant-time comparison.",
+    "Input validation via Pydantic Field bounds (models.py) and pagination bounds (app.py:180) mitigate obvious bad input; no shell/file/network side effects beyond the local SQLite file."
+  ],
+  "file_evidence": [
+    {"path": "src/commerce_service/service.py", "note": "Lines 130-132: naive-vs-aware datetime comparison causes TypeError on every reservation serialization; lines 63-85: reservation create does not decrement stock."},
+    {"path": "src/commerce_service/app.py", "note": "Lines 50,86,107,134,159,185 use `with get_session() as session` directly rather than Depends, so the test session override never takes effect; no endpoint creates orders."},
+    {"path": "src/commerce_service/repository.py", "note": "Lines 7,9: hardcoded on-disk sqlite:///./commerce.db; lines 134-161: create_order/get_order/update_order_status dead at app layer; DateTime columns are naive (no timezone=True)."},
+    {"path": "tests/test_api.py", "note": "Lines 17-25: dependency_overrides[get_session] is a no-op; lines 331-351: pagination test assumes reservations produce orders, which the code never does."},
+    {"path": "tests/test_service.py", "note": "Line 88-96 happy-path reservation test fails with TypeError, confirming the tz bug is intrinsic, not a fixture artifact."},
+    {"path": "README.md", "note": "Lines 75-76 claim order states reserved->confirmed->completed, but no 'completed' state or transition logic exists."},
+    {"path": "pyproject.toml", "note": "Dependencies (fastapi, uvicorn, pydantic, sqlalchemy) all used; dev extras include pytest/httpx; packaging/src-layout is correct."}
+  ],
+  "commands_run": [
+    "find . -type f ... (list project files)",
+    "python3 --version; python3 -c 'import fastapi, sqlalchemy, httpx, pytest' (deps: fastapi 0.109.0, sqlalchemy 2.0.23, py3.12.4)",
+    "PYTHONPATH=src python3 -m pytest -v (result: 28 failed, 17 passed)",
+    "PYTHONPATH=src python3 -m pytest tests/test_api.py::test_create_sku_success -q (confirmed 'no such table: skus')"
+  ],
+  "review_risk": "low — all source and test files were read and the declared pytest command was executed with failures traced to specific files/lines; running the suite created an empty local commerce.db side effect, and full HTTP runtime behavior beyond the test harness was not separately exercised."
+}
+```

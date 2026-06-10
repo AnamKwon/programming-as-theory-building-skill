@@ -1,0 +1,154 @@
+All files inspected, tests run (30 passed), and three behaviors verified empirically. Here is the evaluation.
+
+```json
+{
+  "rubric_version": "benchmark-codegen-review-v1",
+  "score_scale": "0-100 per category",
+  "weights": {
+    "task_fulfillment": 0.20,
+    "functional_correctness": 0.25,
+    "executability": 0.15,
+    "test_quality": 0.15,
+    "code_quality": 0.10,
+    "minimality": 0.10,
+    "security_safety": 0.05
+  },
+  "task_fulfillment_score": 86,
+  "task_fulfillment_breakdown": {
+    "instruction_compliance": 80,
+    "required_artifacts": 95,
+    "feature_coverage": 88,
+    "constraint_adherence": 80
+  },
+  "functional_correctness_score": 56,
+  "functional_correctness_breakdown": {
+    "domain_invariants": 40,
+    "edge_case_behavior": 55,
+    "data_consistency": 45,
+    "error_semantics": 85
+  },
+  "executability_score": 93,
+  "executability_breakdown": {
+    "installability": 90,
+    "runtime_entrypoints": 95,
+    "command_result": 95,
+    "runtime_isolation": 90
+  },
+  "test_quality_score": 79,
+  "test_quality_breakdown": {
+    "required_test_coverage": 85,
+    "behavioral_assertions": 60,
+    "integration_realism": 85,
+    "repeatability": 85
+  },
+  "code_quality_score": 82,
+  "code_quality_breakdown": {
+    "readability": 88,
+    "maintainability": 75,
+    "boundary_design": 88,
+    "documentation_quality": 75
+  },
+  "minimality_score": 73,
+  "minimality_breakdown": {
+    "no_speculative_infrastructure": 80,
+    "no_dead_or_duplicate_code": 78,
+    "appropriate_abstractions": 85,
+    "dependency_minimality": 50
+  },
+  "security_safety_score": 87,
+  "security_safety_breakdown": {
+    "auth_enforcement": 92,
+    "secret_handling": 70,
+    "input_safety": 90,
+    "unsafe_operations": 95
+  },
+  "review_confidence_score": 93,
+  "review_confidence_breakdown": {
+    "inspection_depth": 95,
+    "command_evidence": 95,
+    "issue_specificity": 95,
+    "uncertainty_handling": 88
+  },
+  "weighted_components": {
+    "task_fulfillment": 17.2,
+    "functional_correctness": 14.0,
+    "executability": 14.0,
+    "test_quality": 11.9,
+    "code_quality": 8.2,
+    "minimality": 7.3,
+    "security_safety": 4.4
+  },
+  "weighted_total": 76.9,
+  "verdict": "mixed",
+  "key_findings": [
+    "Reservations do not actually hold inventory: create_reservation checks available stock but never reserves it, so multiple reservations can exceed stock; confirming them drives stock negative (verified: stock=10, two reservations of 10 both succeed, final stock=-10).",
+    "Cursor pagination is fundamentally broken: list_orders filters WHERE id > cursor but ORDER BY created_at DESC, producing duplicate rows and making most orders unreachable (verified: page1=[5,4], page2=[5,4], orders 1-3 never returned).",
+    "Rejected negative stock adjustment still persists: repo.adjust_stock commits the negative quantity before the service raises 400, leaving the DB in the rejected state (verified: Q stock = -15 after a rejected -20 adjust).",
+    "All 30 tests pass under Python 3.12 with declared deps installed; project installs and runs cleanly.",
+    "Declared dependencies sqlalchemy==2.0.23 and pydantic-settings==2.1.0 are never imported anywhere (repository uses sqlite3 directly)."
+  ],
+  "score_rationale": {
+    "task_fulfillment": "All requested endpoints, files, and layering (models/repository/service/security/app) are present and the surface (SKU, stock, reservation lifecycle, orders, idempotency, auth, pagination) is complete. Marked down because the 'production-grade' claim is undercut by non-atomic multi-step writes and a non-reserving reservation flow.",
+    "functional_correctness": "Idempotency, expiration (410), state-transition guards, and error codes are correct, but core inventory invariants fail: reservations don't hold stock (over-reservation → negative stock), pagination returns duplicates and drops rows, and a rejected negative adjustment is persisted. These are empirically reproduced, not speculative.",
+    "executability": "pip-installable, uvicorn entrypoint commerce_service.app:app is valid, in-memory SQLite default, and `pytest` yields 30 passed in 0.26s. Only DeprecationWarnings (datetime.utcnow).",
+    "test_quality": "Coverage spans all required scenarios including expiration and the cancelled-key edge case. Weak point: the pagination test asserts only len()==2 and never checks item identity/ordering, so it passes despite the duplicate-page bug; many tests assert status codes more than domain state (though confirm checks stock deduction).",
+    "code_quality": "Clean, readable, well-separated layers and parameterized SQL. Maintainability suffers because the reserve-vs-hold invariant is not encoded and confirm performs three independent commits. README overstates the stack (claims SQLAlchemy usage that does not exist).",
+    "minimality": "No speculative queues/workers/CLIs. Dinged for two unused declared dependencies (sqlalchemy, pydantic-settings), an unused get_order path (no route), and a stray `repo.execute = lambda...` assignment in test_service.py:127.",
+    "security_safety": "All mutating endpoints require Depends(verify_api_key); inputs validated via Pydantic; SQL parameterized. Hardcoded VALID_API_KEYS test keys are acceptable for a demo but not production-appropriate, and missing-key returns 403 rather than 401.",
+    "review_confidence": "Read every source and test file, ran the full suite, and wrote three targeted scripts confirming the over-reservation, negative-persistence, and pagination defects directly."
+  },
+  "instruction_failures": [
+    "README claims the service is 'built with FastAPI, Pydantic, and SQLite' and declares SQLAlchemy as a dependency, but SQLAlchemy is never used (src/commerce_service.egg-info/requires.txt:5, pyproject.toml:15).",
+    "'Production-grade' framing is not met given non-atomic confirm flow and reservations that do not hold inventory."
+  ],
+  "correctness_failures": [
+    "service.py:51-57 — availability check ignores outstanding un-confirmed reservations, so stock is never held; concurrent/sequential reservations over-commit.",
+    "service.py:88-89 — confirm deducts stock with no guard, allowing negative quantities (verified final stock = -10).",
+    "repository.py:189-198 — list_orders mixes id-based cursor (WHERE id > ?) with created_at DESC ordering, yielding duplicate pages and unreachable rows (verified page1==page2==[5,4]).",
+    "service.py:22-30 / repository.py:107-118 — adjust_stock commits the negative value before the service raises 400, persisting the rejected state (verified Q=-15).",
+    "service.py:36-43 — idempotent re-fetch returns an existing reservation without re-checking expiration, and without validating that sku_id/quantity match the original request."
+  ],
+  "execution_failures": [],
+  "test_gaps": [
+    "No test asserts pagination item identity/ordering, so the duplicate-page bug is masked (test_api.py:307-317, test_service.py:191-197).",
+    "No test for over-reservation / stock going negative when multiple reservations are confirmed against limited stock.",
+    "No test that a rejected negative stock adjustment leaves stock unchanged.",
+    "No test for confirming/cancelling a non-existent reservation (404 paths) at the API layer for orders/get_order."
+  ],
+  "quality_notes": [
+    "confirm_reservation performs three separate committed operations (status update, order insert, stock deduction) with no transaction spanning them; a failure mid-sequence leaves inconsistent state.",
+    "datetime.utcnow() is used throughout and is deprecated on 3.12 (166 warnings); timezone-aware datetime.now(UTC) is preferred.",
+    "README API table omits GET /orders/{id}, and get_order exists in service/repository but has no route — minor doc/code drift."
+  ],
+  "unnecessary_code_examples": [
+    "pyproject.toml:13,15 — pydantic-settings and sqlalchemy declared but never imported.",
+    "service.py:108-112 / repository.py:180-187 — get_order is implemented but unreachable (no endpoint).",
+    "tests/test_service.py:127 — `repo.execute = lambda sql, args: None` is a dead assignment never used by the test."
+  ],
+  "security_safety_notes": [
+    "Mutating routes (/skus, /stock/{id}/adjust, /reservations, confirm, cancel) all enforce Depends(verify_api_key) in app.py.",
+    "API keys are hardcoded in security.py:5 (VALID_API_KEYS); acceptable as demo placeholders but not externalized/configurable for production.",
+    "All SQL uses parameterized queries; Pydantic constrains inputs (quantity>0, ttl>=60, limit 1-100).",
+    "Missing/invalid key returns 403; 401 would be more conventional for missing credentials."
+  ],
+  "file_evidence": [
+    {"path": "src/commerce_service/service.py", "note": "Lines 51-57 check availability but never reserve; lines 88-89 deduct on confirm with no negative guard; lines 22-30 raise 400 after the negative write is already committed."},
+    {"path": "src/commerce_service/repository.py", "note": "Lines 189-198 cursor pagination mixes `id > ?` with `ORDER BY created_at DESC`, causing duplicate/unreachable pages; adjust_stock (107-118) commits before service validation."},
+    {"path": "src/commerce_service/app.py", "note": "All mutating endpoints attach dependencies=[Depends(verify_api_key)]; GET /orders is unauthenticated; module-level shared _repo/_service overridden in tests."},
+    {"path": "src/commerce_service/security.py", "note": "Hardcoded VALID_API_KEYS set; header-based verification returning 403."},
+    {"path": "pyproject.toml", "note": "Declares sqlalchemy==2.0.23 and pydantic-settings==2.1.0 that are never imported (confirmed via grep)."},
+    {"path": "tests/test_api.py", "note": "Pagination test (307-317) asserts only item counts, never identity/order, masking the duplicate-page bug."},
+    {"path": "tests/test_service.py", "note": "Covers expiration (116-137) and cancelled-key reuse (87-98); stray dead lambda at line 127."}
+  ],
+  "commands_run": [
+    "find . -type f (excluding caches) — listed project files",
+    "cat pyproject.toml, README.md, egg-info/requires.txt",
+    "grep -rn 'sqlalchemy|pydantic_settings|BaseSettings' src/ tests/ — confirmed unused deps",
+    "python3 --version (3.12.4) and import check for fastapi/pydantic/httpx/pytest",
+    "PYTHONPATH=src python3 -m pytest -q — 30 passed, 166 warnings",
+    "PYTHONPATH=src python3 -c '...' — reproduced over-reservation (final stock -10) and negative-adjust persistence (Q=-15)",
+    "PYTHONPATH=src python3 -c '...' — reproduced pagination duplication (page1==page2==[5,4])"
+  ],
+  "review_risk": "low"
+}
+```

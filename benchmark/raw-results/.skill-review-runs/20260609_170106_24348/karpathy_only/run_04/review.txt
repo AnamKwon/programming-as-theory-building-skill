@@ -1,0 +1,160 @@
+Confirmed dead imports (`select`, `Optional` in models/service) and `python-dotenv` declared but never used. I have all evidence needed.
+
+```json
+{
+  "rubric_version": "benchmark-codegen-review-v1",
+  "score_scale": "0-100 per category",
+  "weights": {
+    "task_fulfillment": 0.20,
+    "functional_correctness": 0.25,
+    "executability": 0.15,
+    "test_quality": 0.15,
+    "code_quality": 0.10,
+    "minimality": 0.10,
+    "security_safety": 0.05
+  },
+  "task_fulfillment_score": 80,
+  "task_fulfillment_breakdown": {
+    "instruction_compliance": 80,
+    "required_artifacts": 85,
+    "feature_coverage": 85,
+    "constraint_adherence": 70
+  },
+  "functional_correctness_score": 64,
+  "functional_correctness_breakdown": {
+    "domain_invariants": 55,
+    "edge_case_behavior": 65,
+    "data_consistency": 50,
+    "error_semantics": 85
+  },
+  "executability_score": 60,
+  "executability_breakdown": {
+    "installability": 45,
+    "runtime_entrypoints": 85,
+    "command_result": 40,
+    "runtime_isolation": 70
+  },
+  "test_quality_score": 60,
+  "test_quality_breakdown": {
+    "required_test_coverage": 80,
+    "behavioral_assertions": 80,
+    "integration_realism": 35,
+    "repeatability": 45
+  },
+  "code_quality_score": 75,
+  "code_quality_breakdown": {
+    "readability": 85,
+    "maintainability": 65,
+    "boundary_design": 85,
+    "documentation_quality": 65
+  },
+  "minimality_score": 78,
+  "minimality_breakdown": {
+    "no_speculative_infrastructure": 80,
+    "no_dead_or_duplicate_code": 75,
+    "appropriate_abstractions": 85,
+    "dependency_minimality": 70
+  },
+  "security_safety_score": 83,
+  "security_safety_breakdown": {
+    "auth_enforcement": 90,
+    "secret_handling": 60,
+    "input_safety": 85,
+    "unsafe_operations": 95
+  },
+  "review_confidence_score": 89,
+  "review_confidence_breakdown": {
+    "inspection_depth": 95,
+    "command_evidence": 90,
+    "issue_specificity": 90,
+    "uncertainty_handling": 80
+  },
+  "weighted_components": {
+    "task_fulfillment": 16.0,
+    "functional_correctness": 16.0,
+    "executability": 9.0,
+    "test_quality": 9.0,
+    "code_quality": 7.5,
+    "minimality": 7.8,
+    "security_safety": 4.2
+  },
+  "weighted_total": 69.5,
+  "verdict": "mixed",
+  "key_findings": [
+    "Test run is 18 passed, 6 failed, 9 errors: the entire DB-backed API suite (tests/test_api.py) errors out and one service test fails — only health + auth-rejection API tests pass.",
+    "tests/test_api.py fixture creates create_engine('sqlite:///:memory:') without check_same_thread=False or StaticPool, so TestClient's worker thread raises sqlite3.ProgrammingError ('SQLite objects created in a thread can only be used in that same thread').",
+    "Latent correctness bug: Order and Reservation are unlinked tables, yet confirm_reservation/cancel_reservation call order_repo.update_status(reservation_id, ...) (service.py:109,129) and _get_or_create_order_for_reservation uses get_by_id(reservation.id) (service.py:151). It only works because autoincrement IDs coincidentally align in single-flow tests.",
+    "Availability model (stock - sum(pending reservations)) makes the documented pagination scenario impossible: 15 reservations x 10 against stock 100 raises InsufficientStockError; test_list_orders_pagination fails and the API equivalent's total==15 assertion could never hold.",
+    "cancel_reservation sets the order to OrderStatus.COMPLETED (service.py:129) — wrong semantics; there is no cancelled order state, so cancelled reservations yield 'completed' orders.",
+    "Packaging is questionable: poetry-core build backend with a PEP 621 [project] table and a src/ layout but no package-discovery config, so 'pip install -e .' likely cannot locate the commerce_service package (tests/app only work via the src.* import path)."
+  ],
+  "score_rationale": {
+    "task_fulfillment": "All requested artifacts and the full endpoint surface (SKU create/adjust, reservation create/confirm/cancel, idempotency, expiration, paginated orders, X-API-Key auth) are present and documented, but the unlinked order/reservation modeling is not production-minded.",
+    "functional_correctness": "Stock availability, idempotent retry, and expiration logic are coherent and stock accounting nets out correctly across confirm/cancel, but order state transitions are fragile (ID-coincidence coupling) and semantically wrong on cancel (->COMPLETED), and data consistency relies on no FK link between orders and reservations.",
+    "executability": "Entrypoint and config defaults are usable, but the documented install path is likely broken, app.py runs create_all and points at a CWD commerce.db at import time, and the actual test command produces 6 failures + 9 errors rather than a clean pass.",
+    "test_quality": "Coverage breadth is good (happy paths, insufficient stock, idempotency, expiration, auth, pagination) with real behavioral assertions on stock/refund/status, but the integration suite is non-functional due to a threading misconfiguration and pagination tests encode an impossible scenario, hurting realism and repeatability.",
+    "code_quality": "Clean layering (models/repository/service/security/app) with readable names; lowered by the hidden order/reservation ID coupling, the cancel->COMPLETED semantic, and README claims that don't match code (e.g. 'idempotency keys prevent duplicates within the same minute' vs a 15-minute TTL; /skus listed without the auth note it actually enforces).",
+    "minimality": "No speculative queues/workers/CLIs; abstractions are justified. Minor dead code (unused 'select' in repository.py, unused 'Optional' in models.py/service.py, empty ReservationConfirm/ReservationCancel bodies) and an unused python-dotenv dependency.",
+    "security_safety": "All mutating endpoints and /orders enforce the X-API-Key dependency and inputs are validated with bounded pydantic fields; weakened by hardcoded keys including a 'prod-key-xyz' pattern in security.py with no env-based configuration.",
+    "review_confidence": "Read every source and test file and executed the declared pytest command with dependencies already installed, capturing concrete failures with file/line references; minor residual uncertainty only on exact packaging-install behavior, which I did not execute."
+  },
+  "instruction_failures": [
+    "README documents 'pip install -e \".[dev]\"' as the install path, but the poetry-core + PEP 621 + src-layout pyproject likely fails package discovery during install.",
+    "README Domain Rules claim idempotency 'within the same minute' and list POST /skus without an auth requirement, both contradicting the implementation (15-minute TTL; /skus requires X-API-Key)."
+  ],
+  "correctness_failures": [
+    "Orders are updated by reservation_id rather than a stored order/reservation link (service.py:109,129,151); diverging autoincrement IDs would update the wrong or no order.",
+    "cancel_reservation transitions the order to COMPLETED (service.py:129) instead of a cancelled/void state.",
+    "Availability accounting means the intended pagination scenario (15x10 on stock 100) is rejected as insufficient stock, so the workflow cannot produce 15 orders as the tests assume.",
+    "No unique constraint on Reservation.idempotency_key and get_by_idempotency_key uses .first(), so idempotency is not enforced at the storage layer."
+  ],
+  "execution_failures": [
+    "tests/test_api.py: 6 failures + 9 setup errors from sqlite3.ProgrammingError due to cross-thread in-memory engine usage in the fixture (missing check_same_thread=False/StaticPool).",
+    "tests/test_service.py::TestOrders::test_list_orders_pagination fails with InsufficientStockError (service.py:72).",
+    "app.py:23 runs Base.metadata.create_all and binds to ./commerce.db at import time, creating a file in CWD as a side effect of import."
+  ],
+  "test_gaps": [
+    "Because the API suite errors at setup, integration-level auth/idempotency/confirm/cancel/pagination behavior is effectively unverified end-to-end.",
+    "No test exercises the order/reservation ID divergence (e.g. pre-existing orders) that would expose the coupling bug.",
+    "No test for expired pending reservations being excluded from availability (the get_reserved_amount_for_sku expires_at filter is untested).",
+    "No test for invalid/missing API key on confirm/cancel specifically, nor for negative stock going below zero via adjust."
+  ],
+  "quality_notes": [
+    "Repository/service/schema/security separation is clear and idiomatic.",
+    "Uses deprecated pydantic patterns (class Config + from_orm) and datetime.utcnow(); functional but emits deprecation warnings.",
+    "Time comparisons mix Python datetime.utcnow() (service) with SQL func.now() (repository.get_reserved_amount_for_sku), a subtle consistency smell.",
+    "README overstates behavior ('Comprehensive test coverage') despite a broken test file."
+  ],
+  "unnecessary_code_examples": [
+    "repository.py:4 imports 'select' which is never used.",
+    "models.py:3 and service.py:2 import 'Optional' which is unused in those modules.",
+    "pyproject.toml declares python-dotenv but it is never imported anywhere in src/.",
+    "Empty ReservationConfirm/ReservationCancel request models (models.py:58-63) add no fields and only force a JSON body."
+  ],
+  "security_safety_notes": [
+    "All mutating endpoints and /orders depend on verify_api_key (app.py) — auth is consistently enforced.",
+    "Hardcoded API keys in security.py:6 including a 'prod-key-xyz' value; no environment-based secret configuration.",
+    "Inputs validated via bounded pydantic Fields (lengths, ge/gt), reducing injection/data-integrity risk; SQLAlchemy ORM avoids raw SQL.",
+    "No shell/network/destructive operations beyond creating a local SQLite file."
+  ],
+  "file_evidence": [
+    {"path": "tests/test_api.py", "note": "Lines 13-17: in-memory engine without check_same_thread=False/StaticPool causes cross-thread sqlite3.ProgrammingError under TestClient; 6 failed + 9 errors."},
+    {"path": "src/commerce_service/service.py", "note": "Lines 109,129,151 update/lookup orders by reservation_id with no order<->reservation link; line 129 sets cancelled reservation's order to COMPLETED."},
+    {"path": "src/commerce_service/service.py", "note": "Lines 68-75 availability = stock - pending reservations; causes test_list_orders_pagination to raise InsufficientStockError."},
+    {"path": "src/commerce_service/app.py", "note": "Lines 19-23 bind to ./commerce.db and run create_all at import time (filesystem side effect)."},
+    {"path": "src/commerce_service/security.py", "note": "Line 6 hardcodes API keys including 'prod-key-xyz'; no env configuration."},
+    {"path": "pyproject.toml", "note": "poetry-core backend with PEP 621 [project] + src layout and no package-discovery config; python-dotenv dependency unused."},
+    {"path": "README.md", "note": "Lines 44-49 domain rules contradict code (same-minute idempotency vs 15-min TTL); /skus listed without the auth it enforces."},
+    {"path": "src/commerce_service/repository.py", "note": "Line 4 unused 'select' import; no unique constraint backing idempotency."}
+  ],
+  "commands_run": [
+    "find . -type f (excluding caches) — listed project files",
+    "python3 -c 'import fastapi, sqlalchemy, httpx, pytest, pydantic' — confirmed deps present (fastapi 0.104.1, sqlalchemy 2.0.23, pydantic 2.5.0, py3.12.4)",
+    "python3 -m pytest tests/ -q — 18 passed, 6 failed, 9 errors",
+    "python3 -m pytest tests/test_service.py -q — 15 passed, 1 failed",
+    "python3 -m pytest tests/test_service.py::TestOrders::test_list_orders_pagination --tb=short — InsufficientStockError at service.py:72",
+    "grep -n 'dotenv|select|Optional' src/commerce_service/*.py — confirmed unused imports/dependency"
+  ],
+  "review_risk": "low — all source and test files were read and the declared pytest command was executed with dependencies already installed; the only unverified item is the exact 'pip install -e .' packaging outcome, which was assessed by inspection rather than a live install."
+}
+```

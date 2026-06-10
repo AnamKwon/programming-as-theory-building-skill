@@ -1,0 +1,164 @@
+All findings confirmed. The expired-reservation test is a **false positive**: the UPDATE never persists (two separate connections), and `confirm_reservation` instead raises `sqlite3.OperationalError: database is locked` (from the leaked uncommitted write transaction on the first connection), which the broad `pytest.raises(Exception)` happily catches. The actual expiration code path is never exercised.
+
+Here is my evaluation.
+
+```json
+{
+  "rubric_version": "benchmark-codegen-review-v1",
+  "score_scale": "0-100 per category",
+  "weights": {
+    "task_fulfillment": 0.20,
+    "functional_correctness": 0.25,
+    "executability": 0.15,
+    "test_quality": 0.15,
+    "code_quality": 0.10,
+    "minimality": 0.10,
+    "security_safety": 0.05
+  },
+  "task_fulfillment_score": 87,
+  "task_fulfillment_breakdown": {
+    "instruction_compliance": 85,
+    "required_artifacts": 95,
+    "feature_coverage": 90,
+    "constraint_adherence": 78
+  },
+  "functional_correctness_score": 70,
+  "functional_correctness_breakdown": {
+    "domain_invariants": 62,
+    "edge_case_behavior": 78,
+    "data_consistency": 58,
+    "error_semantics": 80
+  },
+  "executability_score": 86,
+  "executability_breakdown": {
+    "installability": 90,
+    "runtime_entrypoints": 82,
+    "command_result": 95,
+    "runtime_isolation": 75
+  },
+  "test_quality_score": 74,
+  "test_quality_breakdown": {
+    "required_test_coverage": 68,
+    "behavioral_assertions": 58,
+    "integration_realism": 82,
+    "repeatability": 88
+  },
+  "code_quality_score": 84,
+  "code_quality_breakdown": {
+    "readability": 88,
+    "maintainability": 78,
+    "boundary_design": 88,
+    "documentation_quality": 82
+  },
+  "minimality_score": 75,
+  "minimality_breakdown": {
+    "no_speculative_infrastructure": 75,
+    "no_dead_or_duplicate_code": 62,
+    "appropriate_abstractions": 85,
+    "dependency_minimality": 78
+  },
+  "security_safety_score": 89,
+  "security_safety_breakdown": {
+    "auth_enforcement": 92,
+    "secret_handling": 80,
+    "input_safety": 90,
+    "unsafe_operations": 95
+  },
+  "review_confidence_score": 93,
+  "review_confidence_breakdown": {
+    "inspection_depth": 95,
+    "command_evidence": 95,
+    "issue_specificity": 92,
+    "uncertainty_handling": 90
+  },
+  "weighted_components": {
+    "task_fulfillment": 17.4,
+    "functional_correctness": 17.5,
+    "executability": 12.9,
+    "test_quality": 11.1,
+    "code_quality": 8.4,
+    "minimality": 7.5,
+    "security_safety": 4.5
+  },
+  "weighted_total": 79.3,
+  "verdict": "good",
+  "key_findings": [
+    "Clean, conventional FastAPI layering (app/models/service/repository/security) with coherent boundaries; all 39 declared tests pass locally (pytest, 39 passed).",
+    "Full requested API surface present: SKUs, stock adjust, reservation create/confirm/cancel, order get/list with bounded pagination, health, plus API-key auth on all mutating endpoints.",
+    "Idempotent reservation creation is real: UNIQUE(idempotency_key) plus an IntegrityError race-recovery path in service.create_reservation (service.py:99-104).",
+    "The single expiration test (test_service.py:171-193) is a FALSE POSITIVE: its UPDATE uses two separate connections so the change never persists; confirm_reservation instead raises sqlite3.OperationalError 'database is locked' (leaked uncommitted write txn), which pytest.raises(Exception) catches. The expiration code path (service.py:112-116) is effectively untested — reproduced directly.",
+    "Order state never transitions: orders are always created with status 'pending' (repository.py:276) and never confirmed; repository.update_order_status (repository.py:311) is dead, and OrderStatus.CONFIRMED/CANCELLED are unused.",
+    "Reservations do not hold stock — stock is only decremented at confirm (service.py:142). Multiple pending reservations can each pass the create-time stock check, allowing overcommit; with separate-connection check-then-write there is a TOCTOU/atomicity hole under concurrency.",
+    "Several dead artifacts: ConfirmReservationRequest/CancelReservationRequest (defined + imported in app.py, never used), ErrorResponse model, unused imports (Decimal in service.py and test_api.py, Depends in security.py), and unused pydantic-settings dependency."
+  ],
+  "score_rationale": {
+    "task_fulfillment": "All required files and the full endpoint set are present and behavior largely matches the README contract. Docked for production-minded constraint gaps: a committed commerce.db runtime artifact, money stored as float, and no transactional boundaries.",
+    "functional_correctness": "Happy paths and most error paths behave correctly with sensible status codes, but core domain invariants are weak: orders never leave 'pending', reservations don't actually reserve stock (overcommit possible), and check-then-write across independent connections is non-atomic. The custom HTTPException handler (app.py:114-123) also drops exc.headers, so the X-Available-Quantity hint on 409 insufficient stock (service.py:88) never reaches the client.",
+    "executability": "Dependencies are complete and install plausibly; pytest run is clean (39/39). Tests isolate via temp DBs, but the default Repository writes ./commerce.db into cwd and a 32KB commerce.db is shipped in the workspace (ambient state). Minor mismatch: README/tests import via 'src.commerce_service' while the installed package is 'commerce_service'.",
+    "test_quality": "Realistic integration tests through TestClient against a real temp SQLite DB, repeatable and isolated. Weakened by pervasive pytest.raises(Exception) that never asserts the specific HTTP status, and the expiration test being a confirmed false positive, leaving the expiration path and several edge cases (API-level expired/410, double-confirm idempotency, confirm-of-cancelled 400, adjust on missing SKU) unverified.",
+    "code_quality": "Readable, well-named, docstringed, with strong separation of concerns. Maintainability dinged by an incomplete order-status lifecycle (dead update_order_status, unused enum values) and a README claim that the service 'enforces invariants' that overstates the concurrency guarantees.",
+    "minimality": "Mostly lean and free of speculative frameworks, but carries noticeable dead code (two empty request models, ErrorResponse, update_order_status), unused imports, and an unused pydantic-settings dependency.",
+    "security_safety": "API-key dependency guards all mutating endpoints (and order reads); parameterized SQL throughout; Pydantic validation and bounded pagination. The default 'secret-key' fallback is a documented, env-overridable dev default (not a leaked secret); string compare is non-constant-time, a minor concern at this scope.",
+    "review_confidence": "Read all source and test files, ran the full suite, and empirically reproduced both the non-persisting two-connection UPDATE and the OperationalError that makes the expiration test pass for the wrong reason."
+  },
+  "instruction_failures": [
+    "A runtime artifact (commerce.db, 32KB) is shipped in the workspace rather than a clean fresh state; the default DB path is relative to cwd.",
+    "README documents the run command as 'uvicorn src.commerce_service.app:app' while packaging installs the module as 'commerce_service', an entrypoint path inconsistency."
+  ],
+  "correctness_failures": [
+    "Orders are created with status 'pending' (repository.py:276) and never transitioned to 'confirmed', even though an order only exists after a reservation is confirmed; the order lifecycle is effectively a no-op.",
+    "Reservations do not decrement/hold stock at creation; stock is only consumed at confirm (service.py:142). Two pending reservations totaling more than available stock can both be created, then one confirm fails — overcommit and a confusing failure mode.",
+    "Check-then-write sequences (confirm: get_sku -> update_stock -> update_reservation_status, each on its own connection) are non-atomic with no transaction or locking; concurrent confirms can double-spend stock.",
+    "Custom HTTPException handler (app.py:117-123) ignores exc.headers, so the X-Available-Quantity header set on the 409 insufficient-stock error (service.py:88) is silently dropped.",
+    "Money is stored as SQLite REAL/float (repository.py:82,129) despite a Decimal model, risking precision loss on currency."
+  ],
+  "execution_failures": [
+    "No execution failure: `python3 -m pytest` returns 39 passed. Concerns are isolation (cwd commerce.db side effect) rather than run failures."
+  ],
+  "test_gaps": [
+    "The only expiration test is a false positive: the manual-expiry UPDATE never persists (two separate connections), and confirm raises sqlite3.OperationalError 'database is locked' caught by pytest.raises(Exception); the real 410-expired path is untested.",
+    "Negative tests use broad `pytest.raises(Exception)` and never assert the specific HTTPException.status_code, so wrong status codes would not be detected.",
+    "No tests for: API-level expired confirmation (410), confirming an already-confirmed reservation (idempotent path service.py:119-120), confirming a cancelled reservation (400), cancelling an already-cancelled reservation, adjusting stock on a nonexistent SKU (404), or reservation against a nonexistent SKU at the API layer.",
+    "No test asserts order status, which would have surfaced the always-'pending' order bug.",
+    "No concurrency/race test for the idempotency IntegrityError recovery branch (service.py:99-104), though that is understandably hard to exercise."
+  ],
+  "quality_notes": [
+    "Strong, conventional separation: routing (app.py), schemas (models.py), business rules (service.py), persistence (repository.py), auth (security.py).",
+    "Repository opens and closes a fresh connection per call — simple and correct single-threaded, but precludes multi-statement transactions and contributes to the atomicity gaps.",
+    "README is largely accurate but 'Service layer enforces invariants' overstates guarantees given the concurrency/overcommit holes.",
+    "cancel_reservation does not special-case an 'expired'-status reservation; it would mark it 'cancelled' (minor state-transition looseness)."
+  ],
+  "unnecessary_code_examples": [
+    "models.py:57-62 ConfirmReservationRequest and CancelReservationRequest are empty models imported in app.py but never used by the confirm/cancel handlers.",
+    "models.py:87-89 ErrorResponse is defined but unused; the exception handler builds the error dict inline (app.py:118-122).",
+    "repository.py:311-319 update_order_status is never called; OrderStatus.CONFIRMED/CANCELLED enum members are unused.",
+    "Unused imports: Decimal in service.py:4 and tests/test_api.py:5; Depends in security.py:4.",
+    "pyproject.toml:14 declares pydantic-settings, but configuration is read via os.getenv (security.py:9) — the dependency is unused."
+  ],
+  "security_safety_notes": [
+    "get_api_key dependency is applied to all mutating endpoints and to order reads (app.py); read-only SKU lookup is intentionally public.",
+    "Default API key falls back to 'secret-key' (security.py:9) — a documented, env-overridable dev default rather than a hardcoded production secret.",
+    "All SQL uses parameterized queries; no string interpolation, so no SQL injection vector observed.",
+    "API key comparison uses '!=' (non-constant-time); a minor timing-side-channel note, acceptable for this scope.",
+    "No shell/network/file-destructive operations in the code."
+  ],
+  "file_evidence": [
+    {"path": "tests/test_service.py", "note": "Lines 171-193: expired test uses two separate repo._get_connection() calls so the UPDATE is never committed; passes only because confirm hits 'database is locked'. Reproduced directly."},
+    {"path": "src/commerce_service/service.py", "note": "Lines 142-146 confirm decrements stock and creates an order non-atomically across connections; line 88 sets an X-Available-Quantity header that the app-level handler drops."},
+    {"path": "src/commerce_service/app.py", "note": "Lines 114-123 custom HTTPException handler omits exc.headers; lines 11-13 import ConfirmReservationRequest/CancelReservationRequest that the handlers never use."},
+    {"path": "src/commerce_service/repository.py", "note": "Line 82/129 store unit_price as REAL/float; line 276 always sets order status 'pending'; lines 311-319 update_order_status is dead code; line 65 default db_path 'commerce.db' writes into cwd."},
+    {"path": "src/commerce_service/models.py", "note": "Lines 57-62 empty request models and 87-89 ErrorResponse are unused; OrderStatus.CONFIRMED/CANCELLED never produced."},
+    {"path": "pyproject.toml", "note": "Line 14 pydantic-settings dependency is unused; packaging maps src/commerce_service to 'commerce_service' while README/tests import via 'src.commerce_service'."},
+    {"path": "commerce.db", "note": "32KB SQLite runtime artifact shipped in the workspace; reflects ambient state and the default cwd DB path."}
+  ],
+  "commands_run": [
+    "python3 --version  (Python 3.12.4)",
+    "python3 -c 'import fastapi, pydantic, httpx, pytest'  (deps ok)",
+    "python3 -m pytest  (39 passed in ~6.5s)",
+    "python3 -m pytest tests/test_service.py::...::test_confirm_expired_reservation_fails (x3, all passed)",
+    "python3 (standalone) reproduced that the two-connection UPDATE+commit does not persist (value stayed 'future')",
+    "python3 (instrumented repo) confirmed expires_at unchanged after manual update and that confirm raises OperationalError 'database is locked'"
+  ],
+  "review_risk": "low — all source and test files were read, the full suite was run (39/39 pass), and the key expiration-test false positive was empirically reproduced; concurrency/transaction concerns are reasoned about statically rather than load-tested."
+}
+```

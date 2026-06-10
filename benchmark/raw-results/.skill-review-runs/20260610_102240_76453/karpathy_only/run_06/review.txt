@@ -1,0 +1,158 @@
+I've completed a thorough review: read all source and test files, installed deps, and ran the test suite (reproducing failures). Here is the benchmark evaluation.
+
+```json
+{
+  "rubric_version": "benchmark-codegen-review-v1",
+  "score_scale": "0-100 per category",
+  "weights": {
+    "task_fulfillment": 0.20,
+    "functional_correctness": 0.25,
+    "executability": 0.15,
+    "test_quality": 0.15,
+    "code_quality": 0.10,
+    "minimality": 0.10,
+    "security_safety": 0.05
+  },
+  "task_fulfillment_score": 83,
+  "task_fulfillment_breakdown": {
+    "instruction_compliance": 82,
+    "required_artifacts": 90,
+    "feature_coverage": 88,
+    "constraint_adherence": 72
+  },
+  "functional_correctness_score": 74,
+  "functional_correctness_breakdown": {
+    "domain_invariants": 65,
+    "edge_case_behavior": 78,
+    "data_consistency": 68,
+    "error_semantics": 85
+  },
+  "executability_score": 65,
+  "executability_breakdown": {
+    "installability": 88,
+    "runtime_entrypoints": 78,
+    "command_result": 35,
+    "runtime_isolation": 60
+  },
+  "test_quality_score": 63,
+  "test_quality_breakdown": {
+    "required_test_coverage": 85,
+    "behavioral_assertions": 82,
+    "integration_realism": 40,
+    "repeatability": 45
+  },
+  "code_quality_score": 81,
+  "code_quality_breakdown": {
+    "readability": 85,
+    "maintainability": 80,
+    "boundary_design": 85,
+    "documentation_quality": 75
+  },
+  "minimality_score": 72,
+  "minimality_breakdown": {
+    "no_speculative_infrastructure": 78,
+    "no_dead_or_duplicate_code": 70,
+    "appropriate_abstractions": 72,
+    "dependency_minimality": 68
+  },
+  "security_safety_score": 88,
+  "security_safety_breakdown": {
+    "auth_enforcement": 92,
+    "secret_handling": 80,
+    "input_safety": 88,
+    "unsafe_operations": 92
+  },
+  "review_confidence_score": 90,
+  "review_confidence_breakdown": {
+    "inspection_depth": 92,
+    "command_evidence": 92,
+    "issue_specificity": 90,
+    "uncertainty_handling": 85
+  },
+  "weighted_components": {
+    "task_fulfillment": 16.6,
+    "functional_correctness": 18.5,
+    "executability": 9.8,
+    "test_quality": 9.5,
+    "code_quality": 8.1,
+    "minimality": 7.2,
+    "security_safety": 4.4
+  },
+  "weighted_total": 74.0,
+  "verdict": "mixed",
+  "key_findings": [
+    "Service-layer logic is correct and well-covered: all 22 tests in tests/test_service.py pass, asserting real domain behavior (stock deduction/restoration, idempotency single-deduction, expiration status transition, state-transition guards).",
+    "The entire API integration suite is broken: all 13 tests in tests/test_api.py fail. The client fixture overrides get_db with an in-memory SQLite session created in the main thread, while Starlette's TestClient runs requests in a worker thread, raising sqlite3.ProgrammingError ('SQLite objects created in a thread can only be used in that same thread'). `pytest` reports 13 failed, 29 passed.",
+    "Domain invariant gap: expired reservations never release held stock. confirm_reservation sets status EXPIRED (service.py:117) but does not add quantity back to the SKU, and cancel_reservation rejects non-PENDING/CONFIRMED states (service.py:137), so expired holds leak stock permanently.",
+    "README claims 'cursor-based pagination' but the implementation is offset/limit based; a base64 cursor is emitted (app.py:292) but never accepted as input — decorative.",
+    "Importing commerce_service.app runs init_db at module import (app.py:41), creating commerce.db in the current working directory as a side effect.",
+    "Minor minimality issues: pydantic-settings is a declared dependency but unused; ErrorResponse is imported in app.py but never used; ConfirmReservationRequest/CancelReservationRequest are empty models forcing clients to POST a JSON body."
+  ],
+  "score_rationale": {
+    "task_fulfillment": "All requested artifacts and the full API surface (SKUs, reservations with idempotency/expiration, orders, auth, pagination, health) are present and wired through clean layers. Production-mindedness is dented by an import-time DB side effect, a stock-leak-on-expiry invariant gap, and a broken integration test layer.",
+    "functional_correctness": "Happy paths and most edge cases are correct at the service layer with appropriate HTTP semantics (409 insufficient stock, 410 expired, 404 not found, 401/403 auth, 422 validation). Marked down for expired reservations not releasing stock and for non-atomic create_reservation (reservation committed separately from stock decrement, service.py:93-101).",
+    "executability": "Dependencies are complete and pinned and the app imports/serves; however the declared `pytest` command fails substantially (13/42 tests fail) and the app writes commerce.db into the CWD on import, weakening runtime isolation.",
+    "test_quality": "Coverage of required scenarios is broad and service tests make real behavioral assertions. But the API-level integration tests do not actually run any DB-backed request successfully due to the cross-thread session bug, so integration realism and repeatability are seriously compromised.",
+    "code_quality": "Readable, well-named, and cleanly separated into models/repository/service/security/app layers with invariants localized in the service. Documentation slightly overstates pagination behavior.",
+    "minimality": "Mostly lean, but carries an unused dependency (pydantic-settings), an unused import (ErrorResponse), empty request-body models, and an emitted-but-unconsumed cursor.",
+    "security_safety": "All mutating endpoints enforce the verify_api_key dependency; inputs are validated via pydantic and DB access is via parameterized ORM queries. Only a documented dev default key ('test-key') and no env-configurable key handling.",
+    "review_confidence": "All source and test files were read, dependencies installed, and the test suite executed with failures reproduced and root-caused; the only unexercised path was a live server beyond import."
+  },
+  "instruction_failures": [
+    "README advertises 'cursor-based pagination' (README.md:13) but the API exposes offset/limit pagination only; the cursor field is never used as input.",
+    "Stated test workflow `pytest` does not pass cleanly out of the box (13 failures)."
+  ],
+  "correctness_failures": [
+    "Expired reservations do not release reserved stock: confirm_reservation marks EXPIRED without restoring sku.stock_quantity (service.py:116-119), and cancel_reservation cannot transition an EXPIRED reservation (service.py:137-140), so stock is leaked.",
+    "create_reservation is non-atomic: the reservation row is committed (repository.create) before the stock decrement is committed (service.py:93-101); a crash between them leaves an inconsistent reservation with undeducted stock."
+  ],
+  "execution_failures": [
+    "tests/test_api.py: all 13 endpoint tests fail with sqlite3.ProgrammingError due to the in-memory session being created in the main thread while TestClient dispatches in a worker thread (fixture tests/test_api.py:12-33).",
+    "create_sku's broad `except Exception` (app.py:96) masks the thread error as a 400, while unwrapped endpoints surface 500/KeyError — illustrating over-broad exception handling.",
+    "Importing the app creates commerce.db in the CWD (app.py:41) regardless of test/in-memory configuration."
+  ],
+  "test_gaps": [
+    "No working API-level proof that endpoints persist and read back data, because the integration fixture is broken.",
+    "No test asserts stock is (or is not) restored when a reservation expires — the actual leak invariant is untested.",
+    "Pagination tests rely on order_id == reservation_id coincidence (test_api.py:354) rather than capturing the order id from a response.",
+    "No test for adjust_stock validation error semantics at the API boundary beyond the 404 case (the 400 negative-stock path is only covered at the service layer)."
+  ],
+  "quality_notes": [
+    "Clean layering: repository.py (data access), service.py (business rules + domain exceptions), security.py (auth), app.py (HTTP), models.py (ORM + pydantic).",
+    "HTTP status mapping is deliberate and appropriate (409/410/404/401/403/422).",
+    "models.py mixes ORM and pydantic schemas plus init_db in one module — acceptable at this size but a future split point.",
+    "list_paginated computes a total count that the service returns but the API response omits (only has_more/cursor surfaced)."
+  ],
+  "unnecessary_code_examples": [
+    "src/commerce_service/app.py:15 — `ErrorResponse` imported but never used.",
+    "src/commerce_service/models.py:120-129 — empty `ConfirmReservationRequest` / `CancelReservationRequest` models force clients to send a JSON body for confirm/cancel.",
+    "pyproject.toml:14 — `pydantic-settings` dependency declared but never imported anywhere.",
+    "src/commerce_service/app.py:289-292 — base64 cursor is generated but never consumed as a pagination input."
+  ],
+  "security_safety_notes": [
+    "All mutating endpoints (POST /skus, PATCH /skus/{id}/stock, POST /reservations, confirm, cancel) require Depends(verify_api_key) (app.py:83,107,144,186,223).",
+    "Only a documented development key 'test-key' is hardcoded (security.py:6); no real secret leakage, but the key is not configurable via environment despite pydantic-settings being a dependency.",
+    "Inputs validated via pydantic Field constraints; DB access uses parameterized SQLAlchemy queries, avoiding injection.",
+    "No shell/file/network/destructive operations beyond local SQLite file creation."
+  ],
+  "file_evidence": [
+    {"path": "tests/test_api.py", "note": "Fixture (lines 12-33) shares a main-thread in-memory SQLite session with TestClient's worker thread; causes all 13 API tests to fail with sqlite3.ProgrammingError."},
+    {"path": "src/commerce_service/service.py", "note": "confirm_reservation (116-119) sets EXPIRED without restoring stock; cancel_reservation (137-140) blocks EXPIRED — expired holds leak stock. create_reservation (93-101) commits reservation and stock separately (non-atomic)."},
+    {"path": "src/commerce_service/app.py", "note": "init_db runs at import (line 41) creating commerce.db; create_sku uses broad except Exception->400 (96-100); unused ErrorResponse import (15); decorative cursor (289-292)."},
+    {"path": "src/commerce_service/security.py", "note": "verify_api_key enforces 401 (missing) / 403 (invalid); single hardcoded dev key 'test-key' (line 6)."},
+    {"path": "pyproject.toml", "note": "Pinned deps and dev extras present; pydantic-settings (14) is declared but unused."},
+    {"path": "tests/test_service.py", "note": "22 service-layer tests, all passing, with strong behavioral assertions on stock, idempotency, and state transitions."},
+    {"path": "README.md", "note": "Claims 'cursor-based pagination' (13) not matched by the offset/limit implementation."}
+  ],
+  "commands_run": [
+    "find . -type f (excluding caches) — listed 11 project files",
+    "python3 --version (3.12.4); python3 -c 'import fastapi, sqlalchemy, httpx, pytest' — deps OK",
+    "pip install -e . -q; PYTHONPATH=src python3 -m pytest -q — result: 13 failed, 29 passed, 2 errors",
+    "PYTHONPATH=src python3 -m pytest tests/test_service.py -q — result: 22 passed",
+    "PYTHONPATH=src python3 -m pytest (grep FAILED) — enumerated the 13 failing API tests",
+    "PYTHONPATH=src python3 -c 'import commerce_service.app'; ls *.db — confirmed commerce.db created on import",
+    "grep for pydantic_settings/BaseSettings/ErrorResponse/empty request models — confirmed unused dep/import"
+  ],
+  "review_risk": "low — all source and test files were read and the declared test command was executed with failures reproduced and root-caused; the only path not exercised was running the live uvicorn server beyond a successful module import."
+}
+```

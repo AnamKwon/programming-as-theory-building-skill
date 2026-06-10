@@ -1,0 +1,29 @@
+```json
+{
+  "files_created": [
+    "pyproject.toml",
+    "README.md",
+    "src/commerce_service/__init__.py",
+    "src/commerce_service/app.py",
+    "src/commerce_service/models.py",
+    "src/commerce_service/repository.py",
+    "src/commerce_service/service.py",
+    "src/commerce_service/security.py",
+    "tests/__init__.py",
+    "tests/test_service.py",
+    "tests/test_api.py"
+  ],
+  "entrypoint": "python -m commerce_service.app",
+  "test_command": "pytest tests/"
+}
+```
+
+Production inventory reservation API created successfully. All 40 tests pass. The service includes:
+
+- **Architecture**: Clean separation between FastAPI routes, service layer (business logic), and repository (data access)
+- **Features**: SKU management, atomic stock reservations with 15-min TTL, idempotent requests, order confirmation flow, pagination
+- **Security**: API-key auth on mutation endpoints (defaults to `dev-key`, override with `COMMERCE_API_KEY` env var)
+- **Data**: SQLite with SQLAlchemy ORM, in-memory test databases, pessimistic locking for race conditions
+- **Tests**: Happy paths, stock exhaustion, idempotency, expiration, state transitions, pagination, unauthorized access
+
+Run with `python -m commerce_service.app` (listens on 0.0.0.0:8000). Test with `pytest tests/`.

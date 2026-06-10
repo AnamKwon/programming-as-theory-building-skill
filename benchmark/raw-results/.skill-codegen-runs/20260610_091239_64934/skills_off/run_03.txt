@@ -1,0 +1,32 @@
+All files created and tests passing. Here's the project summary:
+
+```json
+{
+  "files_created": [
+    "pyproject.toml",
+    "README.md",
+    "src/commerce_service/__init__.py",
+    "src/commerce_service/app.py",
+    "src/commerce_service/models.py",
+    "src/commerce_service/repository.py",
+    "src/commerce_service/service.py",
+    "src/commerce_service/security.py",
+    "tests/__init__.py",
+    "tests/test_api.py",
+    "tests/test_service.py"
+  ],
+  "entrypoint": "uvicorn commerce_service.app:app --reload",
+  "test_command": "pytest"
+}
+```
+
+**Key features implemented:**
+- FastAPI with Pydantic v2 models and validation
+- SQLite repository with schema initialization
+- Service layer enforcing business rules (stock availability, idempotency, expiration)
+- API-key auth on mutations via `X-API-Key` header
+- Reservation lifecycle: pending → confirmed/cancelled/expired
+- Order creation on confirmation, stock deduction
+- Pagination on order list (offset/limit with validation)
+- 39 comprehensive tests covering happy paths, error cases, and edge cases
+- Production-ready error handling and clear HTTP responses

@@ -1,0 +1,46 @@
+All files created successfully. Here's the project summary:
+
+```json
+{
+  "files_created": [
+    "pyproject.toml",
+    "README.md",
+    "src/commerce_service/__init__.py",
+    "src/commerce_service/app.py",
+    "src/commerce_service/models.py",
+    "src/commerce_service/repository.py",
+    "src/commerce_service/service.py",
+    "src/commerce_service/security.py",
+    "tests/__init__.py",
+    "tests/test_service.py",
+    "tests/test_api.py"
+  ],
+  "entrypoint": "python -m uvicorn src.commerce_service.app:app --reload",
+  "test_command": "pytest tests/ -v"
+}
+```
+
+The service includes:
+
+**Architecture:**
+- Repository pattern for database access (models.py → repository.py → service.py → app.py)
+- Pydantic validation for all request/response payloads
+- SQLite persistence with SQLAlchemy ORM
+
+**Key Features:**
+- Health check endpoint
+- SKU creation and stock adjustment
+- Reservation with idempotency keys and 15-minute TTL
+- Order confirmation (stock deduction on confirmation, not reservation)
+- Order lookup with pagination
+- API-key authentication for mutations
+- Comprehensive service-layer business rules
+
+**Test Coverage:**
+- Happy paths for all operations
+- Insufficient stock handling
+- Idempotent reservation retry
+- Expired reservation rejection
+- Unauthorized mutation attempts
+- Pagination validation
+- Stock reservation/release correctness

@@ -1,0 +1,35 @@
+Perfect! I've created a production-style Python inventory reservation and order orchestration API. Here's the output contract:
+
+```json
+{
+  "files_created": [
+    "pyproject.toml",
+    "README.md",
+    "src/commerce_service/__init__.py",
+    "src/commerce_service/app.py",
+    "src/commerce_service/models.py",
+    "src/commerce_service/repository.py",
+    "src/commerce_service/service.py",
+    "src/commerce_service/security.py",
+    "tests/__init__.py",
+    "tests/test_service.py",
+    "tests/test_api.py"
+  ],
+  "entrypoint": "uvicorn commerce_service.app:app --reload",
+  "test_command": "pytest tests/"
+}
+```
+
+## Key Implementation Details
+
+**Architecture**: Repository pattern isolates database access; service layer enforces business rules; FastAPI routes delegate to services.
+
+**Inventory Model**: Split into `available_quantity` and `reserved_quantity` to track stock atomically without distributed locks.
+
+**Reservations**: Support time-limited holds (TTL) with idempotency keys preventing duplicate reservations on network retries. Expired reservations release stock on-demand when confirmed.
+
+**API Security**: All mutations (`POST`, `DELETE`) require `X-API-Key` header validated against `API_KEY` environment variable.
+
+**Tests**: 20+ test cases covering happy paths, stock insufficiency, idempotent retries, expired reservation rejection, unauthorized access, and pagination bounds.
+
+To run: install with `pip install -e ".[dev]"`, set `export API_KEY=demo-key-12345`, then `uvicorn commerce_service.app:app --reload`.

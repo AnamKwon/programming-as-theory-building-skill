@@ -1,0 +1,29 @@
+Perfect! I've created a production-style Python commerce service with all required components. Here's the summary:
+
+```json
+{
+  "files_created": 11,
+  "entrypoint": "commerce_service.app:app",
+  "test_command": "pytest"
+}
+```
+
+**Project structure:**
+- **FastAPI application** with 8 endpoints (health, SKU management, stock adjustment, reservation CRUD, order lookup with pagination)
+- **Service layer** enforcing business rules (stock availability, idempotency, reservation expiration, state transitions)
+- **Repository pattern** abstracting SQLite operations with proper schema and indexing
+- **API key authentication** protecting all mutations via `X-API-Key` header
+- **Comprehensive test suite** covering happy paths, error cases, idempotency, expiration, authorization, and pagination
+
+**Run the service:**
+```bash
+pip install -e ".[dev]"
+python -m uvicorn commerce_service.app:app --reload
+```
+
+**Run tests:**
+```bash
+pytest -v
+```
+
+The design balances production readiness with simplicity: proper separation of concerns, clear error handling, validated inputs, and testable architecture without unnecessary abstractions.

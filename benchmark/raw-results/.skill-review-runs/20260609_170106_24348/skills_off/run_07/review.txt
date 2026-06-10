@@ -1,0 +1,162 @@
+I have completed a thorough review: read every source and test file, verified dependencies, ran the full test suite, confirmed the root cause of failures, and checked for dead imports/dependencies. I removed the `commerce.db` that my own test run generated (it was not in the original workspace) so the project is left unmodified.
+
+The key finding: the API test fixture sets `app.state.db` for isolation, but `app.py` never reads `app.state.db` — it uses module-level globals `db`/`service` bound to `commerce.db`. So API tests are not isolated, collide on the `skus.sku` UNIQUE constraint, and **9 of 30 tests fail on a clean run**. This also exposes a production gap: duplicate SKU creation raises an uncaught `sqlite3.IntegrityError` (→ 500).
+
+```json
+{
+  "rubric_version": "benchmark-codegen-review-v1",
+  "score_scale": "0-100 per category",
+  "weights": {
+    "task_fulfillment": 0.20,
+    "functional_correctness": 0.25,
+    "executability": 0.15,
+    "test_quality": 0.15,
+    "code_quality": 0.10,
+    "minimality": 0.10,
+    "security_safety": 0.05
+  },
+  "task_fulfillment_score": 86,
+  "task_fulfillment_breakdown": {
+    "instruction_compliance": 85,
+    "required_artifacts": 92,
+    "feature_coverage": 90,
+    "constraint_adherence": 75
+  },
+  "functional_correctness_score": 71,
+  "functional_correctness_breakdown": {
+    "domain_invariants": 78,
+    "edge_case_behavior": 72,
+    "data_consistency": 62,
+    "error_semantics": 72
+  },
+  "executability_score": 66,
+  "executability_breakdown": {
+    "installability": 85,
+    "runtime_entrypoints": 88,
+    "command_result": 40,
+    "runtime_isolation": 50
+  },
+  "test_quality_score": 64,
+  "test_quality_breakdown": {
+    "required_test_coverage": 80,
+    "behavioral_assertions": 82,
+    "integration_realism": 60,
+    "repeatability": 35
+  },
+  "code_quality_score": 81,
+  "code_quality_breakdown": {
+    "readability": 85,
+    "maintainability": 80,
+    "boundary_design": 85,
+    "documentation_quality": 72
+  },
+  "minimality_score": 74,
+  "minimality_breakdown": {
+    "no_speculative_infrastructure": 78,
+    "no_dead_or_duplicate_code": 62,
+    "appropriate_abstractions": 82,
+    "dependency_minimality": 72
+  },
+  "security_safety_score": 85,
+  "security_safety_breakdown": {
+    "auth_enforcement": 92,
+    "secret_handling": 68,
+    "input_safety": 88,
+    "unsafe_operations": 92
+  },
+  "review_confidence_score": 92,
+  "review_confidence_breakdown": {
+    "inspection_depth": 95,
+    "command_evidence": 92,
+    "issue_specificity": 92,
+    "uncertainty_handling": 88
+  },
+  "weighted_components": {
+    "task_fulfillment": 17.2,
+    "functional_correctness": 17.8,
+    "executability": 9.9,
+    "test_quality": 9.6,
+    "code_quality": 8.1,
+    "minimality": 7.4,
+    "security_safety": 4.3
+  },
+  "weighted_total": 74.2,
+  "verdict": "mixed",
+  "key_findings": [
+    "9 of 30 tests fail on a clean run: PYTHONPATH=src pytest tests/ -> '9 failed, 21 passed'. All failures are in tests/test_api.py with sqlite3.IntegrityError: UNIQUE constraint failed: skus.sku.",
+    "Root cause is a broken test-isolation seam: tests/test_api.py:17 sets app.state.db = db_instance, but src/commerce_service/app.py uses module-level globals db/service (app.py:28-29) and never reads app.state.db. API tests therefore all share the persistent commerce.db and collide on duplicate SKU creation across tests.",
+    "Production correctness gap: creating a duplicate SKU raises an uncaught sqlite3.IntegrityError (repository.py:75). app.py create_sku (app.py:48) only catches ValueError, so this surfaces as HTTP 500 instead of a 409/400.",
+    "App persists commerce.db into the current working directory (app.py:28); tests do not isolate it, so the suite is not repeatable and pollutes the workspace.",
+    "Service-layer tests (tests/test_service.py) are well isolated via a tempfile DB fixture and all pass, with good behavioral assertions across happy path, insufficient stock, idempotency, expiration, cancel, get_order, pagination, and cleanup.",
+    "Multi-step confirm flow (service.py:118-123) spans four separate connections/commits with no enclosing transaction, risking partial-write inconsistency on failure.",
+    "Dead code/deps: JSONResponse unused in app.py:4; Optional and OrderStatus unused in service.py:2,4; pydantic-settings declared in pyproject.toml:13 but never used; unused imports in test_api.py."
+  ],
+  "score_rationale": {
+    "task_fulfillment": "All requested endpoints and artifacts exist (SKU, stock, reservations create/confirm/cancel, orders get/list with pagination, auth, expiry cleanup) and are documented in README.md. Knocked down for production-minded constraint adherence: hardcoded cwd DB path, unused settings dependency, and 'production-ready' claims undermined by the 500-on-duplicate and TOCTOU gaps.",
+    "functional_correctness": "Core invariants are correct: available = stock - (pending+confirmed) reserved (service.py:66-68), idempotent retry returns existing reservation (service.py:45-59), expiry enforced on confirm with 410 (service.py:109-113). Weakened by duplicate-SKU -> 500, cancel not guarding confirmed reservations (service.py:136-144), no transaction around the confirm sequence, and documented-401-but-actual-403 for missing key.",
+    "executability": "Package installs plausibly and the app imports cleanly (13 routes; uvicorn entrypoint valid). The declared test command fails 9/30 on a clean checkout, and runtime/test state is not isolated from the cwd commerce.db, so command_result and runtime_isolation are low.",
+    "test_quality": "Required categories are covered and assertions check domain behavior, not just status codes. However test_api.py's isolation fixture is non-functional (sets app.state.db the app never reads), making the integration suite non-repeatable and currently red; the expired-idempotent-retry 410 path (service.py:47) is never exercised.",
+    "code_quality": "Clean layering across models/repository/service/security/app with readable names and a localized TTL constant. README is thorough but overclaims 'production-ready' and documents 401 for a missing key that actually returns 403.",
+    "minimality": "Abstractions are mostly justified, but there are several dead imports (JSONResponse, Optional, OrderStatus), an empty ReservationActionRequest model, dead test fixtures/imports, and an unused pydantic-settings dependency.",
+    "security_safety": "Every mutating endpoint enforces Depends(verify_api_key); SQL is fully parameterized; inputs validated with pydantic length/range bounds. Minor deduction for a hardcoded key literally named 'sk_live_production_key' in source and README.",
+    "review_confidence": "All eight source/test files were read, dependencies confirmed present (fastapi 0.109.0), the full suite was executed, the failure root cause was reproduced and traced to specific lines, and dead imports/deps were grep-verified."
+  },
+  "instruction_failures": [
+    "README documents '401 Unauthorized - Missing or invalid API key', but a missing X-API-Key returns 403 (FastAPI APIKeyHeader default); only an invalid key returns 401 (security.py:12-17).",
+    "Project is described as 'production-ready' (README.md:3) yet has an uncaught DB integrity error path and no transactional guarantees."
+  ],
+  "correctness_failures": [
+    "Duplicate SKU creation raises uncaught sqlite3.IntegrityError (repository.py:75) -> HTTP 500 instead of a 409/400; app.py:48 only catches ValueError.",
+    "cancel_reservation (service.py:136-144) does not reject a CONFIRMED reservation, so a confirmed reservation can be cancelled (freeing reserved stock) while its order remains 'confirmed'.",
+    "confirm flow writes order + reservation link + status across 4 independent connections/commits (service.py:118-123) with no transaction; a mid-sequence failure leaves inconsistent state.",
+    "Reservation creation has a check-then-insert TOCTOU between get_available/get_reserved (service.py:66-67) and create_reservation (service.py:78); concurrent requests could oversell."
+  ],
+  "execution_failures": [
+    "PYTHONPATH=src python3 -m pytest tests/ -> '9 failed, 21 passed, 178 warnings'.",
+    "All 9 failures are sqlite3.IntegrityError: UNIQUE constraint failed: skus.sku, caused by tests sharing the global commerce.db because app.state.db (set in fixture) is never read by app.py.",
+    "Running the app/tests creates a commerce.db file in the working directory (observed 36864-byte commerce.db after the run)."
+  ],
+  "test_gaps": [
+    "No test for the expired-reservation idempotent-retry path that should raise ReservationExpiredError -> 410 (service.py:47-48).",
+    "No test for duplicate SKU creation (would currently reveal the 500 bug).",
+    "No test asserting cancel is rejected/handled for an already-confirmed reservation.",
+    "test_api.py integration tests cannot run repeatably and currently fail, so the documented HTTP contract is effectively unverified end-to-end."
+  ],
+  "quality_notes": [
+    "Clear separation of concerns: repository.py (data access), service.py (business rules), models.py (schemas), security.py (auth), app.py (routing).",
+    "datetime.utcnow() is deprecated in Python 3.12 and emits 178 warnings across the run.",
+    "README documents a 401 for missing keys that the code does not produce (returns 403)."
+  ],
+  "unnecessary_code_examples": [
+    "src/commerce_service/app.py:4 imports JSONResponse but never uses it.",
+    "src/commerce_service/service.py:2 imports Optional and line 4 imports OrderStatus, neither used.",
+    "pyproject.toml:13 declares pydantic-settings>=2.0.0 with no usage anywhere in src/.",
+    "src/commerce_service/models.py:55-56 ReservationActionRequest is an empty pass-through body model.",
+    "tests/test_api.py:6,33-34 import app_service/service_instance/db_instance that are unused; the setup_db autouse fixture (test_api.py:30-38) does nothing the app consumes."
+  ],
+  "security_safety_notes": [
+    "All mutating endpoints require Depends(verify_api_key): /skus, /stock/adjust, /reservations, confirm, cancel, /maintenance/cleanup-expired (app.py:40-133).",
+    "All SQL uses parameterized queries; no string interpolation into SQL (repository.py).",
+    "Inputs validated via pydantic with length/range constraints (models.py:21-41).",
+    "Hardcoded API keys in source, one named 'sk_live_production_key' (security.py:6-9, README.md:72-73) — appears to be a sample but the naming is risky; should come from env/config."
+  ],
+  "file_evidence": [
+    {"path": "src/commerce_service/app.py", "note": "Lines 28-29 bind module-level db/service to commerce.db; routes never reference app.state.db, defeating the test isolation fixture. Line 48 catches only ValueError, so duplicate-SKU IntegrityError becomes a 500. Line 4 unused JSONResponse import."},
+    {"path": "tests/test_api.py", "note": "Lines 11-23/30-38 set app.state.db for isolation that app.py ignores; result is shared-state UNIQUE collisions and 9 failing tests."},
+    {"path": "src/commerce_service/repository.py", "note": "Line 75 INSERT into skus can raise uncaught IntegrityError; confirm-related updates (220-272) use independent connections/commits with no transaction."},
+    {"path": "src/commerce_service/service.py", "note": "Correct availability math (66-68) and idempotency/expiry handling (45-113); cancel_reservation (136-144) does not block confirmed reservations; unused imports lines 2,4."},
+    {"path": "tests/test_service.py", "note": "Properly isolated tempfile DB fixture (15-23) with strong behavioral assertions; all 12 service-layer tests pass."},
+    {"path": "pyproject.toml", "note": "Line 13 pydantic-settings dependency is never used in the codebase."},
+    {"path": "README.md", "note": "Line 3 'production-ready' overclaim; lines 87/119-121 document 401 for missing key while code returns 403."}
+  ],
+  "commands_run": [
+    "find . -type f ... (listed 11 project files)",
+    "python3 --version (3.12.4) and import check (fastapi 0.109.0, httpx, pytest present)",
+    "PYTHONPATH=src python3 -m pytest tests/ -q  -> 9 failed, 21 passed, 178 warnings",
+    "PYTHONPATH=src python3 -m pytest tests/test_api.py::test_adjust_stock -q (captured IntegrityError traceback at repository.py:75)",
+    "grep for unused imports/deps (JSONResponse, OrderStatus, Optional, pydantic_settings, app.state) ",
+    "PYTHONPATH=src python3 -c 'from commerce_service.app import app' (import ok, 13 routes); then removed the test-generated commerce.db"
+  ],
+  "review_risk": "low — all files were read, dependencies were present, the declared test command was executed and its 9 failures were reproduced and root-caused; the only state change was a commerce.db generated by my test run, which I deleted to leave the workspace unmodified."
+}
+```

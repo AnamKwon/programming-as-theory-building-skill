@@ -4,8 +4,13 @@
 .gemini/
 .skill-codegen-runs/
 .skill-review-runs/
+!benchmark/raw-results/.skill-codegen-runs/
+!benchmark/raw-results/.skill-codegen-runs/**
+!benchmark/raw-results/.skill-review-runs/
+!benchmark/raw-results/.skill-review-runs/**
 __pycache__/
 .pytest_cache/
+*.egg-info/
 .mypy_cache/
 .ruff_cache/
 *.pyc
@@ -13,3 +18,5 @@ __pycache__/
 *.sqlite
 *.sqlite3
 *.db
+benchmark/raw-results/**/*.db
+benchmark/raw-results/**/*.egg-info/

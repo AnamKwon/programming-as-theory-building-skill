@@ -1,0 +1,42 @@
+All files created successfully. Here's the complete project structure:
+
+```json
+{
+  "files_created": [
+    "pyproject.toml",
+    "README.md",
+    "src/commerce_service/__init__.py",
+    "src/commerce_service/app.py",
+    "src/commerce_service/models.py",
+    "src/commerce_service/repository.py",
+    "src/commerce_service/service.py",
+    "src/commerce_service/security.py",
+    "tests/__init__.py",
+    "tests/test_service.py",
+    "tests/test_api.py"
+  ],
+  "entrypoint": "src.commerce_service.app:app",
+  "test_command": "pytest tests/"
+}
+```
+
+**Key design highlights:**
+
+- **Layered Architecture**: API → Service (business logic) → Repository (database) boundary keeps concerns separated
+- **Stock Safety**: Reservations don't deduct stock; confirmation creates immutable orders when ready
+- **Idempotency**: Request deduplication via stored responses prevents duplicate orders
+- **Expiration**: Reservations automatically expire after 15 minutes (configurable), blocking stale confirmations
+- **Pagination**: Cursor-based (not offset-based) for stable ordering across inserts
+- **API Key Auth**: All mutations require `X-API-Key` header validation
+- **Clear Errors**: HTTP status codes map to domain failures (409 for stock conflicts, 410 for expired, 401/403 for auth)
+
+**Run the service:**
+```bash
+pip install -e ".[dev]"
+uvicorn src.commerce_service.app:app --reload
+```
+
+**Test:**
+```bash
+pytest tests/
+```

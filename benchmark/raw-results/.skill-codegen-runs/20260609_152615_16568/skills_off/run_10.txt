@@ -1,0 +1,32 @@
+Perfect! I've created a complete production-style Python service with all required components. Here's the summary:
+
+```json
+{
+  "files_created": [
+    "pyproject.toml",
+    "README.md",
+    "src/commerce_service/__init__.py",
+    "src/commerce_service/app.py",
+    "src/commerce_service/models.py",
+    "src/commerce_service/repository.py",
+    "src/commerce_service/service.py",
+    "src/commerce_service/security.py",
+    "tests/__init__.py",
+    "tests/test_service.py",
+    "tests/test_api.py"
+  ],
+  "entrypoint": "commerce_service.app:app",
+  "test_command": "pytest tests/ -v"
+}
+```
+
+**Architecture highlights:**
+
+- **Models** (models.py): SQLAlchemy ORM for SKU, Reservation, Order; Pydantic schemas for request/response validation
+- **Repository** (repository.py): Data access layer with CRUD operations and complex queries
+- **Service** (service.py): Business logic enforcing stock checks, idempotency, reservation expiration, state transitions
+- **Security** (security.py): API key header validation for mutations
+- **App** (app.py): FastAPI endpoints with dependency injection
+- **Tests**: Service layer tests (17 cases) + API integration tests (18 cases) covering happy paths, edge cases, authorization, pagination
+
+Key features: idempotent reservations via idempotency keys, automatic TTL-based expiration, state machine for transitions, pagination for order lookup, clear HTTP error codes (401 for auth, 404 for not found, 409 for conflicts, 410 for expired).

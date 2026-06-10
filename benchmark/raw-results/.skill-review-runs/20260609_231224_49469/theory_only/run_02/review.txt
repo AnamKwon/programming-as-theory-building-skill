@@ -1,0 +1,158 @@
+I have enough evidence. The production app works end-to-end (verified via smoke test), but the declared `pytest tests/` command fails 13 of 31 tests — the entire API integration suite is broken. Here is the evaluation.
+
+```json
+{
+  "rubric_version": "benchmark-codegen-review-v1",
+  "score_scale": "0-100 per category",
+  "weights": {
+    "task_fulfillment": 0.20,
+    "functional_correctness": 0.25,
+    "executability": 0.15,
+    "test_quality": 0.15,
+    "code_quality": 0.10,
+    "minimality": 0.10,
+    "security_safety": 0.05
+  },
+  "task_fulfillment_score": 87,
+  "task_fulfillment_breakdown": {
+    "instruction_compliance": 85,
+    "required_artifacts": 95,
+    "feature_coverage": 90,
+    "constraint_adherence": 78
+  },
+  "functional_correctness_score": 77,
+  "functional_correctness_breakdown": {
+    "domain_invariants": 85,
+    "edge_case_behavior": 75,
+    "data_consistency": 70,
+    "error_semantics": 78
+  },
+  "executability_score": 60,
+  "executability_breakdown": {
+    "installability": 60,
+    "runtime_entrypoints": 90,
+    "command_result": 35,
+    "runtime_isolation": 55
+  },
+  "test_quality_score": 69,
+  "test_quality_breakdown": {
+    "required_test_coverage": 88,
+    "behavioral_assertions": 82,
+    "integration_realism": 50,
+    "repeatability": 55
+  },
+  "code_quality_score": 86,
+  "code_quality_breakdown": {
+    "readability": 88,
+    "maintainability": 85,
+    "boundary_design": 90,
+    "documentation_quality": 80
+  },
+  "minimality_score": 85,
+  "minimality_breakdown": {
+    "no_speculative_infrastructure": 92,
+    "no_dead_or_duplicate_code": 80,
+    "appropriate_abstractions": 90,
+    "dependency_minimality": 78
+  },
+  "security_safety_score": 80,
+  "security_safety_breakdown": {
+    "auth_enforcement": 90,
+    "secret_handling": 65,
+    "input_safety": 85,
+    "unsafe_operations": 80
+  },
+  "review_confidence_score": 91,
+  "review_confidence_breakdown": {
+    "inspection_depth": 95,
+    "command_evidence": 92,
+    "issue_specificity": 90,
+    "uncertainty_handling": 85
+  },
+  "weighted_components": {
+    "task_fulfillment": 17.4,
+    "functional_correctness": 19.3,
+    "executability": 9.0,
+    "test_quality": 10.4,
+    "code_quality": 8.6,
+    "minimality": 8.5,
+    "security_safety": 4.0
+  },
+  "weighted_total": 77.1,
+  "verdict": "good",
+  "key_findings": [
+    "Production app verified working end-to-end via TestClient smoke test (sku -> stock -> reserve -> confirm -> list all returned 200), so core logic is sound.",
+    "Declared test command `pytest tests/` fails: 13 of 31 tests fail (18 pass). All of test_api.py is broken; all of test_service.py passes.",
+    "10 API tests fail because the test_db fixture (tests/test_api.py:11) creates `create_engine('sqlite:///:memory:')` WITHOUT `connect_args={'check_same_thread': False}`, so the session created in the test thread is reused in TestClient's worker thread: 'SQLite objects created in a thread can only be used in that same thread.'",
+    "3 auth tests fail asserting 403 but receiving 422: verify_api_key (security.py:7) uses Header(...) (required), so a MISSING key yields a Pydantic 422, not 401/403; only an INVALID key returns 403.",
+    "Clean, idiomatic layering (models / repository / service / security / app) with correct domain error codes (409 insufficient, 410 expired, 404 not found).",
+    "Module-level `repo = Repository()` (app.py:14) with default `sqlite:///./test.db` writes a 57KB test.db file into the workspace at import time — confirmed present."
+  ],
+  "score_rationale": {
+    "task_fulfillment": "All requested artifacts and the full API surface are present: SKU create, stock adjust/get, reservation create with idempotency key and 24h expiry, confirm->order, cancel with stock release, paginated orders, and API-key auth on mutating routes. Docked for the ./test.db artifact written into the workspace, which weakens the fresh/clean-workspace constraint.",
+    "functional_correctness": "Domain invariants hold and are demonstrated by the passing service tests (reserved counts, expiry releasing stock, idempotent reuse, confirmed-order->CANCELLED). Lowered for: non-atomic create_reservation (reservation committed at service.py:67 before reserve_stock at :68), list_orders lacking ORDER BY (repository.py:124-128, pagination order relies on implicit rowid), missing-key returning 422 instead of 401/403, and the expired-idempotent path (service.py:51-52) raising without releasing the still-reserved stock.",
+    "executability": "App entrypoints work (run(), __main__, `python -m`) and imports resolve. Heavily penalized because the README's `pytest tests/` command fails 13/31, and the default file-backed SQLite writes ./test.db into CWD. pyproject mixes poetry-core build backend with a PEP 621 [project] table and a [tool.poetry.scripts] section, with no package/path declaration and no pytest pythonpath config, so editable install + bare `pytest tests/` plausibility is questionable.",
+    "test_quality": "Coverage of required scenarios is broad (happy paths, insufficient stock, idempotency, expiration, auth, pagination) and the service suite makes strong behavioral assertions. But the integration layer is entirely non-functional due to the fixture thread bug, and the auth assertions encode the wrong expected status, so half the suite cannot validate behavior as written.",
+    "code_quality": "Readable names, coherent module boundaries, and invariants localized in the service layer. README is thorough and mostly accurate, though it claims the test suite covers scenarios that in fact fail to run. Minor deductions for that documentation/reality gap.",
+    "minimality": "No speculative infrastructure (no queues/workers/migrations/CLIs). Small deductions: unused `timedelta` import in models.py:2, an unused `db` fixture in test_service.py:15-22 (repo fixture builds its own engine), declared-but-unused `pydantic-settings` dependency, and get_or_create_stock mutating on read.",
+    "security_safety": "Auth dependency is correctly applied to every mutating endpoint; inputs validated via Pydantic (quantity gt 0, bounded limit). Docked for a hardcoded API key in source (security.py:4, not env-configurable) and binding to 0.0.0.0 in run().",
+    "review_confidence": "All source and test files read; ran the full pytest suite and a direct end-to-end smoke test, and confirmed the test.db artifact. Findings cite concrete file:line locations. Remaining uncertainty is limited to packaging install behavior, which was not exercised."
+  },
+  "instruction_failures": [
+    "README documents `pytest tests/` as the test command, but it fails 13/31 tests out of the box.",
+    "Mutating endpoints are documented to return 403 on auth failure, but a missing x-api-key header returns 422 (security.py:7 Header(...))."
+  ],
+  "correctness_failures": [
+    "tests/test_api.py:11 in-memory engine omits check_same_thread=False, causing cross-thread SQLite errors under TestClient (10 failures).",
+    "Missing API key yields 422 instead of 401/403 (security.py:7).",
+    "service.py:46-69 create_reservation is non-atomic across two commits (reservation row, then stock reservation); a failure between them orphans the reservation.",
+    "repository.py:124-128 list_orders has no ORDER BY, so pagination ordering is implementation-defined (implicit rowid) rather than guaranteed.",
+    "service.py:51-52 expired idempotent retry raises ReservationExpiredError without releasing the originally reserved stock."
+  ],
+  "execution_failures": [
+    "`pytest tests/`: 13 failed, 18 passed (entire test_api.py broken).",
+    "Importing commerce_service.app writes ./test.db (57344 bytes) into the working directory via module-level Repository() with default sqlite:///./test.db."
+  ],
+  "test_gaps": [
+    "No working integration test actually exercises the HTTP layer (all API tests error before assertions or assert wrong codes).",
+    "No test covers the cancel-of-confirmed -> order CANCELLED path through the HTTP API (only at service level).",
+    "No test asserts pagination ordering/stability, only counts and page lengths.",
+    "tests/test_api.py:238-242 expects a DELETE to /reservations/{id}/cancel to return 404, but the route is POST-only (Starlette returns 405); the assertion is never reached due to the earlier thread error."
+  ],
+  "quality_notes": [
+    "Strong separation of concerns: repository.py (persistence), service.py (domain rules + typed exceptions), security.py (auth), app.py (HTTP/schemas).",
+    "Error taxonomy (InsufficientStockError/ReservationExpiredError/ReservationNotFoundError) maps cleanly to 409/410/404.",
+    "Broad `except Exception -> HTTPException(400)` handlers (e.g. app.py:98-99, 158-159) can mask unexpected server errors as client errors.",
+    "Uses deprecated datetime.utcnow() and SQLAlchemy 1.x declarative_base() (deprecation warnings, models.py:6,15)."
+  ],
+  "unnecessary_code_examples": [
+    "models.py:2 imports timedelta but never uses it.",
+    "tests/test_service.py:15-23 `db` fixture is required by the repo fixture but unused — the Repository builds its own separate in-memory engine.",
+    "pyproject.toml:17 declares pydantic-settings, which is never imported anywhere in src/."
+  ],
+  "security_safety_notes": [
+    "Auth dependency Depends(verify_api_key) is correctly attached to all mutating endpoints (POST /skus, /skus/{id}/stock, /reservations, confirm, cancel); GET endpoints are intentionally open.",
+    "Hardcoded API key 'test-api-key-123' in security.py:4 (VALID_API_KEYS) with no environment/config override.",
+    "Inputs validated by Pydantic (code/name length bounds, quantity gt 0, limit ge 1 le 100); SQLAlchemy ORM avoids SQL injection.",
+    "run() binds uvicorn to host 0.0.0.0 (app.py:244) — broad bind for a demo service."
+  ],
+  "file_evidence": [
+    {"path": "tests/test_api.py", "note": "Line 11: in-memory engine without check_same_thread=False -> all API tests fail with cross-thread SQLite error under TestClient."},
+    {"path": "src/commerce_service/security.py", "note": "Lines 4,7-9: hardcoded key; Header(...) makes missing key a 422 rather than 401/403."},
+    {"path": "src/commerce_service/app.py", "note": "Line 14: module-level Repository() with default sqlite:///./test.db writes a DB file into CWD on import; lines 98-99/158-159 broad Exception->400 handlers."},
+    {"path": "src/commerce_service/service.py", "note": "Lines 46-69: non-atomic reservation+stock-reserve across two commits; line 51-52 expired-idempotent path raises without releasing reserved stock."},
+    {"path": "src/commerce_service/repository.py", "note": "Lines 124-128: list_orders has no ORDER BY; lines 97-102 cancel_reservation returns a deleted object."},
+    {"path": "src/commerce_service/models.py", "note": "Line 2: unused timedelta import; line 6: deprecated declarative_base; confirmed/is_confirmed modeled as Integer flag."},
+    {"path": "pyproject.toml", "note": "Mixed poetry-core build backend with PEP 621 [project] + [tool.poetry.scripts]; no package/path or pytest pythonpath config; unused pydantic-settings dependency."},
+    {"path": "tests/test_service.py", "note": "16 tests pass; assert real domain state (reserved counts, expiry releasing stock, CANCELLED on cancel-of-confirmed); unused db fixture at lines 15-23."}
+  ],
+  "commands_run": [
+    "find . -type f (excluding caches) — listed 11 project files",
+    "python3 -c import fastapi/sqlalchemy/pydantic/httpx/pytest — confirmed fastapi 0.109.0, sqlalchemy 2.0.23, pydantic 2.5.3, pytest 7.4.3 available",
+    "PYTHONPATH=src python3 -m pytest tests/ -v — 13 failed, 18 passed",
+    "ls -la *.db — confirmed test.db (57344 bytes) created in workspace",
+    "PYTHONPATH=src python3 -c '<TestClient end-to-end smoke>' — health/sku/stock/reservation/confirm/list all 200; missing-key 422"
+  ],
+  "review_risk": "low — all source and tests were read, the declared test command and a direct end-to-end smoke test were run with dependencies present; only the packaging install path (pip install -e .) was not exercised, so installability is judged from pyproject inspection rather than a real install."
+}
+```

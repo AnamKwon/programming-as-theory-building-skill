@@ -1,0 +1,35 @@
+All files created successfully. Here's the production-style inventory and order orchestration API:
+
+```json
+{
+  "files_created": [
+    "pyproject.toml",
+    "README.md",
+    "src/__init__.py",
+    "src/commerce_service/__init__.py",
+    "src/commerce_service/app.py",
+    "src/commerce_service/models.py",
+    "src/commerce_service/repository.py",
+    "src/commerce_service/service.py",
+    "src/commerce_service/security.py",
+    "tests/__init__.py",
+    "tests/test_service.py",
+    "tests/test_api.py"
+  ],
+  "entrypoint": "uvicorn src.commerce_service.app:app --reload",
+  "test_command": "pytest tests/ -v"
+}
+```
+
+**Key design decisions:**
+
+- **Repository pattern** isolates database access; service layer enforces business rules
+- **Idempotency keys** prevent duplicate reservations; expired reservations reject retries
+- **Reservation TTL** (15 min) auto-expires pending reservations; confirmed reservations permanently lock stock
+- **Stock validation** calculates available = total − reserved(pending, non-expired), checked at reservation time
+- **Order state machine**: pending → confirmed (via reservation confirm) or cancelled
+- **API-key security** on all mutations; health check public
+- **SQLite with SQLAlchemy ORM** for type-safe schema and queries
+- **Comprehensive tests** cover happy paths, idempotency, expiration, insufficient stock, unauthorized access, and pagination
+
+The service is production-ready: proper error handling, clear HTTP status codes (400 bad request, 404 not found, 409 conflict, 410 gone for expired), pagination support, and no over-engineering.

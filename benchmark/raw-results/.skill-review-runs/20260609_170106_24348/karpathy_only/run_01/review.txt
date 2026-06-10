@@ -1,0 +1,164 @@
+I have enough evidence. Confirmed: all 32 tests pass, dependencies install cleanly, and the core inventory-reservation invariant is broken — two pending reservations of 80 each against stock=100 both succeed, then both confirm, driving stock to **-60**. Reservations don't actually hold inventory.
+
+```json
+{
+  "rubric_version": "benchmark-codegen-review-v1",
+  "score_scale": "0-100 per category",
+  "weights": {
+    "task_fulfillment": 0.20,
+    "functional_correctness": 0.25,
+    "executability": 0.15,
+    "test_quality": 0.15,
+    "code_quality": 0.10,
+    "minimality": 0.10,
+    "security_safety": 0.05
+  },
+  "task_fulfillment_score": 85,
+  "task_fulfillment_breakdown": {
+    "instruction_compliance": 85,
+    "required_artifacts": 95,
+    "feature_coverage": 88,
+    "constraint_adherence": 72
+  },
+  "functional_correctness_score": 61,
+  "functional_correctness_breakdown": {
+    "domain_invariants": 40,
+    "edge_case_behavior": 62,
+    "data_consistency": 55,
+    "error_semantics": 85
+  },
+  "executability_score": 88,
+  "executability_breakdown": {
+    "installability": 95,
+    "runtime_entrypoints": 88,
+    "command_result": 95,
+    "runtime_isolation": 75
+  },
+  "test_quality_score": 86,
+  "test_quality_breakdown": {
+    "required_test_coverage": 90,
+    "behavioral_assertions": 75,
+    "integration_realism": 88,
+    "repeatability": 92
+  },
+  "code_quality_score": 83,
+  "code_quality_breakdown": {
+    "readability": 88,
+    "maintainability": 80,
+    "boundary_design": 90,
+    "documentation_quality": 72
+  },
+  "minimality_score": 81,
+  "minimality_breakdown": {
+    "no_speculative_infrastructure": 92,
+    "no_dead_or_duplicate_code": 68,
+    "appropriate_abstractions": 85,
+    "dependency_minimality": 80
+  },
+  "security_safety_score": 85,
+  "security_safety_breakdown": {
+    "auth_enforcement": 92,
+    "secret_handling": 70,
+    "input_safety": 82,
+    "unsafe_operations": 95
+  },
+  "review_confidence_score": 93,
+  "review_confidence_breakdown": {
+    "inspection_depth": 95,
+    "command_evidence": 95,
+    "issue_specificity": 92,
+    "uncertainty_handling": 88
+  },
+  "weighted_components": {
+    "task_fulfillment": 17.0,
+    "functional_correctness": 15.3,
+    "executability": 13.2,
+    "test_quality": 12.9,
+    "code_quality": 8.3,
+    "minimality": 8.1,
+    "security_safety": 4.3
+  },
+  "weighted_total": 79.0,
+  "verdict": "good",
+  "key_findings": [
+    "CRITICAL domain flaw: reservations do not hold inventory. create_reservation (service.py:52-59) checks only raw sku.quantity and never accounts for outstanding PENDING reservations; stock is decremented only at confirm (service.py:97). Reproduced overselling: two pending reservations of 80 against stock=100 both succeed, both confirm, leaving stock=-60.",
+    "All 32 tests pass and dependencies are available (fastapi/sqlalchemy/pydantic/httpx/pytest all importable); suite runs in ~0.7s.",
+    "Full requested API surface implemented: SKU create/adjust, reservations with idempotency, confirm->order, cancel, order get/list with cursor pagination, API-key auth, health.",
+    "confirm_reservation performs three independent commits (status, order, stock) with no atomic transaction (service.py:87-97), risking partial-failure inconsistency.",
+    "adjust_stock has no non-negative floor, so stock can be driven negative directly (service.py:37-38, repository.py:27).",
+    "Workspace ships ambient artifacts: a committed commerce.db and src/commerce_service.egg-info, and app.py creates ./commerce.db at import time (app.py:20-24)."
+  ],
+  "score_rationale": {
+    "task_fulfillment": "All requested files and the full endpoint surface are present and match the README contract. Docked mainly on constraint adherence: leftover commerce.db and egg-info violate a clean fresh-workspace expectation, and the central reservation feature is only nominally delivered.",
+    "functional_correctness": "Error semantics and state transitions for confirm/cancel/expire are correct, but the core inventory-reservation invariant is violated (overselling to negative stock, reproduced), and confirm lacks transactional atomicity. This is the dominant deduction.",
+    "executability": "Installable, importable, and the test command passes cleanly. Reduced for runtime isolation: app import has a DB-creation side effect against a hardcoded ./commerce.db and the workspace contains generated state.",
+    "test_quality": "Strong coverage across happy/insufficient/idempotency/expiry/auth/pagination with behavioral assertions (stock deduction, statuses, ids) and isolated in-memory/temp DBs. Gap: no test exercises the multi-reservation oversell path, so the broken invariant goes unnoticed.",
+    "code_quality": "Clean repository/service/schema/security separation and readable names. Docked for the README's false 'Hold inventory' claim and sparse docstrings, plus the reservation rule not being visible/localized.",
+    "minimality": "No speculative infra. Docked for dead code: unused imports (UUID in models.py:4, and_ in repository.py:4, contextmanager in app.py:2, Depends in security.py:1), unused OrderStatus.FULFILLED/CANCELLED and update_order_status, and pytest-asyncio with no async tests.",
+    "security_safety": "Auth dependency is enforced on every mutating and read endpoint; inputs are validated via pydantic bounds and ORM queries are parameterized. Docked for a hardcoded API key set with no env/config mechanism and an uncapped pagination limit.",
+    "review_confidence": "All source and test files read, full suite executed, and the oversell defect reproduced directly via a script; limitations are minor."
+  },
+  "instruction_failures": [
+    "Fresh-workspace expectation undermined: commerce.db and src/commerce_service.egg-info are present in the delivered tree.",
+    "README claims reservations 'Hold inventory', which the implementation does not do."
+  ],
+  "correctness_failures": [
+    "Overselling: concurrent/multiple PENDING reservations are not bounded by available stock; confirming them drives SKU quantity negative (demonstrated: stock 100 -> -60).",
+    "Availability check ignores outstanding reservations and never re-validates stock at confirm time (service.py:72-99).",
+    "confirm_reservation is non-atomic: separate commits for reservation status, order creation, and stock decrement can leave a CONFIRMED reservation without a matching stock decrement on partial failure.",
+    "adjust_stock allows stock to go negative (no >=0 enforcement).",
+    "Idempotent retry with a different quantity silently returns the original reservation and ignores the new payload (test_service.py:81-86 asserts this)."
+  ],
+  "execution_failures": [
+    "app.py executes Base.metadata.create_all and opens an engine against hardcoded sqlite:///./commerce.db at import time, creating a file in the cwd as a side effect of importing the module."
+  ],
+  "test_gaps": [
+    "No test for the oversell scenario (multiple pending reservations exceeding stock), which is exactly the broken invariant.",
+    "No test that expired/cancelled reservations release or never held stock.",
+    "No test for non-atomic confirm partial-failure behavior.",
+    "No test for invalid/negative/oversized pagination limit or malformed cursor handling.",
+    "No assertion that adjust_stock should reject driving quantity below zero."
+  ],
+  "quality_notes": [
+    "Clear layering: models (ORM + pydantic), repository (persistence), service (rules), security (auth), app (routing).",
+    "RESERVATION_TTL_SECONDS constant centralizes expiry; status enums are clean.",
+    "README slightly overstates behavior ('Hold inventory') and configuration ('Pass a custom api_key header' implies configurability that does not exist).",
+    "datetime.utcnow() used throughout (deprecation warnings); acceptable but dated."
+  ],
+  "unnecessary_code_examples": [
+    "models.py:4 `from uuid import UUID` is unused.",
+    "repository.py:4 `from sqlalchemy import and_` is unused.",
+    "app.py:2 `from contextlib import contextmanager` is unused.",
+    "security.py:1 imports `Depends` which is unused.",
+    "OrderStatus.FULFILLED and OrderStatus.CANCELLED are never assigned; orders only ever hold PENDING.",
+    "repository.update_order_status is never called anywhere.",
+    "pytest-asyncio dependency + asyncio_mode=auto with no async tests."
+  ],
+  "security_safety_notes": [
+    "verify_api_key (security.py) is required on all mutating and read endpoints — good enforcement.",
+    "API key is a hardcoded set {\"test-api-key-123\"} in source with no env/config override; inflexible though not a real secret leak.",
+    "Pydantic field bounds validate inputs and SQLAlchemy ORM avoids SQL injection.",
+    "Pagination limit is not capped, allowing arbitrarily large result requests.",
+    "403 returned for missing key (401 would be more conventional for absent credentials)."
+  ],
+  "file_evidence": [
+    {"path": "src/commerce_service/service.py", "note": "create_reservation (52-59) checks raw stock only; stock decremented at confirm (97); no reservation hold -> overselling. Three non-atomic commits in confirm (87-97)."},
+    {"path": "src/commerce_service/repository.py", "note": "update_stock (23-29) adds adjustment with no >=0 floor; keyset pagination in list_orders (96-128) is correct; unused `and_` import (4)."},
+    {"path": "src/commerce_service/app.py", "note": "DATABASE_URL hardcoded to ./commerce.db and create_all run at import (20-24); endpoints map exceptions to 400/404/409/410; unused contextmanager import (2)."},
+    {"path": "src/commerce_service/security.py", "note": "Hardcoded VALID_API_KEYS set; verify_api_key enforced via Depends on all endpoints; unused Depends import (1)."},
+    {"path": "src/commerce_service/models.py", "note": "ORM + pydantic schemas; OrderStatus.FULFILLED/CANCELLED unused; unused UUID import (4)."},
+    {"path": "tests/test_service.py", "note": "Service-level coverage incl. idempotency-different-quantity asserting silent-ignore (81-86); no oversell test."},
+    {"path": "tests/test_api.py", "note": "TestClient integration with temp-file SQLite and get_db override; covers auth, pagination, confirm; isolated and repeatable."},
+    {"path": "commerce.db", "note": "Committed SQLite artifact present in workspace (ambient state)."},
+    {"path": "src/commerce_service.egg-info/", "note": "Generated packaging metadata left in the tree."}
+  ],
+  "commands_run": [
+    "ls -la and find . (project structure)",
+    "python3 -c 'import fastapi, sqlalchemy, pydantic, httpx, pytest' (deps available)",
+    "PYTHONPATH=src python3 -m pytest -q (32 passed)",
+    "grep for unused imports (UUID, and_, contextmanager, Depends)",
+    "PYTHONPATH=src python3 -c '<oversell repro>' (final stock = -60)"
+  ],
+  "review_risk": "low — all source and tests were read, the full suite was executed (32 passed), and the overselling defect was reproduced directly; only multi-process/true-concurrency behavior was not exercised, but the flaw manifests single-threaded."
+}
+```

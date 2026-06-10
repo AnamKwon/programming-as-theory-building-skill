@@ -1,0 +1,32 @@
+Perfect! I've successfully created a production-style inventory reservation and order orchestration API. All 36 tests pass. Here's the summary:
+
+```json
+{
+  "files_created": [
+    "pyproject.toml",
+    "README.md",
+    "src/commerce_service/__init__.py",
+    "src/commerce_service/app.py",
+    "src/commerce_service/models.py",
+    "src/commerce_service/repository.py",
+    "src/commerce_service/service.py",
+    "src/commerce_service/security.py",
+    "tests/__init__.py",
+    "tests/test_api.py",
+    "tests/test_service.py"
+  ],
+  "entrypoint": "commerce_service.app:app",
+  "test_command": "pytest tests/ -v"
+}
+```
+
+**Theory**: SKU stock reservations flow through three states (CREATED→CONFIRMED→terminal) with automatic expiration. The service layer enforces all domain rules (stock validation, state transitions, idempotency keys). The repository pattern isolates SQLite access. Pydantic validation happens at the HTTP boundary only.
+
+**Design highlights**:
+- **API Key Security**: Mutation endpoints require `X-API-Key` header validation
+- **Idempotency**: Reservation creation via idempotency keys prevents duplicate holds
+- **Reservation Expiration**: 15-minute default TTL with explicit checks before confirmation
+- **Repository Pattern**: Clean SQLite boundary with direct SQL, no ORM overhead
+- **Service Layer**: All business logic (stock checks, state transitions, expiration) centralized
+- **Pagination**: Order lookup supports limit/offset parameters
+- **Comprehensive Tests**: 36 tests covering happy paths, error cases, idempotency, expiration, and authorization

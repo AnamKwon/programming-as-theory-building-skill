@@ -1,0 +1,34 @@
+All files created successfully. Here's the project structure:
+
+```
+workspace/
+├── pyproject.toml
+├── README.md
+├── src/
+│   └── commerce_service/
+│       ├── __init__.py
+│       ├── app.py              (FastAPI application)
+│       ├── models.py           (Pydantic schemas)
+│       ├── repository.py       (SQLite data access)
+│       ├── service.py          (Business logic)
+│       └── security.py         (API key validation)
+└── tests/
+    ├── __init__.py
+    ├── test_service.py         (Service layer tests)
+    └── test_api.py             (API endpoint tests)
+```
+
+The service includes:
+- **Endpoints**: Health check, SKU creation, stock adjustment, reservation creation/confirmation/cancellation, order lookup with pagination
+- **Business rules**: Stock validation, idempotency keys, 30-minute reservation expiry, state transitions (reserved → confirmed → completed/cancelled)
+- **Security**: API key validation on all mutations (dev-key-123, test-key-456)
+- **Persistence**: SQLite with Repository pattern
+- **Tests**: 15+ test cases covering happy paths, error cases, idempotency, expiration, pagination, and authorization
+
+```json
+{
+  "files_created": 11,
+  "entrypoint": "python -m uvicorn commerce_service.app:app --reload",
+  "test_command": "pytest"
+}
+```

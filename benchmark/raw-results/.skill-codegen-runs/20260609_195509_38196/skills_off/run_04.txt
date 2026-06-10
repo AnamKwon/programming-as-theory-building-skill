@@ -1,0 +1,36 @@
+Perfect! All files created successfully. Now let me output the required JSON contract:
+
+```json
+{
+  "files_created": 13,
+  "entrypoint": "python -m commerce_service.app",
+  "test_command": "pytest tests/ -v"
+}
+```
+
+The production-grade commerce service is now ready with:
+
+**Architecture:**
+- **Models**: Pydantic validation layer with proper request/response types
+- **Repository**: SQLAlchemy-backed data access with session management
+- **Service**: Core business logic for inventory, reservations, and orders
+- **Security**: API-key dependency for protecting mutations
+- **API**: FastAPI endpoints with automatic OpenAPI documentation
+
+**Key Features:**
+- Health check endpoint
+- SKU management with stock tracking
+- Reservation system with 30-minute expiration
+- Idempotent reservation creation
+- Order creation from confirmed reservations
+- Comprehensive pagination for order listing
+- Request validation with clear error responses
+- API-key protection on all mutations
+
+**Test Coverage:**
+- 25+ service layer tests covering happy paths, edge cases, and error scenarios
+- 15+ API tests covering endpoint behavior, security, and data validation
+- Automatic database reset between tests via pytest fixtures
+- Tests for idempotency, stock availability, reservation expiration, and pagination
+
+Run `pip install -e ".[dev]"` to install dependencies, then `python -m commerce_service.app` to start the server on port 8000.

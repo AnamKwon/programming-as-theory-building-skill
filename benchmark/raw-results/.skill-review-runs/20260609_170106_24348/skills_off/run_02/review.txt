@@ -1,0 +1,164 @@
+I've completed a thorough review. Let me compile the findings.
+
+**Summary of verification:**
+- All 6 source files + 2 test files read.
+- Dependencies present; ran the declared `pytest` command.
+- Result: **15 passed, 14 failed, 14 errors**. Service-level domain tests pass (10/11); the one service failure (`test_reservation_expiration`, `assert -10 == 0`) exposes that `release_inventory` has no negative-floor guard. All DB-touching API tests fail/error because the API test fixture uses `sqlite:///:memory:` without `StaticPool`/`check_same_thread=False`, so TestClient's worker thread can't see the schema.
+- App import creates `commerce.db` in the working directory (side effect). I cleaned the artifacts I generated; I did not modify project files.
+- `python-dotenv` is declared but never imported; `ReservationStatus.COMPLETED` is defined but never reached (README claims a `...→COMPLETED` lifecycle the code never sets); `Repository.rollback()` is unused.
+
+```json
+{
+  "rubric_version": "benchmark-codegen-review-v1",
+  "score_scale": "0-100 per category",
+  "weights": {
+    "task_fulfillment": 0.20,
+    "functional_correctness": 0.25,
+    "executability": 0.15,
+    "test_quality": 0.15,
+    "code_quality": 0.10,
+    "minimality": 0.10,
+    "security_safety": 0.05
+  },
+  "task_fulfillment_score": 86,
+  "task_fulfillment_breakdown": {
+    "instruction_compliance": 85,
+    "required_artifacts": 95,
+    "feature_coverage": 88,
+    "constraint_adherence": 75
+  },
+  "functional_correctness_score": 80,
+  "functional_correctness_breakdown": {
+    "domain_invariants": 78,
+    "edge_case_behavior": 76,
+    "data_consistency": 80,
+    "error_semantics": 86
+  },
+  "executability_score": 66,
+  "executability_breakdown": {
+    "installability": 88,
+    "runtime_entrypoints": 85,
+    "command_result": 25,
+    "runtime_isolation": 68
+  },
+  "test_quality_score": 62,
+  "test_quality_breakdown": {
+    "required_test_coverage": 85,
+    "behavioral_assertions": 82,
+    "integration_realism": 50,
+    "repeatability": 30
+  },
+  "code_quality_score": 84,
+  "code_quality_breakdown": {
+    "readability": 88,
+    "maintainability": 82,
+    "boundary_design": 88,
+    "documentation_quality": 78
+  },
+  "minimality_score": 76,
+  "minimality_breakdown": {
+    "no_speculative_infrastructure": 82,
+    "no_dead_or_duplicate_code": 68,
+    "appropriate_abstractions": 85,
+    "dependency_minimality": 68
+  },
+  "security_safety_score": 86,
+  "security_safety_breakdown": {
+    "auth_enforcement": 92,
+    "secret_handling": 70,
+    "input_safety": 85,
+    "unsafe_operations": 95
+  },
+  "review_confidence_score": 91,
+  "review_confidence_breakdown": {
+    "inspection_depth": 95,
+    "command_evidence": 92,
+    "issue_specificity": 90,
+    "uncertainty_handling": 88
+  },
+  "weighted_components": {
+    "task_fulfillment": 17.2,
+    "functional_correctness": 20.0,
+    "executability": 9.9,
+    "test_quality": 9.3,
+    "code_quality": 8.4,
+    "minimality": 7.6,
+    "security_safety": 4.3
+  },
+  "weighted_total": 76.7,
+  "verdict": "good",
+  "key_findings": [
+    "Clean layered architecture (models/repository/service/security/app) with all requested features: SKU CRUD, stock adjustment, reservations with TTL expiration and idempotency, confirm/cancel lifecycle, order pagination, and API-key auth on every mutating endpoint.",
+    "Declared test command fails badly: 15 passed, 14 failed, 14 errors. All DB-touching API tests break because tests/test_api.py:17 uses sqlite:///:memory: without StaticPool/check_same_thread, so the TestClient worker thread sees no schema ('no such table' / cross-thread errors).",
+    "Domain logic itself is largely correct: service-level tests pass 10/11, and the reservation/confirm/cancel inventory accounting is coherent (available decremented at reserve, reserved cleared at confirm).",
+    "test_service.py::test_reservation_expiration fails (assert -10 == 0): the test bypasses reserve, but it exposes that release_inventory (repository.py:59) decrements 'reserved' with no zero floor, so a mis-sequenced release drives inventory negative.",
+    "Borderline good/mixed: the production app runs, but the shipped test suite does not pass out of the box and needs a fixture fix.",
+    "Minor dead weight: python-dotenv dependency unused, ReservationStatus.COMPLETED never set (contradicts README lifecycle), Repository.rollback() unused."
+  ],
+  "score_rationale": {
+    "task_fulfillment": "All requested artifacts and endpoints exist (pyproject, README, src package, tests; health, SKUs, inventory, reservations, orders). Constraint adherence dinged because app.py:31 initializes a file DB (commerce.db) in the working directory at import time as a side effect.",
+    "functional_correctness": "Normal-flow invariants (stock availability, idempotent retry returning the same reservation, lazy expiration with release, confirm creating a CONFIRMED order) hold and are proven by passing service tests. Subtracted for the unguarded negative release (repository.py:59-66), adjust_stock allowing available to go negative (repository.py:42-48), and README's claimed COMPLETED state never being reached.",
+    "executability": "Pinned deps and hatchling packaging are plausible; uvicorn commerce_service.app:app entrypoint is valid. Heavily penalized because the declared `pytest` command produces 14 failures + 14 errors, and import-time creation of commerce.db reduces runtime isolation.",
+    "test_quality": "Coverage intent is strong (happy path, insufficient stock, idempotency, expiration, auth, pagination, behavioral inventory assertions). But the API integration tier is non-functional due to a misconfigured in-memory SQLite fixture, and one service test fails, so repeatability and integration realism collapse.",
+    "code_quality": "Readable, well-separated modules with clear naming and consistent error mapping. Docs are accurate except the COMPLETED lifecycle claim. Maintainability good; invariants are centralized in the service.",
+    "minimality": "No speculative queues/workers/CLIs/migrations. Subtracted for an unused dependency (python-dotenv), an unused enum value (COMPLETED), an unused Repository.rollback(), and the redundant order PENDING->CONFIRMED double-write in confirm_reservation (service.py:136-142).",
+    "security_safety": "All POST/PATCH/DELETE endpoints depend on verify_api_key; pydantic validates price>0 and quantity>0. Subtracted for a hardcoded default API key fallback 'test-key-123' (security.py:10) that silently enables auth if API_KEY is unset.",
+    "review_confidence": "Read every source and test file and executed the declared test command, capturing concrete pass/fail counts and root causes; low residual uncertainty."
+  },
+  "instruction_failures": [
+    "README.md:53 documents a PENDING -> CONFIRMED -> COMPLETED reservation lifecycle, but the code never transitions any reservation to COMPLETED (grep confirms COMPLETED only at its definition in models.py:15).",
+    "app.py:31 writes a commerce.db file into the working directory at import time, a runtime side effect not requested by a 'fresh workspace' production-minded brief."
+  ],
+  "correctness_failures": [
+    "repository.py:59-66 release_inventory decrements 'reserved' with no zero floor; the expiration-release path can drive reserved negative (surfaced by test_reservation_expiration failing assert -10 == 0).",
+    "repository.py:42-48 adjust_inventory permits negative 'available' (no guard against over-subtraction).",
+    "Idempotent create_reservation (service.py:67-70) returns the prior reservation by key without verifying the new request's sku_id/quantity match, so a reused key with different parameters silently returns the old reservation."
+  ],
+  "execution_failures": [
+    "`pytest` reports 14 failed, 15 passed, 14 errors: every API test that touches the DB fails with sqlalchemy OperationalError 'no such table' / cross-thread sqlite3.ProgrammingError.",
+    "Root cause: tests/test_api.py:17 create_engine('sqlite:///:memory:') lacks StaticPool and check_same_thread=False, so Starlette's TestClient worker thread gets a separate empty in-memory database.",
+    "tests/test_service.py::test_reservation_expiration fails (assert -10 == 0) — the test creates a reservation via repo without reserving stock, then expects release to net to zero."
+  ],
+  "test_gaps": [
+    "API integration tests are effectively non-executing, so the HTTP status-code contract (409 insufficient stock, 410 expired, 403 unauthorized, 400 pagination) is unverified end-to-end despite being written.",
+    "No test for confirming an already-confirmed/cancelled reservation (the ValueError -> 409 branch in service.py:117-120 and 150-153).",
+    "No test for the expired-then-confirm path (410 on confirm) or for reusing an idempotency key with mismatched quantity.",
+    "No test asserting behavior when adjust_stock pushes available negative."
+  ],
+  "quality_notes": [
+    "confirm_reservation creates an order as PENDING then immediately updates it to CONFIRMED (service.py:136-142) — a redundant write; the order could be created in its terminal state.",
+    "create_sku endpoint wraps everything in `except Exception -> 400` (app.py:63-67), which can mask unexpected server errors as client errors.",
+    "AdjustStockRequest carries sku_id in the body (models.py:95) while the endpoint uses the path parameter (app.py:101-109), so the body field is ignored — a minor contract ambiguity.",
+    "datetime.utcnow() is used throughout and is deprecated on Python 3.12 (warnings emitted)."
+  ],
+  "unnecessary_code_examples": [
+    "python-dotenv declared in pyproject.toml:14 but never imported anywhere.",
+    "ReservationStatus.COMPLETED (models.py:15) is defined but never assigned.",
+    "Repository.rollback() (repository.py:162-163) is never called.",
+    "Repository.confirm_inventory return value and parts of OrderStatus are lightly used; the PENDING order status is transient and immediately overwritten."
+  ],
+  "security_safety_notes": [
+    "verify_api_key is correctly required on all mutating endpoints (POST /skus, PATCH /inventory, POST/POST-confirm/DELETE reservations); read endpoints are open, which is reasonable.",
+    "security.py:10 falls back to a hardcoded default key 'test-key-123' when API_KEY is unset, so a deployment that forgets to set API_KEY ships with a known credential rather than failing closed.",
+    "Inputs are validated via pydantic (price gt=0, quantity gt=0, sku id min_length=1); no shell/file/network injection surface and SQLAlchemy ORM avoids SQL injection."
+  ],
+  "file_evidence": [
+    {"path": "tests/test_api.py", "note": "Line 17 in-memory engine without StaticPool/check_same_thread causes all 14 DB-touching API tests to fail/error under TestClient threading."},
+    {"path": "tests/test_service.py", "note": "test_reservation_expiration (lines 129-147) fails assert -10 == 0, exposing unguarded reserved decrement."},
+    {"path": "src/commerce_service/repository.py", "note": "release_inventory (59-66) and adjust_inventory (42-48) lack non-negativity guards."},
+    {"path": "src/commerce_service/service.py", "note": "Correct reserve/confirm/cancel accounting and lazy expiration (63-161); idempotency returns prior reservation without param match (67-70)."},
+    {"path": "src/commerce_service/security.py", "note": "Auth enforced via APIKeyHeader; hardcoded default key 'test-key-123' fallback at line 10."},
+    {"path": "src/commerce_service/app.py", "note": "Mutating endpoints depend on verify_api_key; import-time init_db() writes commerce.db to cwd (line 31)."},
+    {"path": "pyproject.toml", "note": "python-dotenv dependency (line 14) is unused; deps otherwise pinned and plausible."},
+    {"path": "README.md", "note": "Claims PENDING->CONFIRMED->COMPLETED lifecycle (line 53) that the code never realizes."}
+  ],
+  "commands_run": [
+    "find . -type f (excluding caches) to enumerate project files",
+    "python3 -c 'import fastapi, sqlalchemy, pydantic, httpx' and python3 --version (deps present, Python 3.12.4)",
+    "PYTHONPATH=src python3 -m pytest -q (full suite: 14 failed, 15 passed, 14 errors)",
+    "PYTHONPATH=src python3 -m pytest tests/test_service.py --tb=line (10 passed, 1 failed)",
+    "grep -rn for dotenv / COMPLETED / rollback usage (confirmed unused/never-set)"
+  ],
+  "review_risk": "low — all source and test files were read and the declared pytest command was executed with results captured; deps were already installed so no pip install was performed, and runtime behavior under a real file-based DB was inferred from code rather than a live server run."
+}
+```

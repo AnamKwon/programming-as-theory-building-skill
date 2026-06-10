@@ -1,0 +1,157 @@
+I have enough evidence. I inspected all source/test files and ran the suite (11 failed, 24 passed) confirming the root-cause auth bug. Here is the evaluation.
+
+```json
+{
+  "rubric_version": "benchmark-codegen-review-v1",
+  "score_scale": "0-100 per category",
+  "weights": {
+    "task_fulfillment": 0.20,
+    "functional_correctness": 0.25,
+    "executability": 0.15,
+    "test_quality": 0.15,
+    "code_quality": 0.10,
+    "minimality": 0.10,
+    "security_safety": 0.05
+  },
+  "task_fulfillment_score": 77,
+  "task_fulfillment_breakdown": {
+    "instruction_compliance": 70,
+    "required_artifacts": 95,
+    "feature_coverage": 62,
+    "constraint_adherence": 82
+  },
+  "functional_correctness_score": 52,
+  "functional_correctness_breakdown": {
+    "domain_invariants": 58,
+    "edge_case_behavior": 50,
+    "data_consistency": 40,
+    "error_semantics": 60
+  },
+  "executability_score": 66,
+  "executability_breakdown": {
+    "installability": 65,
+    "runtime_entrypoints": 85,
+    "command_result": 35,
+    "runtime_isolation": 80
+  },
+  "test_quality_score": 82,
+  "test_quality_breakdown": {
+    "required_test_coverage": 90,
+    "behavioral_assertions": 88,
+    "integration_realism": 85,
+    "repeatability": 85
+  },
+  "code_quality_score": 72,
+  "code_quality_breakdown": {
+    "readability": 82,
+    "maintainability": 73,
+    "boundary_design": 75,
+    "documentation_quality": 58
+  },
+  "minimality_score": 79,
+  "minimality_breakdown": {
+    "no_speculative_infrastructure": 88,
+    "no_dead_or_duplicate_code": 62,
+    "appropriate_abstractions": 85,
+    "dependency_minimality": 80
+  },
+  "security_safety_score": 73,
+  "security_safety_breakdown": {
+    "auth_enforcement": 50,
+    "secret_handling": 60,
+    "input_safety": 88,
+    "unsafe_operations": 95
+  },
+  "review_confidence_score": 91,
+  "review_confidence_breakdown": {
+    "inspection_depth": 95,
+    "command_evidence": 92,
+    "issue_specificity": 92,
+    "uncertainty_handling": 85
+  },
+  "weighted_components": {
+    "task_fulfillment": 15.4,
+    "functional_correctness": 13.0,
+    "executability": 9.9,
+    "test_quality": 12.3,
+    "code_quality": 7.2,
+    "minimality": 7.9,
+    "security_safety": 3.7
+  },
+  "weighted_total": 69.4,
+  "verdict": "mixed",
+  "key_findings": [
+    "CRITICAL: every mutating endpoint returns 403 even with a valid X-API-Key. security.py:9 declares `verify_api_key(api_key: str = None)` with no `Security(api_key_header)`, so FastAPI binds `api_key` to a query parameter (always None) and the dependency always raises 'Missing API key'. The route's own `Depends(api_key_header)` enforces header presence but never validates the value against VALID_API_KEYS. The HTTP mutation surface is non-functional.",
+    "Running `pytest tests/` yields 11 failed / 24 passed: all API-level happy-path mutation tests fail with 403, and downstream GET/pagination tests fail with KeyError because order creation 403s. The generated tests were evidently never executed.",
+    "The service/business layer is correct and fully green (test_service.py 100% pass): stock checked before deduction, idempotency short-circuit, expiry handling, cancel restores stock.",
+    "Data-consistency gap: each repository method opens its own connection/commit, so create_reservation's stock decrement (service.py:74) and the reservation INSERT (repository.py:167) are separate transactions — no atomicity, and the idempotency read-then-write is a TOCTOU window.",
+    "adjust_stock persists a negative balance before validation: repository.adjust_stock (repository.py:89) commits `stock = stock + ?` and only afterward does service.py:34 check `new_stock < 0` and raise 400 — the negative stock is already saved.",
+    "Order state transitions documented in README (pending → confirmed/cancelled) are not implemented anywhere; orders remain 'pending' permanently and confirming/cancelling reservations does not touch order status."
+  ],
+  "score_rationale": {
+    "task_fulfillment": "All requested files and the layered structure exist and most endpoints are present, but the documented working auth contract is broken and order state transitions are unimplemented, so feature coverage is materially incomplete.",
+    "functional_correctness": "Service-layer invariants hold and are tested, but the integration surface is non-functional (403 on all mutations), stock-adjust persists negative balances, expired reservations never release stock, and per-statement connections give no transactional atomicity.",
+    "executability": "App imports and the uvicorn entrypoint are valid and tests are isolated via a temp DB, but 11/35 tests fail on real product bugs (not environment), and hatchling packaging of the src/ layout is configured without explicit package discovery, a likely `pip install -e` risk (not verified).",
+    "test_quality": "Test design is strong: covers happy paths, insufficient stock, idempotency, expiration, auth, and pagination at both service and API levels with behavioral assertions (stock==70, restored==100). Docked because the suite ships failing and was clearly not run.",
+    "code_quality": "Clean module boundaries and readable code, but `import sqlite3` is placed at the bottom of service.py (service.py:141) while referenced at service.py:19, IntegrityError handling is duplicated in app and service, and the README overstates working behavior.",
+    "minimality": "Lean dependency set and no speculative infrastructure, but there is dead/duplicate code: unused `OrderStatus` import in service.py, duplicated IntegrityError try/except in app.py and service.py, and unused `api_key` route parameters.",
+    "security_safety": "Inputs are validated by Pydantic and SQL is fully parameterized (no injection), but auth validation logic is broken (locks out valid keys / never validates the header value) and API keys are hardcoded with no env override.",
+    "review_confidence": "All source and test files were read and the test suite was executed locally with the failures' root cause confirmed; the only unverified item is the hatchling editable-install build."
+  },
+  "instruction_failures": [
+    "Mutating endpoints do not function with a valid API key, violating the working-API output contract.",
+    "Documented order state transitions (pending → confirmed/cancelled) are not implemented.",
+    "README claims header-based API-key validation works, but no code path validates the header value against VALID_API_KEYS."
+  ],
+  "correctness_failures": [
+    "security.py:9 — verify_api_key reads `api_key` as a query param (default None), so all mutating routes return 403 'Missing API key' regardless of the X-API-Key header. Confirmed by pytest: test_create_sku_success and test_create_order assert 201 but get 403.",
+    "repository.py:85-95 + service.py:34 — adjust_stock commits the decrement before the negative-balance check, persisting negative stock when a 400 is raised.",
+    "service.py:74 vs repository.py:167 — stock decrement and reservation INSERT run in separate connections/commits; a failed INSERT leaves stock decremented with no reservation.",
+    "Expired reservations (service.py:99-105) are marked 'expired' but their reserved stock is never released, leaking stock permanently."
+  ],
+  "execution_failures": [
+    "`python3 -m pytest tests/` → 11 failed, 24 passed. Failures: test_create_sku_success, test_create_sku_duplicate, test_adjust_stock_success, test_create_order, test_get_order, test_list_orders_pagination, test_create_reservation_success/insufficient_stock/idempotent, test_confirm_reservation_success, test_cancel_reservation_success.",
+    "Failures cascade: order/SKU creation 403s, so dependent GET tests raise KeyError: 'id'.",
+    "hatchling build in pyproject.toml lacks explicit package discovery for the src/ layout (no [tool.hatch.build.targets.wheel] packages); editable install may fail to locate commerce_service (unverified)."
+  ],
+  "test_gaps": [
+    "No test asserts that a failed/invalid stock adjustment does NOT persist negative stock (would have caught the adjust_stock bug).",
+    "No test exercises order state transitions (none exist to test, but the gap is undetected).",
+    "No test verifies expired reservations release reserved stock.",
+    "Auth tests only check the 403 (missing/invalid) cases; the valid-key success path is implicitly covered only by happy-path tests, all of which fail — the auth wiring bug should have been caught before shipping."
+  ],
+  "quality_notes": [
+    "service.py:141 places `import sqlite3` at module end though it is used at service.py:19 — works at runtime but is confusing and fragile.",
+    "IntegrityError handling is duplicated: service.create_sku already converts it to a 409 HTTPException, yet app.create_sku (app.py:37) wraps the same call in an identical try/except that can never trigger.",
+    "README documents behavior that does not hold (functional header auth, order state machine), reducing documentation trustworthiness.",
+    "Naive datetime.utcnow() throughout triggers deprecation warnings on Python 3.12."
+  ],
+  "unnecessary_code_examples": [
+    "service.py imports `OrderStatus` (service.py:8) but never uses it.",
+    "app.py:35-41 duplicate IntegrityError except block that is unreachable because service.create_sku already handles it.",
+    "Per-route `api_key: str = Depends(api_key_header)` parameters are bound but never used inside the handlers (auth is intended to run via the dependencies= list)."
+  ],
+  "security_safety_notes": [
+    "auth_enforcement: net effect locks out all callers (valid keys included) rather than enforcing correctly — the key value is never compared to VALID_API_KEYS.",
+    "API keys 'test-api-key'/'dev-api-key' are hardcoded in security.py:6 with no environment-variable override.",
+    "All SQL uses parameterized queries (repository.py) — no injection risk.",
+    "No shell, file-system, or network side effects beyond the local SQLite file."
+  ],
+  "file_evidence": [
+    {"path": "src/commerce_service/security.py", "note": "verify_api_key(api_key: str = None) missing Security(api_key_header) — root cause of universal 403 on mutations."},
+    {"path": "src/commerce_service/app.py", "note": "Routes wire dependencies=[Depends(verify_api_key)] plus an unused api_key=Depends(api_key_header) param; duplicate IntegrityError handler at lines 35-41."},
+    {"path": "src/commerce_service/service.py", "note": "Correct domain logic, but `import sqlite3` at line 141, unused OrderStatus import, and stock decrement not atomic with reservation insert."},
+    {"path": "src/commerce_service/repository.py", "note": "adjust_stock commits decrement before validation (line 89); each method uses its own connection so multi-step ops are non-transactional."},
+    {"path": "tests/test_api.py", "note": "Well-designed integration tests covering all required scenarios; 11 fail because of the auth bug."},
+    {"path": "tests/test_service.py", "note": "Service-level tests all pass, confirming business logic is sound in isolation."},
+    {"path": "pyproject.toml", "note": "Pinned deps and hatchling backend, but no explicit src/ package discovery configuration."}
+  ],
+  "commands_run": [
+    "find . -type f (excluding venv/cache) — listed 11 project files",
+    "python3 --version; python3 -c import fastapi/pydantic/pytest/httpx — confirmed fastapi 0.104.1, pydantic 2.5.0, pytest 7.4.4, httpx 0.25.2 available",
+    "python3 -m pytest tests/ -q — 11 failed, 24 passed",
+    "python3 -m pytest <two failing tests> — confirmed 403 vs expected 201 with valid X-API-Key header"
+  ],
+  "review_risk": "Low: all files were read and the full test suite was run locally with the root-cause auth failure confirmed; the only unverified item is whether `pip install -e .` succeeds given hatchling's src/ layout without explicit package discovery."
+}
+```

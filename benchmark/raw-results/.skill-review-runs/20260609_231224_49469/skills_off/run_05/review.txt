@@ -1,0 +1,154 @@
+I've completed inspection and run the test suite. Two confirmed defects break the API layer, while the pure service logic largely works. Here is the evaluation.
+
+```json
+{
+  "rubric_version": "benchmark-codegen-review-v1",
+  "score_scale": "0-100 per category",
+  "weights": {
+    "task_fulfillment": 0.20,
+    "functional_correctness": 0.25,
+    "executability": 0.15,
+    "test_quality": 0.15,
+    "code_quality": 0.10,
+    "minimality": 0.10,
+    "security_safety": 0.05
+  },
+  "task_fulfillment_score": 73,
+  "task_fulfillment_breakdown": {
+    "instruction_compliance": 70,
+    "required_artifacts": 90,
+    "feature_coverage": 68,
+    "constraint_adherence": 65
+  },
+  "functional_correctness_score": 39,
+  "functional_correctness_breakdown": {
+    "domain_invariants": 40,
+    "edge_case_behavior": 45,
+    "data_consistency": 45,
+    "error_semantics": 25
+  },
+  "executability_score": 55,
+  "executability_breakdown": {
+    "installability": 85,
+    "runtime_entrypoints": 60,
+    "command_result": 30,
+    "runtime_isolation": 45
+  },
+  "test_quality_score": 59,
+  "test_quality_breakdown": {
+    "required_test_coverage": 80,
+    "behavioral_assertions": 75,
+    "integration_realism": 40,
+    "repeatability": 40
+  },
+  "code_quality_score": 78,
+  "code_quality_breakdown": {
+    "readability": 85,
+    "maintainability": 70,
+    "boundary_design": 85,
+    "documentation_quality": 70
+  },
+  "minimality_score": 73,
+  "minimality_breakdown": {
+    "no_speculative_infrastructure": 85,
+    "no_dead_or_duplicate_code": 55,
+    "appropriate_abstractions": 80,
+    "dependency_minimality": 70
+  },
+  "security_safety_score": 71,
+  "security_safety_breakdown": {
+    "auth_enforcement": 75,
+    "secret_handling": 40,
+    "input_safety": 80,
+    "unsafe_operations": 90
+  },
+  "review_confidence_score": 92,
+  "review_confidence_breakdown": {
+    "inspection_depth": 95,
+    "command_evidence": 95,
+    "issue_specificity": 90,
+    "uncertainty_handling": 88
+  },
+  "weighted_components": {
+    "task_fulfillment": 14.6,
+    "functional_correctness": 9.8,
+    "executability": 8.3,
+    "test_quality": 8.9,
+    "code_quality": 7.8,
+    "minimality": 7.3,
+    "security_safety": 3.6
+  },
+  "weighted_total": 60.1,
+  "verdict": "mixed",
+  "key_findings": [
+    "Custom exception handler in app.py:196-201 returns a plain dict instead of a Response, so EVERY error path (401/403/404/409/410/400) crashes with 'TypeError: dict object is not callable' rather than returning a proper HTTP error. This is a real production bug, not just a test artifact.",
+    "Core inventory invariant is not enforced: create_reservation (service.py:55-90) checks stock_level >= quantity but never decrements stock, and confirm_reservation never decrements either. Stock is only changed by adjust_stock, so the same inventory can be reserved unlimited times — reservations do not actually 'reserve'.",
+    "Running the declared command `pytest` yields 12 failed, 14 passed. All 14 service-layer tests pass; all 12 API tests fail.",
+    "API tests are mis-wired for SQLite: the in-memory test engine lacks check_same_thread=False/StaticPool, producing 'no such table: skus' and cross-thread SQLite errors under TestClient. The API surface is effectively unverified.",
+    "API key is hardcoded as 'commerce-api-key-prod' in security.py:14 and ignores the API_KEY env var documented in README.md:77."
+  ],
+  "score_rationale": {
+    "task_fulfillment": "All requested artifacts and the full endpoint surface (SKUs, reservations, confirm/cancel, orders, health) exist with a clean layered structure. Points lost because the reservation feature is incomplete (no stock hold), the error/output contract is broken, and 'production-minded' constraints are undercut by a hardcoded key.",
+    "functional_correctness": "Service-layer idempotency, expiration, insufficient-stock, and state-transition checks are individually correct and unit-tested. But the central stock-availability invariant is not enforced, and the broken exception handler means HTTP error semantics fail entirely (TypeError instead of 401/403/404/409/410). These are weighted heavily.",
+    "executability": "Dependencies are complete and plausible and the app imports/serves /health; uvicorn entrypoint is valid. However the declared test command fails 12/26, the app writes commerce.db into cwd at import time, and any error response crashes at runtime.",
+    "test_quality": "Test breadth is strong — happy path, insufficient stock, idempotency, expiration, auth, and pagination are all covered at both service and API levels with behavioral assertions. Heavily penalized because the API integration tests do not actually run (DB threading/in-memory misconfiguration), so integration realism and repeatability are unmet.",
+    "code_quality": "Readable naming, coherent repository/service/schema/security boundaries, and a clear README. Lowered by dead code, an adjusted_at bug, and a README that overclaims 'production-ready' while a fatal error handler and hardcoded secret remain.",
+    "minimality": "No speculative queues/workers/CLIs. Penalized for dead code (unused DuplicateRequestError import and ErrorResponse model, no-op was_cached branch in app.py:117-119, unused total_count in repository.py:98) and pydantic-settings declared but never used.",
+    "security_safety": "Auth dependency is correctly attached to every mutating endpoint and inputs are validated via Pydantic with parameterized ORM access. Main deduction is the hardcoded 'prod' API key in source that overrides the documented env-var configuration.",
+    "review_confidence": "All source and test files were read and the declared test command was executed with failures isolated to two concrete root causes; remaining uncertainty is minor (exact SQLite pool semantics)."
+  },
+  "instruction_failures": [
+    "README.md:77 documents API_KEY as configuration, but security.py:14 hardcodes the key and never reads the env var — documented contract not honored.",
+    "Project advertised as 'production-ready' (README.md:3,86) while the global error handler is non-functional."
+  ],
+  "correctness_failures": [
+    "app.py:196-201 exception handler returns a dict; Starlette raises 'TypeError: dict object is not callable' for all HTTPException responses (verified at starlette/_exception_handler.py:78).",
+    "service.py:55-126: reservations and confirmations never decrement SKU stock, so stock availability is never actually held; unlimited concurrent reservations against the same stock succeed.",
+    "service.py:52: adjust_stock returns 'adjusted_at': updated.created_at — reports SKU creation time, not the adjustment time.",
+    "repository.py:118-124: idempotency record is keyed only by idempotency_key with no binding to request parameters, so a retry with different sku/quantity would return the original cached response."
+  ],
+  "execution_failures": [
+    "pytest: 12 failed, 14 passed. API tests fail with sqlalchemy.exc.OperationalError 'no such table: skus' and sqlite3.ProgrammingError cross-thread errors.",
+    "Auth/no-auth API tests fail with TypeError from the dict-returning exception handler rather than asserting 401/403.",
+    "app.py:38 runs Base.metadata.create_all and creates commerce.db in the working directory at import time (ambient filesystem side effect)."
+  ],
+  "test_gaps": [
+    "test_api.py db_session fixture (lines 10-26) does not pass connect_args={'check_same_thread': False} or poolclass=StaticPool for the in-memory SQLite engine, so the override session and the TestClient request thread see different/empty databases — the entire API test file is non-functional.",
+    "No test asserts that reserving stock reduces availability for a subsequent reservation (the missing-decrement bug went undetected).",
+    "Tests assert response.json()['error'] (test_api.py:125,216) for a body shape produced by a handler that actually crashes — the assertions were never reached."
+  ],
+  "quality_notes": [
+    "Clean layered separation (app/service/repository/models/security) with clear names.",
+    "app.py:113-119 create_reservation has identical if/else branches around was_cached — dead branching.",
+    "OrderOrm.state defaults to PENDING (models.py:44) but create_order always sets CONFIRMED; the default is effectively unused.",
+    "datetime.utcnow() used throughout (deprecated in 3.12) — generates many warnings."
+  ],
+  "unnecessary_code_examples": [
+    "app.py:28 imports DuplicateRequestError which is never raised or caught.",
+    "models.py:129-131 ErrorResponse schema is defined but never used in any route or response_model.",
+    "repository.py:98 computes total_count = query.count() but never uses it.",
+    "pyproject.toml:13 declares pydantic-settings but no Settings class exists anywhere."
+  ],
+  "security_safety_notes": [
+    "security.py:14 hardcodes expected_key = 'commerce-api-key-prod' in source and ignores the documented API_KEY env var.",
+    "Auth dependency (validate_api_key) is correctly required on all mutating endpoints and on /orders.",
+    "Inputs validated via Pydantic Field constraints; SQLAlchemy ORM queries are parameterized (no injection risk).",
+    "No shell/network/destructive operations; only a local SQLite file is created."
+  ],
+  "file_evidence": [
+    {"path": "src/commerce_service/app.py", "note": "Lines 196-201: exception handler returns a dict, breaking all HTTP error responses (confirmed TypeError at runtime)."},
+    {"path": "src/commerce_service/service.py", "note": "create_reservation/confirm_reservation never decrement stock_level; stock availability invariant not enforced. Line 52 adjusted_at returns created_at."},
+    {"path": "src/commerce_service/security.py", "note": "Line 14 hardcodes the API key and ignores README-documented API_KEY env var."},
+    {"path": "tests/test_api.py", "note": "Fixture (10-26) misconfigures in-memory SQLite engine; all 12 API tests fail with no-such-table / cross-thread errors."},
+    {"path": "src/commerce_service/repository.py", "note": "Line 98 unused total_count; offset/limit+1 pagination logic is otherwise correct."},
+    {"path": "pyproject.toml", "note": "Declares pydantic-settings (unused) and a coherent dev/test setup; test addopts include coverage."}
+  ],
+  "commands_run": [
+    "find . -type f (project listing)",
+    "python3 -c 'import fastapi, sqlalchemy, pydantic, httpx' (fastapi 0.109.0, sqlalchemy 2.0.23, pydantic 2.5.3, py3.12.4)",
+    "python3 -m pytest -o addopts='' -q  -> 12 failed, 14 passed",
+    "python3 -m pytest tests/test_api.py::test_create_sku_success tests/test_api.py::test_create_sku_no_auth (isolated root-cause traces)"
+  ],
+  "review_risk": "low — all source and test files were read and pytest was run with deps available; both failure classes were isolated to specific lines. Minor residual uncertainty about exact SQLite pool semantics, but the empirical 12/26 failure result and the runtime TypeError are confirmed."
+}
+```

@@ -1,0 +1,159 @@
+All 34 tests pass once installed (the documented `pip install -e .`), and I confirmed the central correctness gap with a repro: reserving 5×100 units against stock of 100 all succeed, and confirming an order never decrements stock. The inventory-reservation invariant — the heart of the task — is absent. Here is the structured evaluation.
+
+```json
+{
+  "rubric_version": "benchmark-codegen-review-v1",
+  "score_scale": "0-100 per category",
+  "weights": {
+    "task_fulfillment": 0.20,
+    "functional_correctness": 0.25,
+    "executability": 0.15,
+    "test_quality": 0.15,
+    "code_quality": 0.10,
+    "minimality": 0.10,
+    "security_safety": 0.05
+  },
+  "task_fulfillment_score": 81,
+  "task_fulfillment_breakdown": {
+    "instruction_compliance": 85,
+    "required_artifacts": 88,
+    "feature_coverage": 78,
+    "constraint_adherence": 72
+  },
+  "functional_correctness_score": 53,
+  "functional_correctness_breakdown": {
+    "domain_invariants": 35,
+    "edge_case_behavior": 55,
+    "data_consistency": 45,
+    "error_semantics": 75
+  },
+  "executability_score": 81,
+  "executability_breakdown": {
+    "installability": 85,
+    "runtime_entrypoints": 82,
+    "command_result": 80,
+    "runtime_isolation": 75
+  },
+  "test_quality_score": 81,
+  "test_quality_breakdown": {
+    "required_test_coverage": 88,
+    "behavioral_assertions": 70,
+    "integration_realism": 85,
+    "repeatability": 82
+  },
+  "code_quality_score": 82,
+  "code_quality_breakdown": {
+    "readability": 85,
+    "maintainability": 78,
+    "boundary_design": 85,
+    "documentation_quality": 78
+  },
+  "minimality_score": 78,
+  "minimality_breakdown": {
+    "no_speculative_infrastructure": 88,
+    "no_dead_or_duplicate_code": 70,
+    "appropriate_abstractions": 82,
+    "dependency_minimality": 70
+  },
+  "security_safety_score": 89,
+  "security_safety_breakdown": {
+    "auth_enforcement": 92,
+    "secret_handling": 78,
+    "input_safety": 90,
+    "unsafe_operations": 95
+  },
+  "review_confidence_score": 91,
+  "review_confidence_breakdown": {
+    "inspection_depth": 92,
+    "command_evidence": 92,
+    "issue_specificity": 90,
+    "uncertainty_handling": 88
+  },
+  "weighted_components": {
+    "task_fulfillment": 16.2,
+    "functional_correctness": 13.3,
+    "executability": 12.2,
+    "test_quality": 12.2,
+    "code_quality": 8.2,
+    "minimality": 7.8,
+    "security_safety": 4.5
+  },
+  "weighted_total": 74.2,
+  "verdict": "mixed",
+  "key_findings": [
+    "Central inventory invariant is missing: reserving never decrements/holds stock and confirming an order never deducts it. Verified via repro — 5 reservations of 100 units each all succeed against stock=100, and confirming leaves stock at 100 (src/commerce_service/repository.py reserve/confirm_reservation, service.py reserve).",
+    "Insufficient-stock guard only compares request quantity to total current_stock, so it cannot prevent cumulative over-reservation (service.py:45).",
+    "All 34 tests pass once the package is installed (verified with src on PYTHONPATH); the documented `pytest` fails on a bare checkout because the project must first be `pip install -e .` (README documents this step).",
+    "Complete, well-separated layering (app/models/service/repository/security) with parameterized SQL and API-key auth on every mutating route.",
+    "Declared dependency pydantic-settings is never used, and ErrorResponse is imported/defined but unused — minor minimality drift.",
+    "Workspace contains generated artifacts (commerce.db, src/commerce_service.egg-info/) that are not part of a fresh source tree."
+  ],
+  "score_rationale": {
+    "task_fulfillment": "All requested endpoints, files, and project structure exist and the README documents them accurately. Feature coverage is dinged because the reservation 'hold' semantics are not actually implemented, and the 'production-grade' framing is undercut by the broken inventory model plus committed db/egg-info artifacts.",
+    "functional_correctness": "Idempotency (unique index + existing-row return), expiration rejection, and RESERVED→CONFIRMED/CANCELLED state transitions are correct. But the core domain invariant — stock availability backed by reservations — does not hold: stock is never decremented on reserve or confirm, so over-reservation and over-selling are possible. This is the dominant deduction.",
+    "executability": "Packaging is complete with pinned deps and a src layout; uvicorn entrypoint and app import work. Tests pass after the documented editable install. Module-level Repository('commerce.db') runs at import and writes to CWD, and ambient db/egg-info reduce isolation slightly.",
+    "test_quality": "Covers all required scenarios — happy path, insufficient stock, idempotency, expiration (via expiry_minutes=0), auth (401/403), pagination, not-found — with behavioral assertions on quantities, statuses, and order items against a real temp SQLite DB. No test asserts stock decrements, which is exactly why the missing invariant went uncaught.",
+    "code_quality": "Readable, clearly named, cleanly layered with coherent boundaries. Minor smells: a function-local `import datetime` in service.confirm_reservation, the 15-minute expiry buried as a default arg, and duplicated row->model assembly in repository.",
+    "minimality": "No speculative queues/workers/migrations/CLIs. Deductions for an unused pydantic-settings dependency, an unused ErrorResponse import/model, and duplicated SkuResponse/OrderResponse construction helpers.",
+    "security_safety": "verify_api_key is enforced via Depends on every mutating endpoint (401 missing / 403 invalid), SQL is fully parameterized, and pydantic validates inputs. The only note is the hardcoded default 'test-api-key' with no environment override (acceptable as a demo default, not a real secret).",
+    "review_confidence": "Read every source and test file, plus pyproject/README; ran pytest (34 passed), grep for unused deps/imports, and a direct repro demonstrating the stock invariant gap. Main limitation is that I verified the documented install path indirectly via PYTHONPATH rather than performing an actual editable install."
+  },
+  "instruction_failures": [
+    "Bare `pytest` (as written in README's Testing section) fails with ModuleNotFoundError unless `pip install -e .` was run first; the install step is documented earlier but the test command is not self-contained.",
+    "Generated artifacts (commerce.db, src/commerce_service.egg-info/) are present in the workspace, conflicting with a clean fresh-workspace expectation."
+  ],
+  "correctness_failures": [
+    "reserve() never decrements available stock; multiple reservations can collectively exceed on-hand stock (repository.py:154-208, service.py:35-54).",
+    "confirm_reservation() creates an order but does not deduct inventory, so confirmed sales never reduce current_stock (repository.py:231-280).",
+    "cancel_reservation() restores nothing because nothing was held — internally consistent with the bug above but means the reservation system holds no inventory at all.",
+    "Stock check precedes the idempotency lookup in service.reserve, so an idempotent retry can spuriously fail with 'Insufficient stock' if stock changed, instead of returning the existing reservation (service.py:41-50 before repository idempotency check).",
+    "SKU-not-found on reservation returns 400 rather than 404 (app.py:65-66)."
+  ],
+  "execution_failures": [
+    "`pytest` on a fresh checkout fails to collect both test modules (No module named 'commerce_service') until the package is installed.",
+    "Importing commerce_service.app has the side effect of creating commerce.db in the current working directory (app.py:24)."
+  ],
+  "test_gaps": [
+    "No test asserts that stock decreases after a reservation or after order confirmation — the missing core invariant is entirely untested.",
+    "No test for cumulative over-reservation (multiple reservations exhausting/exceeding stock).",
+    "No test that cancel restores availability or that a cancelled reservation cannot be confirmed (the already-confirmed path is tested, cancelled-then-confirm is not).",
+    "test_confirm_reservation_unauthorized targets a nonexistent reservation; it passes only because auth runs first, so it does not prove auth on a real reservation."
+  ],
+  "quality_notes": [
+    "Function-local `from datetime import datetime` inside service.confirm_reservation (service.py:72) instead of a module-level import.",
+    "Expiry window (15 min) is a default parameter on repository.reserve rather than a named, centralized config value.",
+    "Row-to-model construction is duplicated across get_sku/adjust_stock and get_order/list_orders.",
+    "datetime.utcnow() is used throughout (deprecation warnings) and stores naive timestamps; comparisons work only because everything is naive UTC."
+  ],
+  "unnecessary_code_examples": [
+    "ErrorResponse is defined in models.py:68 and imported in app.py:6 but never used as a response model.",
+    "pydantic-settings is declared in pyproject.toml dependencies but never imported or used anywhere in src/.",
+    "ReservationConfirm is an empty Pydantic model required as a request body on the confirm endpoint, adding no fields."
+  ],
+  "security_safety_notes": [
+    "verify_api_key is applied to all mutating endpoints (POST/DELETE) via Depends; read endpoints are intentionally open (app.py).",
+    "All SQL uses parameterized placeholders — no string interpolation, low injection risk.",
+    "Default API key 'test-api-key' is hardcoded in security.py with no env/config override; fine for a demo default but not production-grade secret handling.",
+    "No shell, file-deletion, or network side effects beyond local SQLite file creation."
+  ],
+  "file_evidence": [
+    {"path": "src/commerce_service/repository.py", "note": "reserve() (154-208) and confirm_reservation() (231-280) never modify current_stock; stock is only ever changed by explicit adjust_stock."},
+    {"path": "src/commerce_service/service.py", "note": "reserve() checks current_stock < quantity (45) against the total, with no accounting for outstanding reservations; confirm checks status+expiry but deducts nothing."},
+    {"path": "src/commerce_service/app.py", "note": "All mutating routes depend on verify_api_key; ErrorResponse imported but unused (6); module-level Repository('commerce.db') created at import (24)."},
+    {"path": "src/commerce_service/security.py", "note": "API-key check returns 401 when missing, 403 when invalid; valid key set hardcoded to {'test-api-key'}."},
+    {"path": "tests/test_api.py", "note": "TestClient + temp SQLite fixtures cover auth, insufficient stock, idempotency, pagination, not-found; no stock-decrement assertion."},
+    {"path": "tests/test_service.py", "note": "Expiration tested via repo.reserve(expiry_minutes=0); idempotency and already-confirmed paths covered; no over-reservation/stock-hold test."},
+    {"path": "pyproject.toml", "note": "Pinned deps and src-layout packaging; declares pydantic-settings which is never used (10-15)."},
+    {"path": "commerce.db", "note": "Ambient generated SQLite file present in the workspace, plus src/commerce_service.egg-info/ build artifacts."}
+  ],
+  "commands_run": [
+    "find . -type f (excluding caches/venv) — enumerated project files",
+    "grep -rn for pydantic_settings/BaseSettings/getenv/environ/Settings and ErrorResponse in src/ — confirmed unused dependency and unused import",
+    "python3 -c import fastapi,httpx,pytest — confirmed dev deps available (fastapi 0.109.0)",
+    "python3 -m pytest -q — failed collection on bare checkout (ModuleNotFoundError: commerce_service)",
+    "PYTHONPATH=src python3 -m pytest -q — 34 passed, 141 warnings (datetime.utcnow deprecation)",
+    "PYTHONPATH=src python3 repro — reserved 5x100 against stock=100 all RESERVED, stock stayed 100 before and after confirming an order"
+  ],
+  "review_risk": "low — all source/tests and config were read, tests were executed (34 pass under the documented install path simulated via PYTHONPATH), and the headline stock-invariant defect was reproduced directly; the only unverified item is an actual `pip install -e .` rather than path injection."
+}
+```

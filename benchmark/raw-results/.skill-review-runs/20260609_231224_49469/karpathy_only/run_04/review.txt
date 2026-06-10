@@ -1,0 +1,157 @@
+```json
+{
+  "rubric_version": "benchmark-codegen-review-v1",
+  "score_scale": "0-100 per category",
+  "weights": {
+    "task_fulfillment": 0.20,
+    "functional_correctness": 0.25,
+    "executability": 0.15,
+    "test_quality": 0.15,
+    "code_quality": 0.10,
+    "minimality": 0.10,
+    "security_safety": 0.05
+  },
+  "task_fulfillment_score": 79,
+  "task_fulfillment_breakdown": {
+    "instruction_compliance": 75,
+    "required_artifacts": 90,
+    "feature_coverage": 85,
+    "constraint_adherence": 65
+  },
+  "functional_correctness_score": 38,
+  "functional_correctness_breakdown": {
+    "domain_invariants": 30,
+    "edge_case_behavior": 45,
+    "data_consistency": 25,
+    "error_semantics": 50
+  },
+  "executability_score": 67,
+  "executability_breakdown": {
+    "installability": 88,
+    "runtime_entrypoints": 70,
+    "command_result": 30,
+    "runtime_isolation": 80
+  },
+  "test_quality_score": 56,
+  "test_quality_breakdown": {
+    "required_test_coverage": 80,
+    "behavioral_assertions": 75,
+    "integration_realism": 40,
+    "repeatability": 30
+  },
+  "code_quality_score": 78,
+  "code_quality_breakdown": {
+    "readability": 85,
+    "maintainability": 65,
+    "boundary_design": 85,
+    "documentation_quality": 75
+  },
+  "minimality_score": 83,
+  "minimality_breakdown": {
+    "no_speculative_infrastructure": 80,
+    "no_dead_or_duplicate_code": 75,
+    "appropriate_abstractions": 85,
+    "dependency_minimality": 90
+  },
+  "security_safety_score": 88,
+  "security_safety_breakdown": {
+    "auth_enforcement": 90,
+    "secret_handling": 85,
+    "input_safety": 80,
+    "unsafe_operations": 95
+  },
+  "review_confidence_score": 94,
+  "review_confidence_breakdown": {
+    "inspection_depth": 95,
+    "command_evidence": 95,
+    "issue_specificity": 95,
+    "uncertainty_handling": 90
+  },
+  "weighted_components": {
+    "task_fulfillment": 15.8,
+    "functional_correctness": 9.5,
+    "executability": 10.1,
+    "test_quality": 8.4,
+    "code_quality": 7.8,
+    "minimality": 8.3,
+    "security_safety": 4.4
+  },
+  "weighted_total": 64.3,
+  "verdict": "mixed",
+  "key_findings": [
+    "CRITICAL: The core stock-availability invariant is broken in production. service.py mutates the SKU ORM object (available_stock/reserved_stock) AFTER the only commit, and get_db() closes the session without committing, so the changes are rolled back. Verified by simulation: after reserving 50 of 100, available_stock stays 100 and a second 60-unit reservation succeeds (110 > 100) with no insufficient-stock error.",
+    "CRITICAL: The declared test command is red — 9 of 27 tests fail. 8 API tests fail with 'no such table: skus' because the test fixture uses an in-memory SQLite engine without StaticPool, and the TestClient handles requests on a different thread (SingletonThreadPool gives a separate empty in-memory DB). The API layer is therefore effectively unverified.",
+    "BUG: app.py:54 references status.HTTP_404_BAD_REQUEST, which does not exist (confirmed MISSING). Adjusting stock for a nonexistent SKU raises AttributeError -> HTTP 500 instead of a clean 4xx.",
+    "test_service.py::test_get_orders_pagination fails with 'Insufficient stock': it creates 25 reservations of 10 from a SKU with only 100 stock (250 > 100). This test bug simultaneously reveals that stock decrements DO accumulate within a single shared session, masking the production rollback bug.",
+    "Clean layered design (app/service/repository/models/security), env-based API key with no real secrets, and auth enforced on all mutating endpoints are genuine strengths.",
+    "pydantic Field(ne=0) on StockAdjustment.quantity_delta is not a valid v2 constraint (deprecation warning shown) and is silently ignored, so quantity_delta=0 is accepted."
+  ],
+  "score_rationale": {
+    "task_fulfillment": "All requested artifacts and the full endpoint surface (skus, stock/adjust, reservations, confirm, cancel, orders, health) are present and the workspace is self-contained, but the 'production-minded' constraint is undercut because the deployed service does not actually enforce stock, so it is not production-ready.",
+    "functional_correctness": "Lowest category. The central domain invariant (stock availability) is broken in the real per-request lifecycle; reserved_stock never increments and available_stock never decrements once persisted. Idempotency persistence, expiration check, and state-transition guards exist and are sound, but data consistency is fundamentally compromised by missing commits, and error semantics include a 500-causing typo and 400/404 confusion.",
+    "executability": "Installs cleanly (pip install -e '.[dev]' succeeded) and the app imports, but the declared `pytest tests/` run fails 9/27, and the default in-memory DATABASE_URL would also lose/segment data under uvicorn's sync threadpool. Isolation from parent dirs is fine.",
+    "test_quality": "The intended coverage list is good (happy paths, insufficient stock, idempotency, expiration, auth, pagination, cancel) with behavioral assertions on quantities and status. However the API integration fixture is broken (no StaticPool), one service test is mis-sized, and the suite is not repeatable as written.",
+    "code_quality": "Readable names, coherent module boundaries, and clean separation of concerns. Maintainability suffers because the stock-commit relationship is implicit and fragile — correctness depends on a later commit happening to flush an earlier dirty object, which is exactly what fails in production.",
+    "minimality": "Lean dependency set, all imports used, no speculative queues/workers/migrations. Minor dead code: Repository.get_order and get_orders_by_reservation_id are never called.",
+    "security_safety": "API key dependency guards every mutating endpoint; orders/health are intentionally public. Secret comes from env with a dev default ('test-key'), no hardcoded real secret. ORM use avoids SQL injection. Minor input-safety gap from the ignored ne=0 constraint.",
+    "review_confidence": "All 12 source/test files were read; the test suite, a production-lifecycle simulation, and the bogus status constant were all executed and captured. Findings cite concrete files and lines."
+  },
+  "instruction_failures": [
+    "Service is not genuinely production-ready: stock enforcement does not work across real HTTP requests despite being the central feature.",
+    "Declared test command does not pass cleanly (9 failures)."
+  ],
+  "correctness_failures": [
+    "service.py create_reservation (lines 48-52): sku.available_stock -= quantity / reserved_stock += quantity are never committed; get_db() closes the session and the changes roll back. Stock availability invariant violated (verified: reserving 50+60 from 100 both succeed).",
+    "service.py confirm_reservation (lines 75-77) and cancel_reservation (lines 99-102): sku.reserved_stock/available_stock adjustments after the last commit are lost on session close.",
+    "app.py:54 uses non-existent status.HTTP_404_BAD_REQUEST -> AttributeError/500 when adjust_stock raises ValueError for a missing SKU.",
+    "confirm/cancel of a nonexistent reservation returns 400 rather than 404; expired reservation returns 400 — coarse status mapping."
+  ],
+  "execution_failures": [
+    "8 API tests fail: sqlalchemy.exc.OperationalError 'no such table: skus' — in-memory SQLite engine in the test fixture lacks StaticPool, and TestClient runs requests on a separate thread with its own empty connection.",
+    "test_service.py::test_get_orders_pagination fails: ValueError 'Insufficient stock' (25x10 reservations against 100 initial stock)."
+  ],
+  "test_gaps": [
+    "No test exercises the multi-request stock-decrement path with fresh sessions, so the production rollback bug is completely missed.",
+    "No assertion that available_stock/reserved_stock change after a reservation/confirm/cancel.",
+    "No test for adjust_stock on a nonexistent SKU (which would have surfaced the app.py:54 500 bug).",
+    "No test that confirming an already-cancelled reservation, or cancelling an expired one, behaves correctly.",
+    "API fixture is not isolated/repeatable (threaded in-memory DB), so integration realism is largely nominal."
+  ],
+  "quality_notes": [
+    "Module separation (app/service/repository/models/security) is clean and idiomatic.",
+    "Stock correctness depends on an implicit side effect (a later commit flushing an earlier dirty ORM object) rather than an explicit transaction boundary — fragile and the direct cause of the production bug.",
+    "Uses deprecated datetime.utcnow() and FastAPI on_event('startup') (warnings only).",
+    "README is accurate and concise but slightly overstates readiness ('production'-grade) given the stock bug."
+  ],
+  "unnecessary_code_examples": [
+    "repository.py:123 Repository.get_order is never used.",
+    "repository.py:132 Repository.get_orders_by_reservation_id is never used.",
+    "models.py StockAdjustment.quantity_delta Field(ne=0) — invalid/ignored pydantic v2 constraint."
+  ],
+  "security_safety_notes": [
+    "verify_api_key dependency is applied to POST /skus, /stock/adjust, /reservations, /reservations/{id}/confirm, /reservations/{id}/cancel; GET /orders and /health are public (appropriate).",
+    "API_KEY read from environment with a dev default of 'test-key'; no hardcoded production secret.",
+    "SQLAlchemy ORM parameterizes queries; no string-built SQL or shell/file/network side effects.",
+    "Minor: ignored ne=0 validation permits a no-op quantity_delta=0 adjustment."
+  ],
+  "file_evidence": [
+    {"path": "src/commerce_service/service.py", "note": "Lines 48-52, 75-77, 99-102: SKU stock mutations occur after the last commit and are never persisted; session close rolls them back — breaks stock availability invariant."},
+    {"path": "src/commerce_service/app.py", "note": "Line 54: status.HTTP_404_BAD_REQUEST does not exist (verified MISSING) -> AttributeError/500 on adjust_stock failure."},
+    {"path": "tests/test_api.py", "note": "Lines 11-17: in-memory SQLite fixture without StaticPool/check_same_thread; TestClient thread sees no tables -> 8 'no such table' failures."},
+    {"path": "tests/test_service.py", "note": "Lines 127-144: pagination test reserves 250 units from 100 stock -> fails with Insufficient stock; also shows decrements accumulate within a single session."},
+    {"path": "src/commerce_service/repository.py", "note": "Lines 8-10: default sqlite:///:memory: engine; get_order/get_orders_by_reservation_id (123,132) unused."},
+    {"path": "src/commerce_service/models.py", "note": "Line 19: Field(..., ne=0) is not a valid pydantic v2 constraint and is silently ignored."},
+    {"path": "src/commerce_service/security.py", "note": "API key from env with dev default; verify_api_key returns 403 on mismatch — auth correctly enforced."}
+  ],
+  "commands_run": [
+    "find . -type f (list project files)",
+    "python3 -m venv .venv_review && pip install -e '.[dev]' (clean install succeeded)",
+    "pytest tests/ -v  ->  9 failed, 18 passed",
+    "pytest tests/test_api.py::test_create_sku_authorized -x  ->  sqlite3.OperationalError: no such table: skus",
+    "python simulation of per-request get_db sessions  ->  available_stock stays 100 after reserving 50; second 60-unit reservation succeeds",
+    "python -c check getattr(status,'HTTP_404_BAD_REQUEST')  ->  MISSING",
+    "removed .venv_review, /tmp db, and caches to restore workspace"
+  ],
+  "review_risk": "Low — all source and test files were read, dependencies installed cleanly, the test suite was executed (9/27 failing), and the production stock bug and the bogus status constant were each reproduced directly; the created venv and caches were removed afterward."
+}
+```

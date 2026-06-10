@@ -1,0 +1,159 @@
+I have enough evidence. I inspected all source and test files, ran the declared test command, identified the root cause of failures, and verified unused dependencies/imports. Here is my evaluation.
+
+```json
+{
+  "rubric_version": "benchmark-codegen-review-v1",
+  "score_scale": "0-100 per category",
+  "weights": {
+    "task_fulfillment": 0.20,
+    "functional_correctness": 0.25,
+    "executability": 0.15,
+    "test_quality": 0.15,
+    "code_quality": 0.10,
+    "minimality": 0.10,
+    "security_safety": 0.05
+  },
+  "task_fulfillment_score": 88,
+  "task_fulfillment_breakdown": {
+    "instruction_compliance": 85,
+    "required_artifacts": 95,
+    "feature_coverage": 90,
+    "constraint_adherence": 80
+  },
+  "functional_correctness_score": 68,
+  "functional_correctness_breakdown": {
+    "domain_invariants": 62,
+    "edge_case_behavior": 75,
+    "data_consistency": 60,
+    "error_semantics": 75
+  },
+  "executability_score": 75,
+  "executability_breakdown": {
+    "installability": 88,
+    "runtime_entrypoints": 88,
+    "command_result": 45,
+    "runtime_isolation": 80
+  },
+  "test_quality_score": 61,
+  "test_quality_breakdown": {
+    "required_test_coverage": 78,
+    "behavioral_assertions": 65,
+    "integration_realism": 40,
+    "repeatability": 60
+  },
+  "code_quality_score": 83,
+  "code_quality_breakdown": {
+    "readability": 85,
+    "maintainability": 78,
+    "boundary_design": 85,
+    "documentation_quality": 82
+  },
+  "minimality_score": 77,
+  "minimality_breakdown": {
+    "no_speculative_infrastructure": 88,
+    "no_dead_or_duplicate_code": 65,
+    "appropriate_abstractions": 85,
+    "dependency_minimality": 70
+  },
+  "security_safety_score": 83,
+  "security_safety_breakdown": {
+    "auth_enforcement": 92,
+    "secret_handling": 70,
+    "input_safety": 75,
+    "unsafe_operations": 95
+  },
+  "review_confidence_score": 91,
+  "review_confidence_breakdown": {
+    "inspection_depth": 95,
+    "command_evidence": 90,
+    "issue_specificity": 92,
+    "uncertainty_handling": 88
+  },
+  "weighted_components": {
+    "task_fulfillment": 17.6,
+    "functional_correctness": 17.0,
+    "executability": 11.3,
+    "test_quality": 9.2,
+    "code_quality": 8.3,
+    "minimality": 7.7,
+    "security_safety": 4.2
+  },
+  "weighted_total": 75.2,
+  "verdict": "good",
+  "key_findings": [
+    "Coherent, well-layered FastAPI project (app/service/repository/models/security) implementing the full requested surface: SKU create/adjust, reservation create/confirm/cancel, order get/list-with-pagination, idempotency, 15-min expiration, and X-API-Key auth on all mutating routes.",
+    "10 of 30 tests FAIL when running the declared command (`pytest tests/`). Root cause: the API test fixture (tests/test_api.py:13) builds an in-memory SQLite engine without connect_args={'check_same_thread': False} / StaticPool, so the table created in the test thread is invisible to TestClient's request thread -> sqlite3.ProgrammingError, caught by the broad `except Exception` and surfaced as 400. The 20 passing tests are the service-layer suite plus the few API tests that never touch the DB.",
+    "Domain bug: an expired reservation is marked EXPIRED on confirm (service.py:120-122) but its held stock is never released — reserved_stock stays incremented and available_stock stays decremented, permanently leaking inventory. cancel_reservation releases correctly, but the expiry path does not.",
+    "Stock math for the create/confirm/cancel happy paths is internally consistent (reserve = available-=qty & reserved+=qty; confirm = reserved-=qty; cancel = reserved-=qty & available+=qty).",
+    "Persistence is not atomic: create_reservation, update_sku_reserved_stock, and adjust_stock each commit separately (service.py:96-107), so a mid-sequence failure leaves inconsistent stock; also a check-then-decrement TOCTOU race on availability.",
+    "Dead/unused code and an unused dependency: pydantic-settings is declared but never used; ErrorResponse model is defined and imported but never wired into responses; `and_` (repository.py:4) and `Boolean` (models.py:5) imports are unused."
+  ],
+  "score_rationale": {
+    "task_fulfillment": "All requested artifacts and the full endpoint surface are present with a clear layered architecture and a thorough README. Minor deductions for non-production-minded choices (non-atomic writes, hardcoded key, expired-stock leak) under constraint_adherence.",
+    "functional_correctness": "Happy-path stock accounting and idempotency/insufficient-stock/auth handling are correct, but the expired-reservation stock leak is a genuine invariant violation, writes are non-atomic across three commits, and adjust-stock can drive available_stock negative. Error codes are mostly sensible though reliant on broad `except Exception`.",
+    "executability": "The app itself is runnable (app:app, tables created on import, engine sets check_same_thread=False, pinned deps install cleanly), but the declared test command fails 10/30 tests. Failures are isolated to a single fixture mis-config, which limits the deduction.",
+    "test_quality": "Coverage breadth is good on paper (happy, insufficient stock, idempotency, expiration, auth, pagination) and the service suite is solid and isolated, but the integration suite does not actually run, and no test asserts the core stock-accounting side effects (reserved/available deltas after reserve/confirm/cancel).",
+    "code_quality": "Readable, well-named, cleanly separated layers with useful docstrings and README. Slight deductions for scattered multi-commit stock mutation and a README confirm example that omits the body the endpoint requires.",
+    "minimality": "No speculative infrastructure (no queues/workers/migrations/CLIs), but several unused items: pydantic-settings dependency, ErrorResponse model, and two unused imports; ReservationConfirmRequest is an empty model that forces a body.",
+    "security_safety": "All mutating endpoints enforce the API-key dependency and there are no unsafe shell/file/network operations. The auth key is a hardcoded placeholder with no env override, and adjust-stock lacks a non-negative guard.",
+    "review_confidence": "All source and test files were read, the test suite was executed and its failures traced to a specific fixture line, and unused deps/imports were confirmed via grep. Remaining uncertainty is only about live-server runtime behavior, which was not started."
+  },
+  "instruction_failures": [
+    "README confirm-reservation example shows no request body, but POST /reservations/{id}/confirm requires a ReservationConfirmRequest body (app.py:145); tests pass `json={}` to compensate."
+  ],
+  "correctness_failures": [
+    "Expired reservations never release held stock: confirm_reservation marks EXPIRED and raises without restoring reserved_stock/available_stock (service.py:119-122).",
+    "Non-atomic stock updates: reservation row + reserved_stock + available_stock are committed in three separate transactions (service.py:96-107); failure between them leaves inconsistent state.",
+    "Check-then-act race: availability is checked (service.py:86) then decremented later with no row lock, allowing oversell under concurrency.",
+    "adjust_stock has no lower bound, so a negative adjustment can make available_stock negative (repository.py:30-37)."
+  ],
+  "execution_failures": [
+    "`pytest tests/` reports 10 failed, 20 passed, 1 error.",
+    "tests/test_api.py fixture creates `create_engine('sqlite:///:memory:')` without check_same_thread=False/StaticPool (line 13); TestClient runs requests in a separate thread, so DB writes hit a different/empty in-memory connection -> sqlite3.ProgrammingError and 400 responses.",
+    "Teardown also emits SQLite cross-thread errors for the same reason."
+  ],
+  "test_gaps": [
+    "No test asserts stock side effects (available_stock / reserved_stock values) after reserve, confirm, or cancel — the central domain invariant is unverified.",
+    "No API-level test for expired reservation (only service-level), and no test covering the expired-stock-release behavior (which is also broken).",
+    "No test for idempotency-conflict-on-cancelled-key (IdempotencyConflictError / 409) path.",
+    "No test for SKU-not-found on reservation creation at the API layer, nor duplicate SKU creation.",
+    "Integration tests as written never exercise real persistence successfully, so integration_realism is effectively unmet."
+  ],
+  "quality_notes": [
+    "Service raises a bare `Exception` for missing orders (service.py:178) instead of a dedicated OrderNotFoundError, forcing the API layer to catch broad `except Exception` (app.py:209).",
+    "Pydantic v1-style `class Config: from_attributes` triggers deprecation warnings under Pydantic 2.5 (models.py:74,98,115).",
+    "datetime.utcnow() used throughout (deprecated in 3.12); acceptable but flags future maintenance.",
+    "Pagination is offset/limit but README/Features call it 'cursor-based' — inaccurate documentation claim (README:10)."
+  ],
+  "unnecessary_code_examples": [
+    "models.py:124 ErrorResponse — defined and imported (app.py:29) but never used as a response_model.",
+    "repository.py:4 `from sqlalchemy import and_` — unused.",
+    "models.py:5 `Boolean` import — unused.",
+    "pyproject.toml:14 `pydantic-settings` dependency — never imported anywhere in src/.",
+    "models.py:102 ReservationConfirmRequest — empty model that exists only to force a request body."
+  ],
+  "security_safety_notes": [
+    "verify_api_key applied via dependencies=[Depends(verify_api_key)] on every mutating route (POST /skus, adjust-stock, reservations, confirm, cancel); read routes are intentionally public per README.",
+    "API key is a hardcoded constant 'test-api-key-12345' (security.py:4) with no environment-variable override; it is a placeholder, not a real secret, but not production-grade.",
+    "Inputs are validated with Pydantic Field constraints (min/max length, gt/ge); SQLAlchemy ORM parameterizes queries, so no SQL injection surface observed.",
+    "No shell/network/destructive operations; the app only creates a local commerce.db in the working directory on import."
+  ],
+  "file_evidence": [
+    {"path": "tests/test_api.py", "note": "Line 13: in-memory engine lacks check_same_thread=False/StaticPool, causing cross-thread SQLite errors and 10 failing tests."},
+    {"path": "src/commerce_service/service.py", "note": "Lines 119-122: expired reservation marked EXPIRED but stock never released (inventory leak). Lines 96-107: three separate commits, non-atomic; line 86 check-then-act race."},
+    {"path": "src/commerce_service/app.py", "note": "Mutating routes guarded by Depends(verify_api_key); broad `except Exception` blocks (lines 77, 99, 135, 167, 193, 209) flatten errors; ErrorResponse imported (line 29) but unused."},
+    {"path": "src/commerce_service/repository.py", "note": "Clean repo abstraction; offset/limit pagination (line 108); unused `and_` import (line 4); each method commits independently."},
+    {"path": "src/commerce_service/security.py", "note": "Hardcoded API key (line 4), 403 on missing/invalid key, auto_error=False."},
+    {"path": "pyproject.toml", "note": "Pinned deps and src-layout packaging are correct; pydantic-settings (line 14) is declared but unused."},
+    {"path": "README.md", "note": "Thorough docs; claims 'cursor-based pagination' (line 10) though implementation is offset/limit; confirm example omits required body."}
+  ],
+  "commands_run": [
+    "find . -type f (excluding caches) — listed 10 project files",
+    "python3 -c 'import fastapi, sqlalchemy, pydantic, httpx' — deps available",
+    "PYTHONPATH=src python3 -m pytest tests/ -q — 10 failed, 20 passed, 1 error",
+    "PYTHONPATH=src python3 -m pytest tests/test_api.py::TestSKUEndpoints::test_create_sku_authorized -q — traced cross-thread SQLite ProgrammingError",
+    "grep for pydantic_settings/ErrorResponse/and_/Boolean usage — confirmed unused dependency and imports"
+  ],
+  "review_risk": "Low: all source and tests were read, the declared test command was executed and its 10 failures traced to a specific fixture mis-config, and unused deps/imports were grep-confirmed; the only untested aspect is live-server runtime (the app process was not started, though the prod engine config differs from the broken test fixture and appears runnable)."
+}
+```

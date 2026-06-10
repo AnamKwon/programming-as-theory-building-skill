@@ -1,0 +1,151 @@
+All 50 tests pass and I've inspected every source/test file. Here is the evaluation.
+
+```json
+{
+  "rubric_version": "benchmark-codegen-review-v1",
+  "score_scale": "0-100 per category",
+  "weights": {
+    "task_fulfillment": 0.20,
+    "functional_correctness": 0.25,
+    "executability": 0.15,
+    "test_quality": 0.15,
+    "code_quality": 0.10,
+    "minimality": 0.10,
+    "security_safety": 0.05
+  },
+  "task_fulfillment_score": 89,
+  "task_fulfillment_breakdown": {
+    "instruction_compliance": 88,
+    "required_artifacts": 95,
+    "feature_coverage": 92,
+    "constraint_adherence": 80
+  },
+  "functional_correctness_score": 86,
+  "functional_correctness_breakdown": {
+    "domain_invariants": 85,
+    "edge_case_behavior": 90,
+    "data_consistency": 78,
+    "error_semantics": 90
+  },
+  "executability_score": 91,
+  "executability_breakdown": {
+    "installability": 92,
+    "runtime_entrypoints": 90,
+    "command_result": 98,
+    "runtime_isolation": 82
+  },
+  "test_quality_score": 91,
+  "test_quality_breakdown": {
+    "required_test_coverage": 92,
+    "behavioral_assertions": 90,
+    "integration_realism": 90,
+    "repeatability": 92
+  },
+  "code_quality_score": 87,
+  "code_quality_breakdown": {
+    "readability": 90,
+    "maintainability": 82,
+    "boundary_design": 90,
+    "documentation_quality": 85
+  },
+  "minimality_score": 78,
+  "minimality_breakdown": {
+    "no_speculative_infrastructure": 80,
+    "no_dead_or_duplicate_code": 72,
+    "appropriate_abstractions": 85,
+    "dependency_minimality": 75
+  },
+  "security_safety_score": 85,
+  "security_safety_breakdown": {
+    "auth_enforcement": 92,
+    "secret_handling": 70,
+    "input_safety": 82,
+    "unsafe_operations": 95
+  },
+  "review_confidence_score": 92,
+  "review_confidence_breakdown": {
+    "inspection_depth": 95,
+    "command_evidence": 92,
+    "issue_specificity": 92,
+    "uncertainty_handling": 90
+  },
+  "weighted_components": {
+    "task_fulfillment": 17.8,
+    "functional_correctness": 21.5,
+    "executability": 13.7,
+    "test_quality": 13.7,
+    "code_quality": 8.7,
+    "minimality": 7.8,
+    "security_safety": 4.3
+  },
+  "weighted_total": 87.4,
+  "verdict": "good",
+  "key_findings": [
+    "Clean, coherent layered architecture (models / repository / service / app / security) with correct stock available/reserved accounting; full test suite passes (50 passed in 1.53s).",
+    "All required workflows and edge cases are implemented and tested: insufficient stock (409), idempotent retry, lazy expiration (410), auth (401/403), and pagination validation (422).",
+    "A 40KB runtime artifact `commerce.db` is committed in the workspace, contradicting the 'fresh workspace' constraint, and the app writes the DB to the current working directory.",
+    "`adjust_stock` permits inventory to go negative (no floor check), a data-integrity gap.",
+    "Minor minimality issues: unused imports (`Float`, `create_engine` in models.py), unused `OrderStatus.PENDING`, and a declared-but-unused `pydantic-settings` dependency.",
+    "API key is hardcoded in source rather than sourced from config/env, despite `pydantic-settings` being declared."
+  ],
+  "score_rationale": {
+    "task_fulfillment": "All requested artifacts and the full API surface (SKU, stock, reservations, confirm/cancel, orders, pagination, idempotency, API-key auth, health) are present and behave as described in README.md. Constraint adherence is dinged because a generated commerce.db sits in the workspace, violating the fresh-workspace expectation.",
+    "functional_correctness": "Domain invariants hold for the happy and edge paths verified by tests: reserve moves available→reserved, confirm removes reserved, cancel/expire releases. Lazy expiration on confirm correctly returns stock (service.py:176-180). Deductions: adjust_stock allows negative available (repository.py:60), and there is no atomic guard against concurrent over-reservation (check-then-decrement in reserve_stock), though SQLite single-file scope limits impact.",
+    "executability": "Pinned deps and src-layout packaging are complete; lazy engine/session init and uvicorn entrypoint are usable. `pytest tests/` => 50 passed. Tests are isolated (in-memory and tempfile DBs), but the application defaults to writing ./commerce.db in cwd and a populated one is already present, lowering runtime isolation.",
+    "test_quality": "Two suites (service unit + API integration) cover every required behavior and assert real domain effects (stock counts, status transitions, matching idempotent IDs) rather than only status codes. Integration tests use a real per-test tempfile SQLite DB with dependency override and clean up afterward, giving good realism and repeatability.",
+    "code_quality": "Readable, well-sectioned modules with clear separation of concerns and accurate docstrings/README. Maintainability is slightly reduced by repeated hand-written dict-mapping of entities in the service layer (the Pydantic from_attributes responses already exist), which duplicates the response shape in several methods.",
+    "minimality": "No speculative queues/workers/CLIs. However there is dead code (unused Float/create_engine imports in models.py, unused PENDING enum value) and an unjustified dependency (pydantic-settings is declared but never imported anywhere in src/).",
+    "security_safety": "All mutating endpoints depend on verify_api_key; read endpoints are intentionally open. ORM use avoids SQL injection and Pydantic validates inputs. Marked down because the valid API key is hardcoded in security.py rather than loaded from configuration/env, and adjust_stock lacks a non-negative guard.",
+    "review_confidence": "All source and test files were read in full and the declared test command was executed successfully; unused imports/dependencies were verified via grep. Findings cite specific files and lines."
+  },
+  "instruction_failures": [
+    "Generated/committed commerce.db left in the workspace conflicts with the fresh-workspace / production-minded expectation.",
+    "POST /skus hardcodes initial_stock=100 (app.py:87), ignoring any caller intent; SKUCreate has no stock field, so every SKU silently gets 100 units."
+  ],
+  "correctness_failures": [
+    "adjust_stock has no lower bound: a sufficiently negative quantity_delta drives available below zero (repository.py:55-62, service.py:77-90).",
+    "reserve_stock performs a non-atomic check-then-update with no row locking; concurrent requests could over-reserve (repository.py:64-71). Transaction risk is not documented.",
+    "Expired reservations are only released when confirm or cancel is invoked; a GET on an expired reservation returns 410 but leaves stock locked indefinitely with no sweeper (service.py:148-156)."
+  ],
+  "execution_failures": [],
+  "test_gaps": [
+    "No test asserts that an idempotent replay returns the stored reservation even when parameters (sku_id/quantity) differ from the original request.",
+    "No test for adjust_stock driving available negative (the missing floor is therefore unguarded by tests).",
+    "Expiration is only exercised through confirm; the GET-returns-410 path (service.py:154-156) is not covered.",
+    "No concurrency/race test around reserve_stock."
+  ],
+  "quality_notes": [
+    "Service methods repeatedly hand-build response dicts (e.g. service.py:109-116, 139-146, 158-165, 216-224) duplicating the shape that ReservationResponse/OrderResponse already model with from_attributes.",
+    "ReservationCreate.idempotency_key is annotated `str` with default `Field(None, ...)` (models.py:101); it should be `str | None` — works under Pydantic v2 but is type-inconsistent.",
+    "list_orders counts rows via select(Order).scalars().all().__len__() (repository.py:162), loading all orders into memory instead of using func.count()."
+  ],
+  "unnecessary_code_examples": [
+    "models.py:7 imports Float and create_engine, both unused.",
+    "OrderStatus.PENDING (models.py:18) is never assigned in the service flow (reservations are created as RESERVED).",
+    "pyproject.toml:12 declares pydantic-settings, which is never imported or used in src/."
+  ],
+  "security_safety_notes": [
+    "API key set is hardcoded in security.py:6 ('sk-test-commerce-service-key-123') rather than read from environment/config; acceptable as a demo key but not production-minded, especially since pydantic-settings is already a (unused) dependency.",
+    "Mutating endpoints correctly enforce verify_api_key (app.py:82,124,140,174,193); read endpoints are unauthenticated by design.",
+    "Inputs validated via Pydantic and queries are parameterized through SQLAlchemy ORM, so no obvious injection vector.",
+    "No shell/network/destructive operations in application code."
+  ],
+  "file_evidence": [
+    {"path": "commerce.db", "note": "40KB committed SQLite runtime artifact present in a supposedly fresh workspace; app.py:30 writes ./commerce.db to cwd."},
+    {"path": "src/commerce_service/app.py", "note": "Endpoints, auth dependencies, and HTTP status mapping; line 87 hardcodes initial_stock=100 on SKU creation."},
+    {"path": "src/commerce_service/service.py", "note": "Business logic: idempotency handling (104-116), insufficient-stock (118-120), lazy expiration release on confirm (176-180), pagination math (261-288)."},
+    {"path": "src/commerce_service/repository.py", "note": "Data access; adjust_stock lacks negative floor (55-62); reserve_stock non-atomic check (64-71); count loads all rows (162)."},
+    {"path": "src/commerce_service/models.py", "note": "ORM + Pydantic schemas; unused Float/create_engine imports (line 7); idempotency_key typed str with None default (101)."},
+    {"path": "src/commerce_service/security.py", "note": "Hardcoded API key set; 401 on missing key, 403 on invalid key."},
+    {"path": "tests/test_api.py", "note": "Integration tests with per-test tempfile SQLite and dependency override; covers auth, idempotency, pagination 422 cases."},
+    {"path": "tests/test_service.py", "note": "Unit tests covering expiration (manually backdating expires_at), cancel/confirm transitions, and stock accounting."}
+  ],
+  "commands_run": [
+    "find . -type f (list project files)",
+    "python3 --version; python3 -c 'import fastapi, sqlalchemy, pydantic, httpx' (deps available, Python 3.12.4)",
+    "python3 -m pytest tests/ -q  => 50 passed in 1.53s",
+    "grep for pydantic_settings/BaseSettings/httpx usage; counted Float/create_engine/PENDING occurrences"
+  ],
+  "review_risk": "low — all source and test files were read and the declared test command passed; concurrency/transaction risks were reasoned about statically rather than load-tested."
+}
+```

@@ -1,0 +1,148 @@
+All 37 tests pass. I've inspected every source and test file. Here is my benchmark evaluation.
+
+```json
+{
+  "rubric_version": "benchmark-codegen-review-v1",
+  "score_scale": "0-100 per category",
+  "weights": {
+    "task_fulfillment": 0.20,
+    "functional_correctness": 0.25,
+    "executability": 0.15,
+    "test_quality": 0.15,
+    "code_quality": 0.10,
+    "minimality": 0.10,
+    "security_safety": 0.05
+  },
+  "task_fulfillment_score": 90,
+  "task_fulfillment_breakdown": {
+    "instruction_compliance": 88,
+    "required_artifacts": 95,
+    "feature_coverage": 90,
+    "constraint_adherence": 88
+  },
+  "functional_correctness_score": 73,
+  "functional_correctness_breakdown": {
+    "domain_invariants": 70,
+    "edge_case_behavior": 82,
+    "data_consistency": 63,
+    "error_semantics": 78
+  },
+  "executability_score": 87,
+  "executability_breakdown": {
+    "installability": 82,
+    "runtime_entrypoints": 88,
+    "command_result": 95,
+    "runtime_isolation": 82
+  },
+  "test_quality_score": 90,
+  "test_quality_breakdown": {
+    "required_test_coverage": 92,
+    "behavioral_assertions": 88,
+    "integration_realism": 90,
+    "repeatability": 88
+  },
+  "code_quality_score": 84,
+  "code_quality_breakdown": {
+    "readability": 88,
+    "maintainability": 80,
+    "boundary_design": 90,
+    "documentation_quality": 78
+  },
+  "minimality_score": 84,
+  "minimality_breakdown": {
+    "no_speculative_infrastructure": 90,
+    "no_dead_or_duplicate_code": 70,
+    "appropriate_abstractions": 85,
+    "dependency_minimality": 92
+  },
+  "security_safety_score": 90,
+  "security_safety_breakdown": {
+    "auth_enforcement": 92,
+    "secret_handling": 80,
+    "input_safety": 92,
+    "unsafe_operations": 95
+  },
+  "review_confidence_score": 91,
+  "review_confidence_breakdown": {
+    "inspection_depth": 95,
+    "command_evidence": 92,
+    "issue_specificity": 90,
+    "uncertainty_handling": 88
+  },
+  "weighted_components": {
+    "task_fulfillment": 18.0,
+    "functional_correctness": 18.3,
+    "executability": 13.1,
+    "test_quality": 13.5,
+    "code_quality": 8.4,
+    "minimality": 8.4,
+    "security_safety": 4.5
+  },
+  "weighted_total": 84.1,
+  "verdict": "good",
+  "key_findings": [
+    "Clean layered architecture (models / repository / service / security / app); all 37 tests pass under PYTHONPATH=src.",
+    "Complete requested surface: SKU + stock, idempotent reservations with TTL/expiration, confirm/cancel, order orchestration, paginated order listing, API-key auth on all mutations.",
+    "Reservations do NOT hold stock: availability is only checked (and decremented) at confirm time, so N pending reservations can each pass create against the same stock — the 'reservation' invariant is weak (service.py:60, service.py:90-100).",
+    "Cancelling a CONFIRMED reservation restores stock but leaves the associated order in CONFIRMED state, producing a reservation/order state divergence (service.py:124-127).",
+    "No transactional atomicity: confirm_reservation performs 4 separate connections/commits with no locking, leaving check-then-act race windows and partial-failure risk (repository.py:53-61, service.py:96-105).",
+    "Minor dead code: OrderStatus.SHIPPED/CANCELLED and ErrorResponse model are never used; order is written PENDING then immediately re-written CONFIRMED."
+  ],
+  "score_rationale": {
+    "task_fulfillment": "All requested artifacts and the full API surface (SKU, reservation idempotency/expiration, orders, pagination, auth) are present and match the README. Self-contained, no parent reads. Lost a little for a default hardcoded dev key and lazy/weak reservation holding.",
+    "functional_correctness": "Idempotency, expiration (lazy EXPIRED marking), and most error paths work and are tested. Penalized for the weak stock-reservation model (no hold at create), order/reservation divergence on cancel-after-confirm, and non-atomic multi-write transactions with TOCTOU race windows.",
+    "executability": "Tests pass cleanly (37 passed). Pinned deps + hatchling + uvicorn entrypoint are plausible; only deprecation warning is on_event startup. Slight risk: hatchling has no explicit [tool.hatch] packaging config for the src layout (relies on auto-detection), and DB_PATH is a fixed cwd-relative file.",
+    "test_quality": "Strong coverage at both service and API layers: happy paths, insufficient stock, idempotency, expiration (real sleep), unauthorized (403) and missing-key (422), pagination, and stock-restoration assertions. Autouse fixture removes the DB before/after each test for repeatability.",
+    "code_quality": "Readable, well-named, coherent module boundaries with SQL isolated in repository and rules in service. Lower marks for missing docstrings, two near-duplicate dict->response parsers, and the unaddressed order-state gap that hurts maintainability of the invariant.",
+    "minimality": "No speculative infra (no queues/workers/CLIs); dependencies are minimal and all used. Docked for unused enum members (SHIPPED/CANCELLED), unused ErrorResponse model, and a redundant PENDING->CONFIRMED order write.",
+    "security_safety": "All mutating endpoints enforce Depends(verify_api_key); SQL is fully parameterized; pydantic validates inputs (bounds on quantity/ttl/pagination). Only minor concern is a hardcoded default dev key (documented, env-overridable).",
+    "review_confidence": "Every source and test file was read; the declared test command was executed successfully and a dependency check was run. Findings cite concrete files/lines. Residual uncertainty is limited to packaging behavior under different hatchling versions."
+  },
+  "instruction_failures": [],
+  "correctness_failures": [
+    "service.py:60 — create_reservation checks current_stock but never decrements/holds stock, so multiple pending reservations can be created beyond available inventory; stock is only enforced at confirm (service.py:90-100).",
+    "service.py:124-127 — cancelling a CONFIRMED reservation restores stock but does not transition the linked order out of CONFIRMED, leaving order/reservation/inventory inconsistent.",
+    "service.py:96-105 / repository.py:53-61 — confirm performs status update, stock decrement, and order creation across separate auto-committed connections with no transaction or row lock; a crash mid-flow or concurrent confirm can corrupt stock.",
+    "service.py:52-54 — idempotent retry returns the prior reservation even if it is now expired/cancelled, with no comparison of request parameters."
+  ],
+  "execution_failures": [],
+  "test_gaps": [
+    "No test asserts that an order is (or is not) cancelled / stock state after cancelling a CONFIRMED reservation beyond stock count — the order-state divergence is unverified.",
+    "No test for concurrent/over-subscribed reservations exposing the no-hold-at-create behavior.",
+    "No test for SKU duplicate-code conflict (UNIQUE constraint -> 400) or for adjust_stock unauthorized path.",
+    "Expiration tests rely on real time.sleep(1.1) rather than injectable time, making the suite slower and timing-coupled."
+  ],
+  "quality_notes": [
+    "app.py uses deprecated @app.on_event('startup'); lifespan handler is the current idiom (emits DeprecationWarning under installed FastAPI).",
+    "service.get_order raises bare Exception (service.py:135) and app catches broad Exception (app.py:47-50, app.py:150-151), conflating validation/IntegrityError/not-found into single status codes.",
+    "_to_reservation_response (app.py:154) and _parse_order (app.py:171) duplicate ISO-string parsing logic that could live near the models/repository.",
+    "DB_PATH is a module-level relative Path('commerce.db') (repository.py:10) and not configurable via env, unlike the API key."
+  ],
+  "unnecessary_code_examples": [
+    "models.py:18-19 — OrderStatus.SHIPPED and OrderStatus.CANCELLED are never assigned anywhere.",
+    "models.py:81-82 — ErrorResponse model is defined but never referenced.",
+    "service.py:102-105 — order is created as PENDING then immediately updated to CONFIRMED in the same flow; it could be created CONFIRMED directly."
+  ],
+  "security_safety_notes": [
+    "All mutating endpoints declare dependencies=[Depends(verify_api_key)] (app.py:42,53,68,88,112); read endpoints are intentionally unauthenticated per README.",
+    "Default API key 'test-key-12345' is hardcoded as a fallback (security.py:6) but overridable via API_KEY env and clearly documented as a dev default.",
+    "All SQL uses parameterized queries (repository.py); no string interpolation into SQL.",
+    "Missing API key yields 422 (Header(...) required) rather than 401/403, which is acceptable but not the conventional auth status."
+  ],
+  "file_evidence": [
+    {"path": "src/commerce_service/service.py", "note": "Stock checked but not held at reservation create (l.60); confirm does multi-step non-atomic writes (l.96-105); cancel-after-confirm restores stock without updating order (l.124-127); get_order raises bare Exception (l.135)."},
+    {"path": "src/commerce_service/repository.py", "note": "Each method opens its own connection and commits independently (l.53-61); fixed cwd-relative DB_PATH (l.10); parameterized SQL and CHECK constraints on stock/quantity."},
+    {"path": "src/commerce_service/app.py", "note": "Auth enforced on all mutations; correct status mapping (404/409/410); deprecated on_event startup (l.32); broad Exception handlers (l.47-50, l.150-151)."},
+    {"path": "src/commerce_service/models.py", "note": "Pydantic validation with bounds; unused OrderStatus.SHIPPED/CANCELLED (l.18-19) and unused ErrorResponse (l.81-82)."},
+    {"path": "tests/test_api.py", "note": "Covers auth (403/422), insufficient stock (409), idempotency, expiration (410), pagination, get/not-found; autouse DB reset fixture."},
+    {"path": "tests/test_service.py", "note": "Service-level coverage incl. stock-restoration assertion on cancel-after-confirm (l.153-165) and pagination (l.188-200)."},
+    {"path": "pyproject.toml", "note": "Pinned fastapi/pydantic/uvicorn + dev pytest/httpx; hatchling build with no explicit src-layout package config."}
+  ],
+  "commands_run": [
+    "find . -type f (excluding caches) — enumerated 10 project files",
+    "python3 -c 'import fastapi, pydantic, httpx, pytest' — deps present (fastapi 0.109.0, pydantic 2.5.3; differ from pinned versions)",
+    "PYTHONPATH=src python3 -m pytest -q — 37 passed, 2 deprecation warnings"
+  ],
+  "review_risk": "Low: all files inspected and the full test suite ran green, but tests executed against locally installed FastAPI 0.109.0 / Pydantic 2.5.3 rather than the pinned 0.115.4 / 2.9.2, and `pip install -e .` (hatchling src-layout packaging) was not actually performed, so installability is inferred rather than verified."
+}
+```

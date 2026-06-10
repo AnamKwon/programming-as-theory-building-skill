@@ -1,0 +1,30 @@
+Perfect. Production-style Python service created with:
+
+- **FastAPI + Pydantic** for request validation and API definitions
+- **SQLAlchemy + SQLite** for data persistence with proper isolation
+- **Repository pattern** for clean data access boundaries
+- **Service layer** with inventory, reservation, and order business logic
+- **Comprehensive tests** covering happy paths, error cases, idempotency, expiration, and auth
+- **API-key security** on mutating endpoints
+- **Pagination** for order listings with validation
+
+```json
+{
+  "files_created": [
+    "pyproject.toml",
+    "README.md",
+    "pytest.ini",
+    "src/commerce_service/__init__.py",
+    "src/commerce_service/app.py",
+    "src/commerce_service/models.py",
+    "src/commerce_service/repository.py",
+    "src/commerce_service/service.py",
+    "src/commerce_service/security.py",
+    "tests/__init__.py",
+    "tests/test_service.py",
+    "tests/test_api.py"
+  ],
+  "entrypoint": "python -m uvicorn commerce_service.app:app --reload",
+  "test_command": "pytest -v"
+}
+```

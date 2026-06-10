@@ -1,0 +1,148 @@
+All 37 tests pass and I confirmed a real domain-invariant bug. Here is the evaluation.
+
+```json
+{
+  "rubric_version": "benchmark-codegen-review-v1",
+  "score_scale": "0-100 per category",
+  "weights": {
+    "task_fulfillment": 0.20,
+    "functional_correctness": 0.25,
+    "executability": 0.15,
+    "test_quality": 0.15,
+    "code_quality": 0.10,
+    "minimality": 0.10,
+    "security_safety": 0.05
+  },
+  "task_fulfillment_score": 89,
+  "task_fulfillment_breakdown": {
+    "instruction_compliance": 85,
+    "required_artifacts": 95,
+    "feature_coverage": 90,
+    "constraint_adherence": 85
+  },
+  "functional_correctness_score": 66,
+  "functional_correctness_breakdown": {
+    "domain_invariants": 45,
+    "edge_case_behavior": 75,
+    "data_consistency": 55,
+    "error_semantics": 88
+  },
+  "executability_score": 94,
+  "executability_breakdown": {
+    "installability": 95,
+    "runtime_entrypoints": 90,
+    "command_result": 98,
+    "runtime_isolation": 92
+  },
+  "test_quality_score": 85,
+  "test_quality_breakdown": {
+    "required_test_coverage": 90,
+    "behavioral_assertions": 70,
+    "integration_realism": 88,
+    "repeatability": 92
+  },
+  "code_quality_score": 85,
+  "code_quality_breakdown": {
+    "readability": 88,
+    "maintainability": 78,
+    "boundary_design": 90,
+    "documentation_quality": 85
+  },
+  "minimality_score": 80,
+  "minimality_breakdown": {
+    "no_speculative_infrastructure": 90,
+    "no_dead_or_duplicate_code": 72,
+    "appropriate_abstractions": 88,
+    "dependency_minimality": 70
+  },
+  "security_safety_score": 88,
+  "security_safety_breakdown": {
+    "auth_enforcement": 90,
+    "secret_handling": 75,
+    "input_safety": 92,
+    "unsafe_operations": 95
+  },
+  "review_confidence_score": 92,
+  "review_confidence_breakdown": {
+    "inspection_depth": 95,
+    "command_evidence": 95,
+    "issue_specificity": 92,
+    "uncertainty_handling": 88
+  },
+  "weighted_components": {
+    "task_fulfillment": 17.8,
+    "functional_correctness": 16.5,
+    "executability": 14.1,
+    "test_quality": 12.8,
+    "code_quality": 8.5,
+    "minimality": 8.0,
+    "security_safety": 4.4
+  },
+  "weighted_total": 82.1,
+  "verdict": "good",
+  "key_findings": [
+    "Coherent, well-layered FastAPI project (app/service/repository/security/models) that installs cleanly and passes all 37 tests in 0.14s.",
+    "Serious domain-invariant bug: confirming a reservation never decrements skus.quantity_available, and confirmed orders are not counted in availability, so stock is double-counted and overselling is possible.",
+    "Availability is computed as quantity_available minus only PENDING, non-expired reservations (repository.py:145-162); once a reservation is confirmed it leaves the pending set without reducing physical stock, restoring full availability.",
+    "Idempotency, expiration check on confirm, reservation state transitions, auth on mutations, and pagination are all implemented and tested.",
+    "Minor dead/unused code: Database.delete_reservation (never called), OrderStatus.RESERVED/CANCELLED (orders always created 'confirmed'), and the pydantic-settings dependency is declared but never used."
+  ],
+  "score_rationale": {
+    "task_fulfillment": "All requested endpoints and artifacts exist (README.md, pyproject.toml, src/tests). API surface covers SKU create/adjust, reservation create/confirm/cancel, paginated orders, API-key auth, and idempotency. Workspace is self-contained. Minor: committed egg-info build artifacts.",
+    "functional_correctness": "Error semantics (404/400/409/403/422) and most edge cases are solid, but the central inventory invariant is broken — confirmed reservations don't consume stock, allowing oversell (demonstrated: SKU qty 100, reserve+confirm 100, then a second reservation of 100 still succeeds). Availability check and create_reservation are also non-atomic across separate sqlite connections.",
+    "executability": "pip install -e . succeeds; in-memory SQLite default makes the app and tests runnable with no external state; uvicorn entrypoint is valid; `pytest` -> 37 passed.",
+    "test_quality": "Good coverage across happy/insufficient/idempotent/expired/auth/pagination at both service and API layers with behavioral assertions on quantities and statuses. Gap: no test asserts stock is reduced after confirmation, so the overselling defect slips through. One expiration test uses a hacky db._connection().__enter__() pattern (works only because in-memory shares one connection).",
+    "code_quality": "Readable, clear naming, clean layer separation, accurate README. Maintainability is dinged because the stock-commit rule is absent, indicating an incomplete theory of the inventory domain.",
+    "minimality": "No speculative queues/workers/migrations. Dings: unused delete_reservation method, unused OrderStatus members, empty ConfirmReservationRequest model, and pydantic-settings dependency that is never imported or used.",
+    "security_safety": "All mutating endpoints depend on verify_api_key; parameterized SQL throughout; pydantic input validation. The only API key is a hardcoded test value in source (acceptable for a demo, but no env-based configuration despite pydantic-settings being a declared dep).",
+    "review_confidence": "Read every source and test file, installed the package, ran the full suite, and reproduced the overselling bug with a direct script."
+  },
+  "instruction_failures": [
+    "src/commerce_service.egg-info build artifacts are committed into the workspace rather than left out of source."
+  ],
+  "correctness_failures": [
+    "Confirming a reservation does not decrement skus.quantity_available (service.py:93-94, repository.py:175-186); committed stock is never subtracted.",
+    "get_available_stock only subtracts pending non-expired reservations (repository.py:145-162), so after confirmation availability returns to full and the SKU can be reserved/sold beyond physical stock (reproduced).",
+    "Reservation creation is read-then-write across separate connections (service.get_available_stock then create_reservation) with no transaction/locking, so concurrent requests can both pass the availability check and oversell.",
+    "Idempotent replay returns the stored reservation without verifying the incoming sku_id/quantity match the original (service.py:43-53), so a reused key with different params silently returns the old reservation."
+  ],
+  "execution_failures": [],
+  "test_gaps": [
+    "No test asserts that physical stock (quantity_available) decreases after a reservation is confirmed — the core oversell bug is untested.",
+    "No test for adjust_stock reducing inventory below already-reserved quantity.",
+    "No test for idempotency-key reuse with mismatched sku_id/quantity.",
+    "No concurrency/race test around simultaneous reservations of the same SKU."
+  ],
+  "quality_notes": [
+    "Clean separation: repository (SQLite), service (business rules + HTTP errors), models (pydantic schemas), security (API key).",
+    "Service raises HTTPException directly, coupling the domain layer to FastAPI; acceptable at this scale but reduces reusability.",
+    "test_service.py:94-98 mutates the DB via db._connection().__enter__() without exiting the context manager; works only because the in-memory branch reuses a single persistent connection."
+  ],
+  "unnecessary_code_examples": [
+    "repository.py:203-210 delete_reservation is never called.",
+    "models.py:12-15 OrderStatus.RESERVED and OrderStatus.CANCELLED are unused; create_order always writes 'confirmed'.",
+    "models.py:48-49 ConfirmReservationRequest is an empty model used only as a request body placeholder.",
+    "pyproject.toml:14 pydantic-settings is a declared dependency but never imported anywhere."
+  ],
+  "security_safety_notes": [
+    "All mutating endpoints enforce X-API-Key via Depends(verify_api_key) (app.py, security.py); GET /orders is unauthenticated, which is reasonable for a read.",
+    "API key 'test-api-key-123' is hardcoded in security.py:4 rather than read from environment/config.",
+    "SQL is fully parameterized; pydantic constraints (min_length, ge/gt) validate untrusted input."
+  ],
+  "file_evidence": [
+    {"path": "src/commerce_service/repository.py", "note": "get_available_stock (145-162) counts only pending non-expired reservations; no path decrements quantity_available on confirm — root of oversell."},
+    {"path": "src/commerce_service/service.py", "note": "confirm_reservation (72-97) checks expiry/status and creates an order but never reduces stock; idempotent replay (43-53) ignores param mismatch."},
+    {"path": "src/commerce_service/app.py", "note": "All POST routes inject verify_api_key; in-memory DB via module-global get_database keeps the app self-contained."},
+    {"path": "tests/test_service.py", "note": "Thorough behavioral tests but none assert stock deduction after confirm; line 94-98 uses a leaky context-manager pattern."},
+    {"path": "src/commerce_service/security.py", "note": "Hardcoded VALID_API_KEYS set; 403 on missing/invalid key."},
+    {"path": "pyproject.toml", "note": "pydantic-settings declared (line 14) but unused; packaging otherwise complete."}
+  ],
+  "commands_run": [
+    "find . -type f | sort",
+    "python3 --version; python3 -c 'import fastapi, httpx, pytest'",
+    "pip install -e . -q; python3 -m pytest -q  => 37 passed in 0.14s",
+    "python3 -c '<reserve+confirm+re-reserve script>'  => second reservation of 100 succeeds after first 100 confirmed (oversell reproduced)"
+  ],
+  "review_risk": "low — all source and test files were read, dependencies were available, the full test suite ran green, and the overselling invariant violation was directly reproduced."
+}
+```

@@ -1,0 +1,195 @@
+You are reviewing generated code from a coding-agent experiment.
+
+Focus on code review, not rewriting. Inspect the current working directory only.
+Do not read parent directories or sibling experiment outputs.
+
+Evaluate the generated implementation using the benchmark-style rubric below.
+
+If practical, inspect the files and run lightweight local checks such as:
+- listing the project files,
+- reading pyproject.toml and README.md,
+- reviewing src/ and tests/,
+- running the declared test command if dependencies are already available or cheap to install.
+
+Do not modify files.
+
+Use a benchmark-style LLM code-generation evaluation. Score every breakdown item
+on a 0-100 integer scale. Each top-level category score is the rounded average
+of its breakdown item scores. Use the category weights exactly as written, and
+calculate "weighted_total" from the weighted implementation-quality scores only.
+Do not include review_confidence_score in weighted_total. Prefer concrete file
+references in notes, especially when subtracting points. Award high scores only
+when there is evidence from code inspection or commands.
+
+Weighted total formula:
+weighted_total =
+  task_fulfillment_score * 0.20 +
+  functional_correctness_score * 0.25 +
+  executability_score * 0.15 +
+  test_quality_score * 0.15 +
+  code_quality_score * 0.10 +
+  minimality_score * 0.10 +
+  security_safety_score * 0.05
+
+Round weighted_total to one decimal place. The category weights sum to 1.00.
+Also return weighted_components, where each value is category_score * weight,
+rounded to one decimal place.
+
+Verdict thresholds:
+- excellent: weighted_total 90.0-100.0 and no serious correctness gaps.
+- good: weighted_total 75.0-89.9 and the project is mostly usable.
+- mixed: weighted_total 55.0-74.9 or usable only with clear fixes.
+- poor: weighted_total 30.0-54.9 with major missing behavior or maintainability problems.
+- failed: weighted_total 0.0-29.9, cannot be evaluated, or does not form a coherent project.
+
+Detailed rubric:
+- task_fulfillment_score, 0-100, weight 0.20:
+  - instruction_compliance: follows the prompt and output contract.
+  - required_artifacts: creates the requested files and project structure.
+  - feature_coverage: implements the requested API surface and workflows.
+  - constraint_adherence: respects "fresh workspace", no parent reads, and production-minded constraints.
+- functional_correctness_score, 0-100, weight 0.25:
+  - domain_invariants: stock availability, idempotency, expiration, and order state transitions hold.
+  - edge_case_behavior: insufficient stock, duplicate/idempotent retry, expired reservation, unauthorized mutation, pagination.
+  - data_consistency: persistence updates are coherent and transaction risks are understood.
+  - error_semantics: clear and appropriate HTTP status codes and error bodies.
+- executability_score, 0-100, weight 0.15:
+  - installability: dependencies and packaging are complete and plausible.
+  - runtime_entrypoints: app entrypoint, imports, and configuration defaults are usable.
+  - command_result: tests or smoke checks run successfully, or failures are well isolated.
+  - runtime_isolation: no dependence on parent directories, hidden local files, generated siblings, or ambient state.
+- test_quality_score, 0-100, weight 0.15:
+  - required_test_coverage: covers happy paths, insufficient stock, idempotency, expiration, auth, and pagination.
+  - behavioral_assertions: tests prove domain behavior rather than only status codes.
+  - integration_realism: tests exercise API/service behavior with realistic persistence.
+  - repeatability: tests isolate database/state and can run repeatedly.
+- code_quality_score, 0-100, weight 0.10:
+  - readability: names, module boundaries, and control flow are easy to follow.
+  - maintainability: future rule changes are localized and invariants are visible.
+  - boundary_design: database access, service logic, schemas, and security are coherently separated.
+  - documentation_quality: README/docstrings clarify operation without padding or false claims.
+- minimality_score, 0-100, weight 0.10:
+  - no_speculative_infrastructure: avoids unused queues, workers, migrations, CLIs, providers, or frameworks.
+  - no_dead_or_duplicate_code: avoids unused imports, unused models, duplicate helpers, and unreachable branches.
+  - appropriate_abstractions: abstractions are justified by current behavior, not future guesses.
+  - dependency_minimality: dependencies are justified by used functionality.
+- security_safety_score, 0-100, weight 0.05:
+  - auth_enforcement: mutating endpoints require the API-key dependency.
+  - secret_handling: no hardcoded real secrets or unsafe leakage.
+  - input_safety: validates untrusted inputs and avoids obvious injection/data-integrity risks.
+  - unsafe_operations: avoids unnecessary shell, file, network, or destructive operations.
+- review_confidence_score, 0-100, meta score not included in weighted_total:
+  - inspection_depth: enough files were reviewed to support the score.
+  - command_evidence: commands run are relevant and results are captured.
+  - issue_specificity: findings cite concrete files/functions.
+  - uncertainty_handling: limitations are stated without hiding risk.
+
+Set review_risk to a short sentence describing any limits of the review, such as
+commands not run, dependencies unavailable, truncated inspection, or uncertainty
+about runtime behavior. Use "low" only when files and relevant commands were
+checked sufficiently.
+
+Return JSON only with this schema:
+{
+  "rubric_version": "benchmark-codegen-review-v1",
+  "score_scale": "0-100 per category",
+  "weights": {
+    "task_fulfillment": 0.20,
+    "functional_correctness": 0.25,
+    "executability": 0.15,
+    "test_quality": 0.15,
+    "code_quality": 0.10,
+    "minimality": 0.10,
+    "security_safety": 0.05
+  },
+  "task_fulfillment_score": 0-100,
+  "task_fulfillment_breakdown": {
+    "instruction_compliance": 0-100,
+    "required_artifacts": 0-100,
+    "feature_coverage": 0-100,
+    "constraint_adherence": 0-100
+  },
+  "functional_correctness_score": 0-100,
+  "functional_correctness_breakdown": {
+    "domain_invariants": 0-100,
+    "edge_case_behavior": 0-100,
+    "data_consistency": 0-100,
+    "error_semantics": 0-100
+  },
+  "executability_score": 0-100,
+  "executability_breakdown": {
+    "installability": 0-100,
+    "runtime_entrypoints": 0-100,
+    "command_result": 0-100,
+    "runtime_isolation": 0-100
+  },
+  "test_quality_score": 0-100,
+  "test_quality_breakdown": {
+    "required_test_coverage": 0-100,
+    "behavioral_assertions": 0-100,
+    "integration_realism": 0-100,
+    "repeatability": 0-100
+  },
+  "code_quality_score": 0-100,
+  "code_quality_breakdown": {
+    "readability": 0-100,
+    "maintainability": 0-100,
+    "boundary_design": 0-100,
+    "documentation_quality": 0-100
+  },
+  "minimality_score": 0-100,
+  "minimality_breakdown": {
+    "no_speculative_infrastructure": 0-100,
+    "no_dead_or_duplicate_code": 0-100,
+    "appropriate_abstractions": 0-100,
+    "dependency_minimality": 0-100
+  },
+  "security_safety_score": 0-100,
+  "security_safety_breakdown": {
+    "auth_enforcement": 0-100,
+    "secret_handling": 0-100,
+    "input_safety": 0-100,
+    "unsafe_operations": 0-100
+  },
+  "review_confidence_score": 0-100,
+  "review_confidence_breakdown": {
+    "inspection_depth": 0-100,
+    "command_evidence": 0-100,
+    "issue_specificity": 0-100,
+    "uncertainty_handling": 0-100
+  },
+  "weighted_components": {
+    "task_fulfillment": 0.0-20.0,
+    "functional_correctness": 0.0-25.0,
+    "executability": 0.0-15.0,
+    "test_quality": 0.0-15.0,
+    "code_quality": 0.0-10.0,
+    "minimality": 0.0-10.0,
+    "security_safety": 0.0-5.0
+  },
+  "weighted_total": 0.0-100.0,
+  "verdict": "excellent|good|mixed|poor|failed",
+  "key_findings": ["..."],
+  "score_rationale": {
+    "task_fulfillment": "...",
+    "functional_correctness": "...",
+    "executability": "...",
+    "test_quality": "...",
+    "code_quality": "...",
+    "minimality": "...",
+    "security_safety": "...",
+    "review_confidence": "..."
+  },
+  "instruction_failures": ["..."],
+  "correctness_failures": ["..."],
+  "execution_failures": ["..."],
+  "test_gaps": ["..."],
+  "quality_notes": ["..."],
+  "unnecessary_code_examples": ["..."],
+  "security_safety_notes": ["..."],
+  "file_evidence": [
+    {"path": "...", "note": "..."}
+  ],
+  "commands_run": ["..."],
+  "review_risk": "..."
+}

@@ -1,0 +1,153 @@
+```json
+{
+  "rubric_version": "benchmark-codegen-review-v1",
+  "score_scale": "0-100 per category",
+  "weights": {
+    "task_fulfillment": 0.20,
+    "functional_correctness": 0.25,
+    "executability": 0.15,
+    "test_quality": 0.15,
+    "code_quality": 0.10,
+    "minimality": 0.10,
+    "security_safety": 0.05
+  },
+  "task_fulfillment_score": 88,
+  "task_fulfillment_breakdown": {
+    "instruction_compliance": 88,
+    "required_artifacts": 95,
+    "feature_coverage": 90,
+    "constraint_adherence": 85
+  },
+  "functional_correctness_score": 81,
+  "functional_correctness_breakdown": {
+    "domain_invariants": 72,
+    "edge_case_behavior": 78,
+    "data_consistency": 85,
+    "error_semantics": 88
+  },
+  "executability_score": 89,
+  "executability_breakdown": {
+    "installability": 90,
+    "runtime_entrypoints": 92,
+    "command_result": 85,
+    "runtime_isolation": 90
+  },
+  "test_quality_score": 88,
+  "test_quality_breakdown": {
+    "required_test_coverage": 92,
+    "behavioral_assertions": 88,
+    "integration_realism": 88,
+    "repeatability": 85
+  },
+  "code_quality_score": 85,
+  "code_quality_breakdown": {
+    "readability": 88,
+    "maintainability": 82,
+    "boundary_design": 88,
+    "documentation_quality": 80
+  },
+  "minimality_score": 82,
+  "minimality_breakdown": {
+    "no_speculative_infrastructure": 90,
+    "no_dead_or_duplicate_code": 78,
+    "appropriate_abstractions": 88,
+    "dependency_minimality": 70
+  },
+  "security_safety_score": 89,
+  "security_safety_breakdown": {
+    "auth_enforcement": 92,
+    "secret_handling": 78,
+    "input_safety": 90,
+    "unsafe_operations": 95
+  },
+  "review_confidence_score": 91,
+  "review_confidence_breakdown": {
+    "inspection_depth": 95,
+    "command_evidence": 90,
+    "issue_specificity": 90,
+    "uncertainty_handling": 88
+  },
+  "weighted_components": {
+    "task_fulfillment": 17.6,
+    "functional_correctness": 20.3,
+    "executability": 13.4,
+    "test_quality": 13.2,
+    "code_quality": 8.5,
+    "minimality": 8.2,
+    "security_safety": 4.5
+  },
+  "weighted_total": 85.6,
+  "verdict": "good",
+  "key_findings": [
+    "Clean layered design (models/repository/service/security/app) with all requested features: SKU create, stock adjust, reservations with 30s TTL, confirm-to-order, cancel, idempotency, X-API-Key auth on mutations, and paginated /orders.",
+    "All 39 tests pass (PYTHONPATH=src python3 -m pytest tests/ -q -> 39 passed); egg-info present confirms the package was installed editable in the originating env.",
+    "Repository uses 'BEGIN IMMEDIATE' transactions with rollback for reserve/confirm/cancel, and the total_stock = on_hand + reserved invariant is maintained across confirm/cancel.",
+    "HTTP error semantics are appropriate: 409 insufficient stock, 410 expired reservation, 404 not found, 403 auth, 400 validation.",
+    "Domain gap: expired reservations are rejected on confirm (410) but their reserved units are never released — no sweeper and they remain in 'pending' state, so stock is held indefinitely until explicitly cancelled.",
+    "Idempotent retry returns the original reservation_id but the service rebuilds the response with state=PENDING and a fresh created_at instead of the stored state/created_at, so a retry after confirm/cancel can misreport state and timestamp.",
+    "pydantic-settings is declared as a dependency but never imported/used; ErrorResponse is imported in app.py but never referenced — minor dead code/dependency.",
+    "README claims 'persistent storage' / 'SQLite Backend' but app.py hardcodes db_path=':memory:' with no env configuration, so data is lost on restart."
+  ],
+  "score_rationale": {
+    "task_fulfillment": "Every requested artifact and endpoint is present and the output contract is met. Minor deduction because the README advertises persistent SQLite storage while the running app is purely in-memory and not configurable.",
+    "functional_correctness": "Happy paths, insufficient stock, idempotency, expiration rejection, auth, and pagination all behave correctly and transactions are atomic. Lowered for two real issues: expired reservations leak reserved stock (never released), and idempotent retries reconstruct state/created_at rather than echoing the stored reservation.",
+    "executability": "pyproject is complete and the uvicorn entrypoint is valid; tests pass once installed. Tests rely on the package being installed (no conftest/pythonpath fallback), so a bare 'pytest tests/' fails with ModuleNotFoundError until 'pip install -e' is run, as the README instructs.",
+    "test_quality": "Two suites (service-level and API-level) cover all required scenarios and assert behavior (reserved counts, state transitions, invariant) beyond status codes, using a real SQLite TestClient. Slight deduction: API suite shares one in-memory DB reset by DELETE rather than per-test isolation, and there is no test asserting expired-reservation stock release (because that behavior does not exist).",
+    "code_quality": "Readable, well-separated layers with visible invariants. Maintainability is dented by the idempotency state-reconstruction logic in service.create_reservation and by documentation overstating persistence.",
+    "minimality": "No speculative queues/workers/migrations/CLIs. Deductions for an unused pydantic-settings dependency, an unused ErrorResponse import, a redundant ValueError exception handler (every route already catches ValueError), and a duplicated stock-availability check in service vs repository.",
+    "security_safety": "All mutating endpoints depend on verify_api_key; SQL is fully parameterized and inputs validated via Pydantic. Deduction because the valid API key is hardcoded in security.py with no env override, and read endpoints (/orders, /reservations/{id}) are unauthenticated.",
+    "review_confidence": "All source and test files were read and the full suite was executed successfully; findings cite concrete files/lines. Confidence high; only runtime concurrency behavior under real load was not exercised."
+  },
+  "instruction_failures": [
+    "README claims persistent SQLite storage but the app runs an in-memory database (src/commerce_service/app.py:19), a minor contract mismatch."
+  ],
+  "correctness_failures": [
+    "Expired reservations never release their reserved units: confirm raises 410 (src/commerce_service/repository.py:232) but reserved stock is only decremented on confirm/cancel, and an expired reservation stays in 'pending' with no auto-release, permanently holding stock.",
+    "Idempotent retry misrepresents stored data: service.create_reservation returns the existing reservation_id but always sets state=ReservationState.PENDING and created_at=datetime.utcnow() (src/commerce_service/service.py:51-58), so retrying a key whose reservation was later confirmed/cancelled returns a wrong state and a non-stable created_at.",
+    "Idempotency does not validate that the retried units/sku match the original request; only (idempotency_key, sku) is keyed (repository.py:132-139), so a same-key different-units retry silently returns the old reservation."
+  ],
+  "execution_failures": [
+    "Bare 'pytest tests/' fails with ModuleNotFoundError: No module named 'commerce_service' unless the package is installed (no conftest.py or [tool.pytest.ini_options] pythonpath); succeeds with editable install per README or PYTHONPATH=src."
+  ],
+  "test_gaps": [
+    "No test verifies stock release semantics for expired reservations (the leak goes uncovered).",
+    "No test confirms the idempotent retry returns the *same* created_at/state, only that reservation_id matches (tests/test_api.py:147-165), so the state-reconstruction bug is masked.",
+    "No test for confirming an already-confirmed or cancelled reservation (state-transition rejection path in repository.py:228).",
+    "API tests share a single in-memory DB cleaned via DELETE rather than per-test isolation; correct here but fragile."
+  ],
+  "quality_notes": [
+    "Redundant @app.exception_handler(ValueError) (app.py:161) — every route already converts ValueError to HTTPException, so the handler is effectively unreachable.",
+    "Duplicate stock-availability check: service.create_reservation checks on_hand<units (service.py:42) and repository.create_reservation re-checks inside the transaction (repository.py:150); only the repo check is authoritative.",
+    "datetime.utcnow() used throughout triggers DeprecationWarning on Python 3.12 (329 warnings during test run); requires-python is >=3.11."
+  ],
+  "unnecessary_code_examples": [
+    "pydantic-settings>=2.0.0 declared in pyproject.toml:13 but never imported or used anywhere in src/.",
+    "ErrorResponse model defined in models.py:49 and imported in app.py:10 but never referenced as a response_model or otherwise.",
+    "Unused @app.exception_handler(ValueError) safety net (app.py:161-166)."
+  ],
+  "security_safety_notes": [
+    "All mutating endpoints enforce Depends(verify_api_key) (app.py:33,46,58,103,127); reads are intentionally open.",
+    "API key 'test-key-12345' is hardcoded in security.py:6 with no environment override — acceptable for a demo but not production-configurable.",
+    "All SQL is parameterized (no string interpolation) and inputs are validated via Pydantic Field constraints (models.py:12-24).",
+    "No shell/file/network/destructive operations in the codebase."
+  ],
+  "file_evidence": [
+    {"path": "src/commerce_service/repository.py", "note": "BEGIN IMMEDIATE transactions with rollback for reserve/confirm/cancel; idempotency check (132-139) returns existing row by (idempotency_key, sku); expiry re-checked inside confirm txn (232) but reserved units only released on confirm/cancel, never on expiry."},
+    {"path": "src/commerce_service/service.py", "note": "Idempotent retry rebuilds ReservationResponse with state=PENDING and fresh created_at (51-58) instead of stored values; adjust_stock guards reduction below reserved (23-27)."},
+    {"path": "src/commerce_service/app.py", "note": "In-memory Repository(db_path=':memory:') at module load (19); correct status-code mapping (409/410/404/400); ErrorResponse imported but unused; redundant ValueError handler (161)."},
+    {"path": "src/commerce_service/security.py", "note": "APIKeyHeader with auto_error=False; hardcoded VALID_API_KEYS; 403 on missing/invalid key."},
+    {"path": "pyproject.toml", "note": "Complete packaging (src layout, package-dir); declares unused pydantic-settings dependency (13)."},
+    {"path": "tests/test_service.py", "note": "Service-level tests incl. expired (manual past expires_at), idempotency, invariant, pagination, invalid limit/offset — all behavioral."},
+    {"path": "tests/test_api.py", "note": "API tests cover auth 403, insufficient 409, idempotency, pagination, and stock invariant via _service.repo.get_sku; shared in-memory DB reset by DELETE fixture."},
+    {"path": "README.md", "note": "Claims 'SQLite Backend: persistent storage' and 'ACID semantics' while app is in-memory (overstatement)."}
+  ],
+  "commands_run": [
+    "find . -type f (project listing)",
+    "python3 -c 'import fastapi, httpx, pytest' -> deps ok",
+    "python3 -m pytest tests/ -q -> ModuleNotFoundError (package not installed)",
+    "PYTHONPATH=src python3 -m pytest tests/ -q -> 39 passed, 329 warnings",
+    "grep for pydantic_settings/BaseSettings/ErrorResponse usage -> confirmed unused dependency and import"
+  ],
+  "review_risk": "low — all source and test files were read and the full suite was run successfully (39 passed via PYTHONPATH=src); only real-load concurrency behavior of the shared in-memory SQLite connection was not exercised."
+}
+```

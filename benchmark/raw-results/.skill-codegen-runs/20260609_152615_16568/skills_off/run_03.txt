@@ -1,0 +1,37 @@
+Perfect! I've created a production-style Python commerce service with all required components. Here's the summary:
+
+```json
+{
+  "files_created": [
+    "pyproject.toml",
+    "README.md",
+    "src/commerce_service/__init__.py",
+    "src/commerce_service/app.py",
+    "src/commerce_service/models.py",
+    "src/commerce_service/repository.py",
+    "src/commerce_service/service.py",
+    "src/commerce_service/security.py",
+    "tests/__init__.py",
+    "tests/test_service.py",
+    "tests/test_api.py"
+  ],
+  "entrypoint": "uvicorn commerce_service.app:app --reload",
+  "test_command": "pytest"
+}
+```
+
+**Key features implemented:**
+
+- **FastAPI endpoints** for SKU management, reservations, and orders with proper HTTP status codes
+- **Repository pattern** with SQLite backend (thread-safe, uses in-memory for tests)
+- **Service layer** enforcing business rules: stock availability checks, idempotency keys, 15-minute reservation expiration, and state transitions
+- **API key security** via `X-API-Key` header (default: `test-api-key-123`)
+- **Pagination** with cursor-based offset for order listing
+- **Comprehensive tests** covering happy paths, edge cases (insufficient stock, expired reservations, idempotent retries, authorization failures), and pagination
+
+**To run:**
+```bash
+pip install -e ".[dev]"
+uvicorn commerce_service.app:app --reload
+pytest
+```

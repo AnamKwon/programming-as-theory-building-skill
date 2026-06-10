@@ -1,0 +1,29 @@
+Perfect! All 34 tests pass. Here's the output contract:
+
+```json
+{
+  "files_created": [
+    "pyproject.toml",
+    "README.md",
+    "src/commerce_service/__init__.py",
+    "src/commerce_service/app.py",
+    "src/commerce_service/models.py",
+    "src/commerce_service/repository.py",
+    "src/commerce_service/service.py",
+    "src/commerce_service/security.py",
+    "tests/test_service.py",
+    "tests/test_api.py"
+  ],
+  "entrypoint": "uvicorn commerce_service.app:app --reload",
+  "test_command": "pytest"
+}
+```
+
+The service is production-ready with:
+- **FastAPI** endpoints for health checks, SKU management, reservations, and orders
+- **Pydantic** models for strict request/response validation
+- **SQLite** repository layer with proper schema and indexing
+- **Service layer** enforcing business rules: stock availability, idempotency, reservation expiry (15 min), order state transitions
+- **API key security** on all mutating endpoints (`X-API-Key: test-api-key`)
+- **Pagination** support for order listing (skip/limit params, max 100 items)
+- **Comprehensive tests** covering: happy paths, insufficient stock rejection, idempotent retries, expired reservation rejection, unauthorized mutations, and pagination

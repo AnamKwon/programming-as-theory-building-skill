@@ -43,8 +43,8 @@ Code generation used **Claude Haiku** through the Claude Code `MODEL=haiku` sett
 
 Latest comparable 3-arm summary used:
 
-- Codegen runs: `.skill-codegen-runs/20260609_152615_16568`, `.skill-codegen-runs/20260609_195509_38196`
-- Review runs: `.skill-review-runs/20260609_170106_24348`, `.skill-review-runs/20260609_231224_49469`
+- Codegen runs: `benchmark/raw-results/.skill-codegen-runs/20260609_152615_16568`, `benchmark/raw-results/.skill-codegen-runs/20260609_195509_38196`
+- Review runs: `benchmark/raw-results/.skill-review-runs/20260609_170106_24348`, `benchmark/raw-results/.skill-review-runs/20260609_231224_49469`
 - Codegen model setting: `MODEL=haiku`
 - Repeats: 20 per arm, 60 total reviewed projects
 - Prompt: FastAPI + SQLite inventory reservation and order orchestration API
@@ -66,11 +66,14 @@ The Karpathy-only arm was useful as general coding discipline and slightly outpe
 
 The theory-only arm was not perfect. Review still found oversell, expiration, and validation bugs in some runs. The useful signal is that it shifted the distribution: more `good` verdicts, higher average functional correctness, and clearer service/repository/API boundaries tied to the requested workflow.
 
-The public benchmark files include the aggregate summary, per-run extracted review results, and copied manifests:
+The public benchmark files include the aggregate summary plus raw copied codegen/review run folders:
 
 - `benchmark/results-20260609.json`
-- `benchmark/raw-results/review-results-20260609.jsonl`
-- `benchmark/raw-results/manifests/*.tsv`
+- `benchmark/raw-results/.skill-codegen-runs/`
+- `benchmark/raw-results/.skill-review-runs/`
+
+The 20-run aggregate uses the two complete 2026-06-09 review sets. Additional 2026-06-10 raw folders are included for auditability, but they are partial review runs and are not included in the headline three-arm summary.
+Generated SQLite databases, Python caches, and pytest caches are intentionally ignored.
 
 ## Install
 
@@ -109,12 +112,14 @@ These guidelines are working if you see:
 
 ## Reproduce the benchmark
 
-From the parent experiment workspace:
+From the parent experiment workspace, run two 10-repeat sets and aggregate the comparable three-arm results:
 
 ```bash
-MODEL=haiku REPEATS=20 ARMS="skills_off karpathy_only theory_only" ./run_skill_codegen_experiment.sh
+MODEL=haiku REPEATS=10 ARMS="skills_off karpathy_only theory_only" ./run_skill_codegen_experiment.sh
 MODEL=opus ./run_opus_code_review_experiment.sh .skill-codegen-runs/<run_id>
 ```
+
+The published summary combines two complete 10-repeat review sets. A fresh `REPEATS=20` run can produce the same sample size, but it will not reproduce the exact copied run ids.
 
 The benchmark harness intentionally keeps `both` out of the default comparison set. `ARMS=both` remains available as an explicit opt-in, but the default comparison isolates single-skill effects.
 
@@ -136,8 +141,8 @@ Naur, Peter. "Programming as Theory Building." *Microprocessing and Microprogram
 |-- benchmark/
 |   |-- README.md
 |   |-- raw-results/
-|   |   |-- manifests/
-|   |   `-- review-results-20260609.jsonl
+|   |   |-- .skill-codegen-runs/
+|   |   `-- .skill-review-runs/
 |   `-- results-20260609.json
 |-- skills/
 |   `-- programming-as-theory-building/

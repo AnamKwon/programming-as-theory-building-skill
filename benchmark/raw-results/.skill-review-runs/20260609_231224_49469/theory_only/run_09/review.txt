@@ -1,0 +1,154 @@
+I have enough evidence. The production API path works (21 api tests pass), but the entire service-layer test suite (20 tests) fails because `Repository(":memory:")` opens a fresh connection per operation and SQLite in-memory databases are per-connection — so tables created in `_init_db()` vanish.
+
+```json
+{
+  "rubric_version": "benchmark-codegen-review-v1",
+  "score_scale": "0-100 per category",
+  "weights": {
+    "task_fulfillment": 0.20,
+    "functional_correctness": 0.25,
+    "executability": 0.15,
+    "test_quality": 0.15,
+    "code_quality": 0.10,
+    "minimality": 0.10,
+    "security_safety": 0.05
+  },
+  "task_fulfillment_score": 89,
+  "task_fulfillment_breakdown": {
+    "instruction_compliance": 85,
+    "required_artifacts": 95,
+    "feature_coverage": 90,
+    "constraint_adherence": 85
+  },
+  "functional_correctness_score": 79,
+  "functional_correctness_breakdown": {
+    "domain_invariants": 78,
+    "edge_case_behavior": 85,
+    "data_consistency": 65,
+    "error_semantics": 88
+  },
+  "executability_score": 72,
+  "executability_breakdown": {
+    "installability": 90,
+    "runtime_entrypoints": 88,
+    "command_result": 40,
+    "runtime_isolation": 70
+  },
+  "test_quality_score": 62,
+  "test_quality_breakdown": {
+    "required_test_coverage": 70,
+    "behavioral_assertions": 82,
+    "integration_realism": 60,
+    "repeatability": 35
+  },
+  "code_quality_score": 84,
+  "code_quality_breakdown": {
+    "readability": 88,
+    "maintainability": 82,
+    "boundary_design": 88,
+    "documentation_quality": 78
+  },
+  "minimality_score": 74,
+  "minimality_breakdown": {
+    "no_speculative_infrastructure": 70,
+    "no_dead_or_duplicate_code": 68,
+    "appropriate_abstractions": 85,
+    "dependency_minimality": 72
+  },
+  "security_safety_score": 89,
+  "security_safety_breakdown": {
+    "auth_enforcement": 90,
+    "secret_handling": 80,
+    "input_safety": 90,
+    "unsafe_operations": 95
+  },
+  "review_confidence_score": 93,
+  "review_confidence_breakdown": {
+    "inspection_depth": 95,
+    "command_evidence": 95,
+    "issue_specificity": 92,
+    "uncertainty_handling": 88
+  },
+  "weighted_components": {
+    "task_fulfillment": 17.8,
+    "functional_correctness": 19.8,
+    "executability": 10.8,
+    "test_quality": 9.3,
+    "code_quality": 8.4,
+    "minimality": 7.4,
+    "security_safety": 4.5
+  },
+  "weighted_total": 77.9,
+  "verdict": "good",
+  "key_findings": [
+    "Coherent, cleanly layered FastAPI project (models/repository/service/security/app) covering the full requested surface: SKUs, reservations with idempotency keys, expiration auto-cancel, order confirmation/listing, API-key auth, and pagination.",
+    "CRITICAL: the entire service-layer test suite (tests/test_service.py, 20 tests) fails with 'no such table' — Repository(':memory:') opens a new sqlite3 connection per operation (repository.py:66-74), but each :memory: connection is a separate empty DB, so tables created in _init_db() are gone by the next call.",
+    "Running the declared command `pytest tests/` yields 21 passed, 20 failed, 20 errors. The file-backed API tests pass; the in-memory service tests are entirely broken.",
+    "Mutating endpoints all enforce validate_api_key; SQL is fully parameterized; pydantic validates request bodies and pagination bounds (offset>=0, 1<=limit<=100).",
+    "Several dead/unused artifacts: IdempotencyKeyExistsError (defined+imported, never raised), ErrorResponse model (unused), cleanup_expired_reservations() (no caller/endpoint), pydantic-settings dependency (never imported)."
+  ],
+  "score_rationale": {
+    "task_fulfillment": "All requested files and the full endpoint surface are present and match the README. Slight deduction: persistence is a file (commerce.db) written into cwd rather than an isolated/configurable store, and config defaults to a baked-in 'test-key'.",
+    "functional_correctness": "Core invariants generally hold: stock is deducted on reservation (service.py:93), restored on cancel (service.py:167) and on expiry-confirm (service.py:117); idempotent create returns the existing reservation (service.py:76-78). Weaknesses: cancel_reservation allows cancelling an already-CONFIRMED reservation and returns stock while leaving the created order in CONFIRMED state (service.py:158-167) — stock/order inconsistency; reserve performs insert + adjust_stock as two separate connections/commits, so it is non-atomic under concurrency.",
+    "executability": "Packaging is complete and pinned; uvicorn entrypoint and Repository() default work and the API tests confirm the app runs. But the declared test command produces 40 non-passing results because the in-memory Repository configuration is fundamentally unusable with the connection-per-call pattern.",
+    "test_quality": "Test intent is good — assertions check real behavior (stock reduced/restored, status transitions, pagination totals) not just status codes. However half the suite never executes (no such table), test_api shares one on-disk commerce.db relying on clear_all rather than true isolation, and test_confirm_expired_reservation contains broken code (service.repo.repo._conn().__enter__() — double .repo attribute and a context manager that is never exited).",
+    "code_quality": "Readable, idiomatic FastAPI with clean separation of concerns and visible invariants in the service layer. README is mostly accurate but overstates that `pytest tests/` passes. Use of deprecated datetime.utcnow() throughout.",
+    "minimality": "Mostly tight, but carries dead code (IdempotencyKeyExistsError, ErrorResponse), an unwired cleanup_expired_reservations() method and matching expired-reservation query, an unused idempotency index alongside the column's UNIQUE constraint, and an unused pydantic-settings dependency.",
+    "security_safety": "Strong: all mutating routes require the API key, queries are parameterized, inputs validated. Minor: API key compared with a plain != (not constant-time) and a dev-default key falls back silently if API_KEY is unset.",
+    "review_confidence": "All source and test files were read and the full test suite was executed, with the failure root-caused to the :memory: connection pattern; behavior under concurrency is reasoned about, not load-tested."
+  },
+  "instruction_failures": [
+    "README claims `pytest tests/` runs the suite, but 40 of 61 tests do not pass.",
+    "Persistence defaults to a commerce.db file in the current working directory (ambient state) rather than an isolated or injectable store."
+  ],
+  "correctness_failures": [
+    "cancel_reservation on a CONFIRMED reservation restores stock (service.py:158-167) but leaves the previously-created order in CONFIRMED status, producing a stock/order inconsistency.",
+    "create_reservation is non-atomic: create_reservation insert and adjust_stock (-quantity) run as separate connections/commits (service.py:90-93), so a failure between them or concurrent callers can over/under-reserve stock.",
+    "Idempotent create returns the existing reservation without verifying the new request's sku_id/quantity match the stored one (service.py:76-78)."
+  ],
+  "execution_failures": [
+    "tests/test_service.py: all 20 tests fail/error with sqlite3.OperationalError 'no such table: skus/orders' because Repository(':memory:') creates a fresh, empty in-memory DB on every _conn() call (repository.py:66-74, 13).",
+    "tests/test_service.py teardown clear_all() also errors for the same reason, producing 20 additional errors."
+  ],
+  "test_gaps": [
+    "Expiration is never actually verified end-to-end: test_confirm_expired_reservation is broken (service.repo.repo._conn()... at test_service.py:122-126) and would AttributeError even if the :memory: DB worked; no API-level expiration test exists.",
+    "No test for cancelling a confirmed reservation's effect on the existing order, nor for the stock/order inconsistency.",
+    "No test asserting GET endpoints (orders/reservations) are intentionally public vs requiring auth.",
+    "test_api.py:289 issues GET /skus/1 against a nonexistent route and never asserts the result (dead line)."
+  ],
+  "quality_notes": [
+    "datetime.utcnow() is deprecated (repository.py:122,178; service.py:205) — emits DeprecationWarnings and stores naive timestamps.",
+    "README states the default key is dev-only but the service still silently accepts 'test-key' if API_KEY is unset, which is risky in production.",
+    "Service uses ValueError for several not-found/validation cases while defining dedicated exceptions elsewhere — inconsistent error modeling (e.g. get_order/adjust_stock raise ValueError mapped to 404/400)."
+  ],
+  "unnecessary_code_examples": [
+    "IdempotencyKeyExistsError defined in service.py:34-37 and imported in app.py but never raised.",
+    "ErrorResponse model in models.py:71-72 is never used as a response_model.",
+    "cleanup_expired_reservations() (service.py:191-199) and get_expired_reservations()/idx_orders_reservation_id have no caller, endpoint, or scheduler.",
+    "pydantic-settings is declared in pyproject.toml dependencies but never imported (security uses os.getenv).",
+    "idx_reservations_idempotency (repository.py:59) duplicates the index implied by the UNIQUE constraint on idempotency_key."
+  ],
+  "security_safety_notes": [
+    "All mutating endpoints call validate_api_key (app.py:53,66,84,119,137); read endpoints are intentionally open.",
+    "API key check uses plain string inequality (security.py:24), not constant-time — minor timing concern.",
+    "No hardcoded real secret; default 'test-key' fallback is documented as development-only but applied silently when API_KEY is unset.",
+    "All SQL is parameterized (repository.py) — no injection risk; no shell/network/destructive operations."
+  ],
+  "file_evidence": [
+    {"path": "src/commerce_service/repository.py", "note": "_conn() (lines 66-74) opens and closes a new sqlite3 connection per call; with db_path=':memory:' each call is a separate empty DB, breaking all service tests. Default db_path 'commerce.db' writes to cwd."},
+    {"path": "tests/test_service.py", "note": "Uses Repository(':memory:') (line 19) — all 20 tests fail 'no such table'. Lines 122-126 contain broken expiry setup (service.repo.repo._conn().__enter__())."},
+    {"path": "tests/test_api.py", "note": "21 tests pass using shared file-backed commerce.db with autouse clear_all; line 289 calls nonexistent GET /skus/1 without asserting."},
+    {"path": "src/commerce_service/service.py", "note": "cancel_reservation (158-167) returns stock for a CONFIRMED reservation without reverting its order; create_reservation (90-93) reserve+adjust is non-atomic; IdempotencyKeyExistsError (34-37) and cleanup_expired_reservations (191-199) unused."},
+    {"path": "src/commerce_service/app.py", "note": "Mutating routes enforce validate_api_key; error mapping to 400/401/403/404/409/410 is clean; imports IdempotencyKeyExistsError which is never raised."},
+    {"path": "pyproject.toml", "note": "Complete, pinned deps; lists unused pydantic-settings."}
+  ],
+  "commands_run": [
+    "python3 --version (3.12.4)",
+    "python3 -c 'import fastapi, pydantic, httpx' (deps ok)",
+    "python3 -m pytest tests/ -v (20 failed, 21 passed, 20 errors)",
+    "python3 -m pytest tests/test_api.py -q (21 passed)",
+    "python3 -m pytest tests/test_service.py::TestSKU::test_create_sku (sqlite3.OperationalError: no such table)"
+  ],
+  "review_risk": "low — all source and test files were read and the full suite was executed locally with deps available; the :memory: failure was root-caused, though concurrency/atomicity concerns are reasoned about rather than load-tested."
+}
+```

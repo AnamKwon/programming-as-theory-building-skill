@@ -1,0 +1,33 @@
+```json
+{
+  "files_created": 10,
+  "entrypoint": "src/commerce_service/app.py",
+  "test_command": "pytest tests/"
+}
+```
+
+All files created successfully. The service includes:
+
+**Core Components:**
+- **models.py**: SQLAlchemy ORM models (SKU, Reservation, Order) + Pydantic schemas
+- **repository.py**: Database access layer with CRUD operations
+- **service.py**: Business logic for stock management, reservation lifecycle, and order orchestration
+- **security.py**: API key authentication for mutating endpoints
+- **app.py**: FastAPI application with 7 endpoint groups (health, SKUs, reservations, orders)
+
+**Test Coverage (27 tests):**
+- ✅ Happy paths for all endpoints
+- ✅ Insufficient stock scenarios
+- ✅ Idempotent reservation retry
+- ✅ Expired reservation rejection
+- ✅ Unauthorized mutation attempts
+- ✅ Invalid state transitions
+- ✅ Pagination and list ordering
+
+**Key Features:**
+- Repository pattern isolates database access
+- Service layer enforces business rules (10-min reservation TTL, stock availability)
+- Idempotency keys prevent duplicate reservations
+- API key validation on mutating endpoints
+- Clear HTTP error codes (401, 404, 409, 410)
+- Pagination support for orders (limit + offset)

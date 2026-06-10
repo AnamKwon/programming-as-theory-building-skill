@@ -1,0 +1,32 @@
+Perfect! I've created a production-style inventory and order orchestration API. Here's the output contract:
+
+```json
+{
+  "files_created": [
+    "pyproject.toml",
+    "README.md",
+    "src/commerce_service/__init__.py",
+    "src/commerce_service/app.py",
+    "src/commerce_service/models.py",
+    "src/commerce_service/repository.py",
+    "src/commerce_service/service.py",
+    "src/commerce_service/security.py",
+    "tests/__init__.py",
+    "tests/test_service.py",
+    "tests/test_api.py"
+  ],
+  "entrypoint": "commerce_service.app:app",
+  "test_command": "pytest"
+}
+```
+
+The service implements:
+- **FastAPI endpoints** for health checks, SKU management, reservations, and order lookup
+- **Repository pattern** with SQLAlchemy ORM for SQLite database access
+- **Service layer** with stock availability checks, idempotency via idempotency keys, and 15-minute reservation expiration
+- **Security** via API-key header validation for all mutating endpoints
+- **Order state transitions** from pending → confirmed, with automatic order creation on confirmation
+- **Pagination** for order listing (limit 1-100, offset-based)
+- **Comprehensive tests** covering happy paths, edge cases (insufficient stock, expired reservations), unauthorized access, and pagination
+
+Run with: `uvicorn commerce_service.app:app --reload`

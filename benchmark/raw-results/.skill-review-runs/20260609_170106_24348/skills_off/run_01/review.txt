@@ -1,0 +1,161 @@
+Confirmed: `pydantic-settings` is declared but never imported; `Float` and `contextmanager` are imported but unused.
+
+```json
+{
+  "rubric_version": "benchmark-codegen-review-v1",
+  "score_scale": "0-100 per category",
+  "weights": {
+    "task_fulfillment": 0.20,
+    "functional_correctness": 0.25,
+    "executability": 0.15,
+    "test_quality": 0.15,
+    "code_quality": 0.10,
+    "minimality": 0.10,
+    "security_safety": 0.05
+  },
+  "task_fulfillment_score": 68,
+  "task_fulfillment_breakdown": {
+    "instruction_compliance": 65,
+    "required_artifacts": 90,
+    "feature_coverage": 45,
+    "constraint_adherence": 70
+  },
+  "functional_correctness_score": 46,
+  "functional_correctness_breakdown": {
+    "domain_invariants": 25,
+    "edge_case_behavior": 45,
+    "data_consistency": 40,
+    "error_semantics": 75
+  },
+  "executability_score": 61,
+  "executability_breakdown": {
+    "installability": 85,
+    "runtime_entrypoints": 80,
+    "command_result": 20,
+    "runtime_isolation": 60
+  },
+  "test_quality_score": 44,
+  "test_quality_breakdown": {
+    "required_test_coverage": 50,
+    "behavioral_assertions": 60,
+    "integration_realism": 35,
+    "repeatability": 30
+  },
+  "code_quality_score": 70,
+  "code_quality_breakdown": {
+    "readability": 80,
+    "maintainability": 60,
+    "boundary_design": 78,
+    "documentation_quality": 60
+  },
+  "minimality_score": 58,
+  "minimality_breakdown": {
+    "no_speculative_infrastructure": 50,
+    "no_dead_or_duplicate_code": 45,
+    "appropriate_abstractions": 70,
+    "dependency_minimality": 65
+  },
+  "security_safety_score": 86,
+  "security_safety_breakdown": {
+    "auth_enforcement": 90,
+    "secret_handling": 75,
+    "input_safety": 85,
+    "unsafe_operations": 95
+  },
+  "review_confidence_score": 88,
+  "review_confidence_breakdown": {
+    "inspection_depth": 92,
+    "command_evidence": 88,
+    "issue_specificity": 90,
+    "uncertainty_handling": 82
+  },
+  "weighted_components": {
+    "task_fulfillment": 13.6,
+    "functional_correctness": 11.5,
+    "executability": 9.2,
+    "test_quality": 6.6,
+    "code_quality": 7.0,
+    "minimality": 5.8,
+    "security_safety": 4.3
+  },
+  "weighted_total": 58.0,
+  "verdict": "mixed",
+  "key_findings": [
+    "Critical: reservations never decrement stock (service.py:75-89). The availability check compares against full stock, so unlimited overlapping reservations succeed and the stock-availability invariant is violated.",
+    "Critical: order orchestration is non-functional. repository.create_order/confirm_order/cancel_order and service.get_order are never invoked, and there is no POST /orders endpoint — GET /orders can only ever return an empty list.",
+    "Test suite fails: 15 failed / 15 passed. API tests build the in-memory SQLite engine without StaticPool/check_same_thread=False, so TestClient's worker thread raises 'SQLite objects created in a thread can only be used in that same thread'.",
+    "Two service tests (test_confirm_reservation_expired, test_create_reservation_idempotency_conflict_on_expired) fail because a 1s TTL has not elapsed when expiry is evaluated — expiration is wall-clock dependent and untested deterministically.",
+    "Auth is enforced on all mutating endpoints via verify_api_key, and pydantic request validation has sensible bounds (good security posture).",
+    "Dead/unused code: Float import (models.py:6), contextmanager import (app.py:2), declared-but-unused pydantic-settings dependency, and the entire order repository layer."
+  ],
+  "score_rationale": {
+    "task_fulfillment": "SKU/stock/reservation surface and project structure are present and match the README, but two requested workflows are effectively absent: stock is never actually reserved, and order creation/orchestration is unwired, so feature coverage is materially incomplete.",
+    "functional_correctness": "Idempotent retry, insufficient-stock-on-oversize, and HTTP error semantics work, but the central domain invariant (reserving stock) is broken, order state transitions are unreachable, and per-call commits with check-then-act create consistency/race exposure.",
+    "executability": "Package metadata and entrypoints are plausible and the app imports, but the declared `pytest tests/` command fails on the majority of tests due to a threading/engine misconfiguration, and importing app.py writes commerce.db into the cwd as a side effect.",
+    "test_quality": "Tests nominally touch happy/insufficient/idempotency/expiry/auth/pagination and assert some domain values, but they cannot test order creation (impossible) or stock decrement (not implemented), the API integration fixture is broken, and expiry tests are timing-fragile and currently failing.",
+    "code_quality": "Layering (models/repository/service/security/app) is clean and readable, but invariants are not centralized, the reservation-to-dict serialization is duplicated five times, and the README overclaims order functionality that does not exist.",
+    "minimality": "A full unused order persistence layer, two dead imports, and an unused pydantic-settings dependency weigh against minimality, though core abstractions are otherwise proportionate.",
+    "security_safety": "Mutating endpoints uniformly require the API-key dependency, inputs are validated with bounded pydantic fields, and there are no unsafe shell/file/network operations; the only note is the insecure default API key fallback ('test-key').",
+    "review_confidence": "All source and test files were read and the test command was executed with failures captured; grep confirmed unused symbols and the unwired order layer. Remaining uncertainty is limited to runtime behavior under concurrency, not covered by static review."
+  },
+  "instruction_failures": [
+    "Requested order orchestration workflow is not exposed via any API endpoint and its service/repository methods are never called.",
+    "README claims (order orchestration, reservation grouping) are not backed by working code."
+  ],
+  "correctness_failures": [
+    "Creating a reservation does not decrement or hold stock (service.py:75-89), allowing unlimited over-reservation against the same stock.",
+    "Orders can never be created, so GET /orders, order confirmation, and order cancellation are inert.",
+    "Reservation expiration relies on wall-clock elapsing between create and check; mark_expired_reservations run immediately after a short TTL does not mark anything (repository.py:130-142, service.py:110)."
+  ],
+  "execution_failures": [
+    "pytest tests/ => 15 failed, 15 passed, 5 errors.",
+    "API tests raise sqlite3.ProgrammingError 'SQLite objects created in a thread can only be used in that same thread' because the in-memory engine in tests/test_api.py:13 omits StaticPool and check_same_thread=False.",
+    "test_create_sku_success returns 500 due to the underlying thread error being swallowed by the broad except in app.py:61-64."
+  ],
+  "test_gaps": [
+    "No test creates an order or verifies order state transitions (confirm/cancel) — impossible given missing wiring.",
+    "No test asserts stock is reduced after a successful reservation (the missing behavior).",
+    "No deterministic expiration test (TTL relies on real elapsed time; current expiry tests fail).",
+    "Auth-required tests omit the confirm/cancel reservation endpoints.",
+    "Pagination tests never populate multiple orders, so paging across pages is not actually exercised."
+  ],
+  "quality_notes": [
+    "Reservation->dict serialization duplicated in service.py at lines 64-72, 91-99, 119-127, 137-144, 152-162, 180-189 — should be a single helper.",
+    "Broad `except Exception` in app.py:61-64 masks real errors (e.g., the threading bug surfaced as a generic 500).",
+    "adjust_stock silently clamps negative results to 0 (repository.py:40-41), hiding oversell/accounting errors.",
+    "README documents POST /health (unusual) and overstates order capabilities."
+  ],
+  "unnecessary_code_examples": [
+    "repository.py:90-125 create_order/confirm_order/cancel_order — never called.",
+    "service.py:147-172 get_order — never exposed.",
+    "models.py:6 Float import — unused.",
+    "app.py:2 contextmanager import — unused.",
+    "pyproject.toml:16 pydantic-settings dependency — never imported."
+  ],
+  "security_safety_notes": [
+    "All mutating endpoints (POST /skus, PATCH /stock, POST /reservations, confirm, cancel) depend on verify_api_key (app.py, security.py).",
+    "Default API key fallback 'test-key' in security.py:10 is an insecure default if env var is unset in production; no real secret is hardcoded.",
+    "Pydantic models bound string lengths and integer ranges, reducing injection/integrity risk (models.py:90-117).",
+    "No shell, network, or destructive filesystem operations beyond creating a local SQLite file."
+  ],
+  "file_evidence": [
+    {"path": "src/commerce_service/service.py", "note": "create_reservation checks stock but never decrements it (lines 75-89); no order creation path."},
+    {"path": "src/commerce_service/repository.py", "note": "create_order/confirm_order/cancel_order (90-125) are dead code; mark_expired_reservations uses utcnow vs func.now created_at."},
+    {"path": "src/commerce_service/app.py", "note": "Only GET /orders exists; no POST /orders. Broad except returns 500 (61-64). On-disk commerce.db created at import (22-26)."},
+    {"path": "tests/test_api.py", "note": "Fixture engine lacks StaticPool/check_same_thread=False (line 13) -> thread errors fail 13 of 17 API tests."},
+    {"path": "tests/test_service.py", "note": "Expiry tests use TTL=1 with immediate check; both currently fail (DID NOT RAISE / no conflict)."},
+    {"path": "src/commerce_service/security.py", "note": "API-key dependency enforced; default 'test-key' fallback at line 10."},
+    {"path": "pyproject.toml", "note": "Declares pydantic-settings which is never used."}
+  ],
+  "commands_run": [
+    "find . -type f (excluding caches) — listed 11 project files",
+    "python3 -c import fastapi,sqlalchemy,httpx,pytest — deps present (fastapi 0.104.1, sqlalchemy 2.0.23)",
+    "PYTHONPATH=src python3 -m pytest tests/ -> 15 failed, 15 passed, 5 errors",
+    "PYTHONPATH=src python3 -m pytest tests/test_service.py -> 2 failed, 11 passed",
+    "PYTHONPATH=src python3 -m pytest tests/test_api.py -> 13 failed, 4 passed, 5 errors",
+    "grep for create_order/confirm_order/cancel_order/get_order usages — none outside definitions",
+    "grep for pydantic_settings/Float/contextmanager — confirmed unused"
+  ],
+  "review_risk": "low — all source and test files were read and the test suite was executed with failures captured; residual uncertainty is limited to concurrent-runtime behavior and whether a different test harness configuration could mask the threading failures."
+}
+```

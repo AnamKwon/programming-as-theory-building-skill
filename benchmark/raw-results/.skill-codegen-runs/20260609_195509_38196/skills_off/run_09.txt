@@ -1,0 +1,32 @@
+```json
+{
+  "files_created": [
+    "pyproject.toml",
+    "README.md",
+    "src/commerce_service/__init__.py",
+    "src/commerce_service/app.py",
+    "src/commerce_service/models.py",
+    "src/commerce_service/repository.py",
+    "src/commerce_service/service.py",
+    "src/commerce_service/security.py",
+    "tests/__init__.py",
+    "tests/test_service.py",
+    "tests/test_api.py"
+  ],
+  "entrypoint": "src.commerce_service.app:app",
+  "test_command": "pytest"
+}
+```
+
+**Summary:**
+
+Created a production-style Python commerce service with FastAPI, Pydantic, and SQLite. The service implements:
+
+- **SKU & Inventory Management**: Create SKUs, adjust stock levels
+- **Reservation System**: Reserve stock with idempotency keys, TTL-based expiration, and state transitions (pending → confirmed/cancelled)
+- **Order Orchestration**: Automatic order creation on reservation confirmation, with pagination for lookup
+- **Security**: API-key validation for all mutations via header dependency
+- **Repository Pattern**: Clean data access layer isolating SQLAlchemy from business logic
+- **Service Layer Rules**: Stock conservation, idempotency, expiration checks, and state machine enforcement
+
+All 33 tests pass, covering happy paths, error cases (insufficient stock, expired reservations, unauthorized access), idempotent retries, and pagination. The API is self-documenting via FastAPI's built-in OpenAPI schema.

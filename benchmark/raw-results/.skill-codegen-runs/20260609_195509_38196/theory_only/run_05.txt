@@ -1,0 +1,35 @@
+All files created successfully. Here's the completed production-style commerce service:
+
+```json
+{
+  "files_created": [
+    "pyproject.toml",
+    "README.md",
+    "src/commerce_service/__init__.py",
+    "src/commerce_service/models.py",
+    "src/commerce_service/repository.py",
+    "src/commerce_service/service.py",
+    "src/commerce_service/security.py",
+    "src/commerce_service/app.py",
+    "tests/test_service.py",
+    "tests/test_api.py"
+  ],
+  "entrypoint": "uvicorn src.commerce_service.app:app --reload",
+  "test_command": "pytest tests/ -v"
+}
+```
+
+**Architecture summary:**
+- **Models**: Request/response schemas + domain state enums (Pydantic)
+- **Repository**: SQLAlchemy ORM abstraction over SQLite (SKUs, reservations, orders)
+- **Service**: Business logic with state machines, idempotency, expiration, and stock management
+- **Security**: X-API-Key header validation for mutations
+- **App**: FastAPI routes with proper error codes and dependency injection
+
+**Key features:**
+- ✓ Reservation expiration (30 minutes)
+- ✓ Idempotency via idempotency keys on all mutations
+- ✓ State tracking (pending→confirmed→expired/cancelled for reservations; pending→confirmed for orders)
+- ✓ Stock deduction on reservation confirmation, restoration on cancellation
+- ✓ Pagination with limit/offset on order listing
+- ✓ 30+ tests covering happy paths, error cases, authorization, and idempotency

@@ -1,0 +1,32 @@
+```json
+{
+  "files_created": 12,
+  "entrypoint": "src/commerce_service/app.py",
+  "test_command": "pytest tests/"
+}
+```
+
+All files created successfully. The service includes:
+
+**Core Service:**
+- FastAPI application with 7 endpoints (health check, SKU creation, stock adjustment, reservation management, order lookup)
+- Pydantic models with validation
+- Repository pattern for SQLite data access
+- Service layer with business logic for stock availability, idempotency, reservation expiration, and order state transitions
+- API key authentication for mutations
+
+**Tests (25 passing):**
+- Health check and CRUD operations
+- Insufficient stock handling
+- Idempotent reservations
+- Reservation expiration
+- API key validation
+- Pagination
+- Stock reservation tracking
+
+**Production-ready features:**
+- Error handling with clear HTTP status codes
+- Pagination support (limit 1-100, default 20)
+- Transaction support in repository
+- Reservation TTL (15 minutes default)
+- No over-engineering—exactly what's needed

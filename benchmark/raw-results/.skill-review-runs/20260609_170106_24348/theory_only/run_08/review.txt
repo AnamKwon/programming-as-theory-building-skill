@@ -1,0 +1,156 @@
+I have enough evidence. The project is well-structured but the declared `pytest` command fails substantially (12 failed, 3 errors of 33) — all API integration tests break due to in-memory SQLite not being shared across the TestClient's worker thread. There's also a stock-release/overselling inconsistency on confirm, plus minor dead code.
+
+```json
+{
+  "rubric_version": "benchmark-codegen-review-v1",
+  "score_scale": "0-100 per category",
+  "weights": {
+    "task_fulfillment": 0.20,
+    "functional_correctness": 0.25,
+    "executability": 0.15,
+    "test_quality": 0.15,
+    "code_quality": 0.10,
+    "minimality": 0.10,
+    "security_safety": 0.05
+  },
+  "task_fulfillment_score": 87,
+  "task_fulfillment_breakdown": {
+    "instruction_compliance": 85,
+    "required_artifacts": 90,
+    "feature_coverage": 88,
+    "constraint_adherence": 85
+  },
+  "functional_correctness_score": 72,
+  "functional_correctness_breakdown": {
+    "domain_invariants": 60,
+    "edge_case_behavior": 80,
+    "data_consistency": 58,
+    "error_semantics": 88
+  },
+  "executability_score": 63,
+  "executability_breakdown": {
+    "installability": 88,
+    "runtime_entrypoints": 75,
+    "command_result": 25,
+    "runtime_isolation": 65
+  },
+  "test_quality_score": 60,
+  "test_quality_breakdown": {
+    "required_test_coverage": 80,
+    "behavioral_assertions": 80,
+    "integration_realism": 35,
+    "repeatability": 45
+  },
+  "code_quality_score": 85,
+  "code_quality_breakdown": {
+    "readability": 88,
+    "maintainability": 80,
+    "boundary_design": 88,
+    "documentation_quality": 82
+  },
+  "minimality_score": 75,
+  "minimality_breakdown": {
+    "no_speculative_infrastructure": 80,
+    "no_dead_or_duplicate_code": 65,
+    "appropriate_abstractions": 85,
+    "dependency_minimality": 70
+  },
+  "security_safety_score": 89,
+  "security_safety_breakdown": {
+    "auth_enforcement": 92,
+    "secret_handling": 85,
+    "input_safety": 85,
+    "unsafe_operations": 95
+  },
+  "review_confidence_score": 90,
+  "review_confidence_breakdown": {
+    "inspection_depth": 95,
+    "command_evidence": 90,
+    "issue_specificity": 90,
+    "uncertainty_handling": 85
+  },
+  "weighted_components": {
+    "task_fulfillment": 17.4,
+    "functional_correctness": 18.0,
+    "executability": 9.5,
+    "test_quality": 9.0,
+    "code_quality": 8.5,
+    "minimality": 7.5,
+    "security_safety": 4.5
+  },
+  "weighted_total": 74.3,
+  "verdict": "mixed",
+  "key_findings": [
+    "Coherent, well-layered FastAPI project (models/repository/service/security/app) implementing the full requested surface: SKUs, stock adjust, reservations with idempotency, confirm-to-order, cancel, order pagination, and API-key auth.",
+    "Declared test command `pytest` does NOT pass: 12 failed, 3 errors out of 33. The 21 service-layer tests pass, but nearly all API integration tests fail with 'no such table: skus' / SQLite cross-thread errors.",
+    "Root cause of API test failures: in-memory SQLite engine in tests/test_api.py uses default pooling, so the TestClient's worker thread opens a different empty in-memory DB than the fixture-created schema (missing StaticPool + check_same_thread=False).",
+    "Domain inconsistency: confirm_reservation flips the reservation to CONFIRMED (so it no longer counts as PENDING reserved) but never decrements SKU stock_quantity. Confirmed reservations release their hold, enabling overselling.",
+    "Dead code: repository.list_expired_reservations and repository.update_order_status are never called; models.py imports Optional unused; python-dotenv is declared but never used.",
+    "Auth is correctly enforced on all mutating endpoints; read endpoints (health, orders) are intentionally open."
+  ],
+  "score_rationale": {
+    "task_fulfillment": "All requested files, structure, and endpoints exist and the prompt's feature set is covered. Fresh-workspace and no-parent-read constraints respected. Minor: README claims 'automatic expiration' but expiration is only handled lazily at confirm time.",
+    "functional_correctness": "Idempotency (same-key replay vs conflicting-params), insufficient-stock accounting against pending reservations, lazy expiration with 410, and HTTP status mapping are correct. Penalized for the confirm-time stock release that allows overselling (service.py:97-100 never decrements stock) and non-atomic two-commit confirm.",
+    "executability": "Packaging/deps are complete and the app imports, but the declared `pytest` command fails heavily (command_result=25). App also lacks connect_args check_same_thread=False for file SQLite under uvicorn's threadpool, a runtime fragility, and instantiates the engine + writes ./commerce.db at import.",
+    "test_quality": "Test intent covers every required scenario with real behavioral assertions (id equality on idempotent retry, status transitions, quantities, pagination counts). Heavily penalized because the API integration layer does not actually run — the in-memory DB is misconfigured so 12 of 14 API tests fail/error, undermining integration realism and repeatability.",
+    "code_quality": "Clear naming, clean separation of models/repository/service/security/app, readable control flow, and an accurate (if lightly overstated) README. Minor maintainability hit from unused repo methods.",
+    "minimality": "No speculative queues/workers/CLIs and abstractions are justified, but there are clear dead methods (list_expired_reservations, update_order_status), an unused Optional import, and an unused python-dotenv dependency.",
+    "security_safety": "verify_api_key guards every mutating endpoint via APIKeyHeader(auto_error=False) + manual check; no real secrets (documented dev-key default); Pydantic validation and pagination bounds protect inputs. Minor: API key comparison is not constant-time.",
+    "review_confidence": "All six source modules and both test files were read; declared test command and targeted failure tracebacks were executed and captured; findings cite concrete files/lines."
+  },
+  "instruction_failures": [
+    "README advertises 'automatic expiration' but no background sweep exists; the unused repository.list_expired_reservations suggests an intended sweeper that was never wired up."
+  ],
+  "correctness_failures": [
+    "confirm_reservation (service.py:97-100) sets reservation CONFIRMED and creates an order but never decrements SKU stock; since get_reserved_quantity only counts PENDING reservations, confirmed holds are released, allowing the same stock to be reserved again (overselling).",
+    "confirm uses two separate commits (status update, then order create); if create_order fails (e.g. duplicate reservation_id) the reservation is left CONFIRMED with no order — inconsistent state.",
+    "create_reservation does check-then-insert without a transactional guard; relies on the idempotency_key unique constraint, but the availability check itself is not concurrency-safe (acceptable for single-process SQLite, noted)."
+  ],
+  "execution_failures": [
+    "`pytest` => 12 failed, 21 passed, 3 errors. tests/test_api.py almost entirely fails with sqlite3.OperationalError: no such table: skus.",
+    "tests/test_api.py:11-27 fixture: sqlite:///:memory: engine without StaticPool/check_same_thread=False; FastAPI runs sync endpoints in a threadpool worker that gets a separate empty in-memory database than the one the fixture created tables on.",
+    "Cross-thread teardown noise: 'SQLite objects created in a thread can only be used in that same thread' during pool reset, confirming the threading/pool mismatch."
+  ],
+  "test_gaps": [
+    "No test asserts stock behavior after confirmation (which would have caught the overselling/stock-release bug).",
+    "API-level auth is only tested for one endpoint (POST /skus unauthorized); confirm/cancel/adjust/reservation auth-rejection paths are untested.",
+    "No test for the API idempotency-conflict path (same key, different params) — only covered at the service layer.",
+    "Because API tests don't execute, none of the HTTP-layer behavior (status codes 409/410/400 over the wire) is actually verified beyond the few that pass."
+  ],
+  "quality_notes": [
+    "Layering (models/repository/service/security/app) is clean and idiomatic.",
+    "Error taxonomy in service.py maps cleanly to HTTP codes in app.py (404/409/410/400/401).",
+    "README is accurate and concise apart from the 'automatic expiration' overstatement."
+  ],
+  "unnecessary_code_examples": [
+    "repository.py:78 list_expired_reservations — defined, never called.",
+    "repository.py:101 update_order_status — defined, never called.",
+    "models.py:3 `from typing import Optional` — imported, never used.",
+    "pyproject.toml:15 python-dotenv — declared dependency with no load_dotenv usage anywhere."
+  ],
+  "security_safety_notes": [
+    "All mutating endpoints depend on verify_api_key (app.py:47,64,85,112,135).",
+    "No hardcoded production secret; default 'dev-key' is documented as development-only.",
+    "API key check uses a plain `!=` comparison (not constant-time) — minor timing-side-channel nit.",
+    "Inputs validated via Pydantic Field constraints and explicit pagination bounds (app.py:154-157)."
+  ],
+  "file_evidence": [
+    {"path": "src/commerce_service/service.py", "note": "Core invariants: idempotency replay/conflict (57-63), availability vs pending reservations (65-71), lazy expiration->cancel+410 (91-95). Overselling: confirm (97-100) never decrements stock."},
+    {"path": "src/commerce_service/repository.py", "note": "get_reserved_quantity counts only PENDING (109-114); list_expired_reservations (78) and update_order_status (101) are dead code."},
+    {"path": "src/commerce_service/app.py", "note": "Endpoints + error->HTTP mapping; verify_api_key on all mutations; pagination validation (154-157); engine created and ./commerce.db written at import (27)."},
+    {"path": "src/commerce_service/security.py", "note": "APIKeyHeader(auto_error=False) with manual 401; non-constant-time comparison (15)."},
+    {"path": "tests/test_api.py", "note": "Fixture (11-27) uses :memory: without StaticPool/check_same_thread; cause of 12 failed + 3 errored API tests."},
+    {"path": "tests/test_service.py", "note": "21 service-layer tests, all passing; covers stock, idempotency, expiration, cancel, confirm, list."},
+    {"path": "pyproject.toml", "note": "Deps complete and pinned; python-dotenv unused."}
+  ],
+  "commands_run": [
+    "ls -la; find . -type f (project listing)",
+    "python3 -c 'import fastapi, sqlalchemy, pydantic, httpx, pytest' (deps ok; Python 3.12.4)",
+    "PYTHONPATH=src python3 -m pytest -q (12 failed, 21 passed, 3 errors)",
+    "PYTHONPATH=src python3 -m pytest -rA --tb=line (per-test pass/fail listing)",
+    "PYTHONPATH=src python3 -m pytest tests/test_api.py::TestSKU::test_create_sku --tb=short (root cause: no such table: skus)",
+    "grep for list_expired_reservations/update_order_status/dotenv/Optional (dead-code confirmation)"
+  ],
+  "review_risk": "low — all source and test files were read and the declared test command plus targeted failure tracebacks were executed; the only residual uncertainty is whether the real uvicorn runtime hits the same SQLite threadpool issue (not exercised live), but the in-process test evidence is conclusive."
+}
+```

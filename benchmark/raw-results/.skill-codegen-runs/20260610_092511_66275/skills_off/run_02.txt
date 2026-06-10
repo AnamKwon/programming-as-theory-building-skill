@@ -1,0 +1,7 @@
+```json
+{
+  "files_created": 12,
+  "entrypoint": "uvicorn src.commerce_service.app:app --reload",
+  "test_command": "pytest tests/"
+}
+```

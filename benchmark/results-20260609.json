@@ -5,12 +5,12 @@
   "codegen_model_setting": "MODEL=haiku",
   "review_model": "Claude Opus",
   "codegen_runs": [
-    ".skill-codegen-runs/20260609_152615_16568",
-    ".skill-codegen-runs/20260609_195509_38196"
+    "benchmark/raw-results/.skill-codegen-runs/20260609_152615_16568",
+    "benchmark/raw-results/.skill-codegen-runs/20260609_195509_38196"
   ],
   "review_runs": [
-    ".skill-review-runs/20260609_170106_24348",
-    ".skill-review-runs/20260609_231224_49469"
+    "benchmark/raw-results/.skill-review-runs/20260609_170106_24348",
+    "benchmark/raw-results/.skill-review-runs/20260609_231224_49469"
   ],
   "repeats_per_arm": 20,
   "total_reviewed_projects": 60,
@@ -20,7 +20,8 @@
     "theory_only"
   ],
   "excluded_arms": {
-    "both": "available only in .skill-codegen-runs/20260609_152615_16568 and .skill-review-runs/20260609_170106_24348, so excluded from the 20-run three-arm comparison"
+    "both": "available only in benchmark/raw-results/.skill-codegen-runs/20260609_152615_16568 and benchmark/raw-results/.skill-review-runs/20260609_170106_24348, so excluded from the 20-run three-arm comparison",
+    "20260610_partial": "raw 2026-06-10 folders are included for auditability, but the review run is partial and excluded from the 20-run three-arm comparison"
   },
   "arms": {
     "skills_off": {

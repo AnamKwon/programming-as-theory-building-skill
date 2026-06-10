@@ -1,0 +1,30 @@
+Perfect! I've built a complete production-style inventory and order orchestration API. Here's the project summary:
+
+```json
+{
+  "files_created": [
+    "pyproject.toml",
+    "README.md",
+    "src/commerce_service/__init__.py",
+    "src/commerce_service/app.py",
+    "src/commerce_service/models.py",
+    "src/commerce_service/repository.py",
+    "src/commerce_service/service.py",
+    "src/commerce_service/security.py",
+    "tests/__init__.py",
+    "tests/test_api.py",
+    "tests/test_service.py"
+  ],
+  "entrypoint": "uvicorn commerce_service.app:app --reload",
+  "test_command": "pytest"
+}
+```
+
+**Architecture highlights:**
+
+- **Layered design:** Models (Pydantic) → Repository (SQLite) → Service (business logic) → API (FastAPI)
+- **Endpoints:** Health check, SKU management, stock adjustment, reservation lifecycle (create/confirm/cancel), order listing with pagination
+- **Key features:** API-key authentication on mutations, idempotent reservations, automatic expiration handling, stock reservation tracking
+- **Database:** SQLite with proper schema, indexes, and foreign keys
+- **Tests:** 25+ test cases covering happy paths, error conditions, idempotency, expiration, authorization, and pagination
+- **Error handling:** Clear validation and HTTP error responses with descriptive messages

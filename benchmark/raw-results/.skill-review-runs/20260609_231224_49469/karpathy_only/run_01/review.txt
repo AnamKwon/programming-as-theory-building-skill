@@ -1,0 +1,153 @@
+Both root causes confirmed. Here is my benchmark evaluation.
+
+```json
+{
+  "rubric_version": "benchmark-codegen-review-v1",
+  "score_scale": "0-100 per category",
+  "weights": {
+    "task_fulfillment": 0.20,
+    "functional_correctness": 0.25,
+    "executability": 0.15,
+    "test_quality": 0.15,
+    "code_quality": 0.10,
+    "minimality": 0.10,
+    "security_safety": 0.05
+  },
+  "task_fulfillment_score": 82,
+  "task_fulfillment_breakdown": {
+    "instruction_compliance": 85,
+    "required_artifacts": 90,
+    "feature_coverage": 75,
+    "constraint_adherence": 78
+  },
+  "functional_correctness_score": 65,
+  "functional_correctness_breakdown": {
+    "domain_invariants": 55,
+    "edge_case_behavior": 65,
+    "data_consistency": 60,
+    "error_semantics": 78
+  },
+  "executability_score": 64,
+  "executability_breakdown": {
+    "installability": 85,
+    "runtime_entrypoints": 82,
+    "command_result": 30,
+    "runtime_isolation": 60
+  },
+  "test_quality_score": 63,
+  "test_quality_breakdown": {
+    "required_test_coverage": 85,
+    "behavioral_assertions": 80,
+    "integration_realism": 40,
+    "repeatability": 45
+  },
+  "code_quality_score": 78,
+  "code_quality_breakdown": {
+    "readability": 85,
+    "maintainability": 68,
+    "boundary_design": 85,
+    "documentation_quality": 75
+  },
+  "minimality_score": 80,
+  "minimality_breakdown": {
+    "no_speculative_infrastructure": 88,
+    "no_dead_or_duplicate_code": 62,
+    "appropriate_abstractions": 80,
+    "dependency_minimality": 90
+  },
+  "security_safety_score": 83,
+  "security_safety_breakdown": {
+    "auth_enforcement": 90,
+    "secret_handling": 60,
+    "input_safety": 88,
+    "unsafe_operations": 92
+  },
+  "review_confidence_score": 90,
+  "review_confidence_breakdown": {
+    "inspection_depth": 92,
+    "command_evidence": 90,
+    "issue_specificity": 90,
+    "uncertainty_handling": 88
+  },
+  "weighted_components": {
+    "task_fulfillment": 16.4,
+    "functional_correctness": 16.3,
+    "executability": 9.6,
+    "test_quality": 9.5,
+    "code_quality": 7.8,
+    "minimality": 8.0,
+    "security_safety": 4.2
+  },
+  "weighted_total": 71.7,
+  "verdict": "mixed",
+  "key_findings": [
+    "Real logic bug: cancel_reservation reassigns `reservation` to the updated row (status='cancelled') at service.py:116 before checking `if reservation.status == 'confirmed'` at service.py:119, so the branch is never taken and stock is never restored when cancelling a confirmed reservation. Confirmed by failing test (assert 70.0 == 100.0).",
+    "Broken API test fixture: tests/test_api.py builds `sqlite:///:memory:` without StaticPool/check_same_thread, while TestClient runs the app in a worker thread, so requests hit a different connection with no tables. 10 of 14 API tests fail with `sqlite3.OperationalError: no such table: skus`.",
+    "Order state machine is incomplete: an order is created as 'reserved' in reserve_inventory (service.py:77) but is never linked to its reservation and never transitioned on confirm/cancel, so OrderResponse can only ever return 'reserved'. OrderRepository.update_status and get_by_id are dead code.",
+    "Full run: 15 passed, 11 failed, 1 error of 27 tests. Service layer is mostly correct (12/13 pass); the failures isolate to the cancel bug and the fixture defect.",
+    "API key set {'test-key-123','dev-key-456'} is hardcoded in security.py with no environment override; auth itself is correctly enforced on all mutating endpoints."
+  ],
+  "score_rationale": {
+    "task_fulfillment": "All requested artifacts and endpoints exist (SKUs, reservations create/confirm/cancel, paginated orders, API-key auth, idempotency, expiration). Deducted for an incomplete order state machine and minor production constraints (hardcoded keys, file DB created at import time).",
+    "functional_correctness": "Soft-reservation availability math is consistent and most edge cases are handled, but cancelling a confirmed reservation permanently loses stock (verified failing test), orders never change state, and multi-step writes are committed without a wrapping transaction or rollback on IntegrityError.",
+    "executability": "App imports, init_db runs, entrypoint `commerce_service.app:app` and pinned deps are plausible/installable. Heavily penalized because the declared `pytest` command fails for all DB-backed API tests plus the cancel bug; init_db also writes commerce.db into cwd at import.",
+    "test_quality": "Coverage intent is strong and assertions check real domain behavior (quantities, statuses, ids), but the API integration suite does not actually execute due to the in-memory/threading fixture defect, and an expiry test relies on time.sleep(2).",
+    "code_quality": "Clean repo/service/schema/security separation and readable names. Maintainability is hurt by the subtle reassignment bug, an unused order-transition path, and the order/reservation decoupling that hides an invariant.",
+    "minimality": "No speculative infrastructure and all dependencies are used, but there is dead code: unused ErrorResponse model, unused OrderRepository.update_status/get_by_id, and an unused IntegrityError import in service.py.",
+    "security_safety": "Mutating endpoints all depend on verify_api_key, inputs are validated via Pydantic, and ORM parameterization avoids injection; main weakness is hardcoded API keys with no env-based configuration.",
+    "review_confidence": "All source and test files were read, the full and targeted test runs were executed, and findings cite specific files/lines with reproduced failures."
+  },
+  "instruction_failures": [
+    "Order state machine requested but only the 'reserved' state is ever produced; orders are not transitioned on confirm/cancel."
+  ],
+  "correctness_failures": [
+    "service.py:116-120 — cancelling a confirmed reservation does not restore inventory because `reservation.status` is already 'cancelled' when the 'confirmed' branch is checked (verified: assert 70.0 == 100.0).",
+    "Reservations have no 'expired' status; expired reservations remain 'pending' and an idempotent retry returns the stale expired reservation instead of re-reserving.",
+    "reserve_inventory performs two independent commits (reservation, then order) with no transaction boundary, and create_sku has no session rollback after a caught IntegrityError."
+  ],
+  "execution_failures": [
+    "10/14 API tests fail with `sqlite3.OperationalError: no such table: skus` due to the in-memory SQLite fixture not using StaticPool while TestClient executes in a separate thread (tests/test_api.py:12-19).",
+    "1 service test fails (test_cancel_confirmed_reservation) due to the cancel/stock-restore bug.",
+    "init_db() runs at import in app.py:29 and creates commerce.db in the current working directory."
+  ],
+  "test_gaps": [
+    "No test asserts order status transitions (would have exposed that orders never leave 'reserved').",
+    "Duplicate-SKU 409 path is only exercised by an API test that currently fails to run, so the IntegrityError handling is effectively unverified.",
+    "API auth/pagination behaviors are authored but do not actually execute due to the fixture defect, so they provide no real signal.",
+    "No test covers reservation expiry freeing stock for a subsequent reservation."
+  ],
+  "quality_notes": [
+    "Layering (models/repository/service/security/app) is clean and readable.",
+    "The cancel bug stems from rebinding `reservation` to the post-update row; capturing prior status in a local would make the invariant visible.",
+    "README claims an 'Order State Machine' that transitions through confirmed/cancelled, which the implementation does not fulfill for orders."
+  ],
+  "unnecessary_code_examples": [
+    "models.py:101 ErrorResponse — defined but never used by any endpoint.",
+    "repository.py:87-101 OrderRepository.get_by_id and update_status — never called (orders are never transitioned).",
+    "service.py:5 `from sqlalchemy.exc import IntegrityError` — imported but unused in service.py."
+  ],
+  "security_safety_notes": [
+    "security.py:8 hardcodes API keys with no environment-variable override; acceptable for a demo but flagged for production-minded constraint.",
+    "All mutating endpoints (POST /skus, PATCH stock, reservation create/confirm/cancel) require verify_api_key; GET /orders is intentionally unauthenticated.",
+    "Inputs validated via Pydantic (quantity gt 0, quantity_available ge 0, ttl_seconds ge 60, pagination bounds) and SQLAlchemy parameterizes queries."
+  ],
+  "file_evidence": [
+    {"path": "src/commerce_service/service.py", "note": "Lines 116-120: confirmed-cancel stock restore never executes because `reservation` is reassigned to the cancelled row before the status check; line 5 has an unused IntegrityError import."},
+    {"path": "src/commerce_service/service.py", "note": "Line 77: order created as 'reserved' but never linked to the reservation or transitioned afterward."},
+    {"path": "tests/test_api.py", "note": "Lines 12-19: in-memory SQLite fixture lacks StaticPool/check_same_thread; TestClient runs in a worker thread, causing 'no such table' for all DB-backed API tests."},
+    {"path": "tests/test_service.py", "note": "Lines 105-114: test_cancel_confirmed_reservation correctly expects stock restored to 100 and fails (70.0), pinning the cancel bug."},
+    {"path": "src/commerce_service/repository.py", "note": "Lines 87-101: OrderRepository.get_by_id/update_status are dead code."},
+    {"path": "src/commerce_service/models.py", "note": "Line 101: ErrorResponse model is unused; line 11/107: init_db writes commerce.db into cwd."},
+    {"path": "src/commerce_service/security.py", "note": "Line 8: hardcoded API key set; line 11-13 enforces auth via dependency."}
+  ],
+  "commands_run": [
+    "find . -type f (excluding caches) | sort",
+    "python3 -c 'import fastapi, sqlalchemy, httpx, pytest'",
+    "python3 -m pytest -q (15 passed, 11 failed, 1 error)",
+    "python3 -m pytest tests/test_api.py::test_create_sku_with_api_key -q (no such table: skus)",
+    "python3 -m pytest tests/test_service.py::test_cancel_confirmed_reservation -q (assert 70.0 == 100.0)",
+    "grep -rn update_status/ErrorResponse/IntegrityError src/commerce_service/"
+  ],
+  "review_risk": "low — all source and tests were read and the full plus targeted test runs were executed with failures reproduced; only minor uncertainty remains about concurrent/transactional behavior under real (non-SQLite) deployment."
+}
+```

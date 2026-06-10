@@ -1,0 +1,35 @@
+Perfect! All files are created and all 29 tests pass. Here's the output contract:
+
+```json
+{
+  "files_created": [
+    "pyproject.toml",
+    "README.md",
+    "src/commerce_service/__init__.py",
+    "src/commerce_service/app.py",
+    "src/commerce_service/models.py",
+    "src/commerce_service/repository.py",
+    "src/commerce_service/service.py",
+    "src/commerce_service/security.py",
+    "tests/__init__.py",
+    "tests/test_service.py",
+    "tests/test_api.py"
+  ],
+  "entrypoint": "src/commerce_service/app.py",
+  "test_command": "pytest tests/ -v"
+}
+```
+
+**Production-ready features implemented:**
+
+- **Repository Pattern**: Database access isolated in `repository.py` with all CRUD operations behind a clean boundary
+- **Service Layer**: Business logic in `service.py` enforcing stock availability, idempotency, reservation expiration, and state transitions
+- **FastAPI Endpoints**: Complete REST API with 8 endpoints (health, SKU CRUD, stock adjustment, reservation lifecycle, order lookup)
+- **Security**: API-key authentication on all mutation endpoints via `X-API-Key` header
+- **Validation**: Pydantic models validate all request payloads with clear error responses
+- **Error Handling**: Structured HTTP errors (401, 403, 404, 409, 410) with detail messages
+- **Idempotency**: Request deduplication via idempotency keys at the service layer
+- **Pagination**: Order listing supports limit/offset pagination (default 20, max 100)
+- **Database**: SQLite with automatic schema initialization, SQLAlchemy ORM with proper migrations
+
+**Test Coverage:** 29 tests covering happy paths, insufficient stock errors, idempotent retries, expired reservations, unauthorized access, and pagination.

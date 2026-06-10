@@ -1,0 +1,28 @@
+Perfect! All 24 tests pass. Here's the output:
+
+```json
+{
+  "files_created": [
+    "pyproject.toml",
+    "README.md",
+    "src/commerce_service/__init__.py",
+    "src/commerce_service/app.py",
+    "src/commerce_service/models.py",
+    "src/commerce_service/repository.py",
+    "src/commerce_service/service.py",
+    "src/commerce_service/security.py",
+    "tests/test_service.py",
+    "tests/test_api.py"
+  ],
+  "entrypoint": "python -m uvicorn src.commerce_service.app:app --reload",
+  "test_command": "pytest tests/"
+}
+```
+
+**Service overview:**
+
+- **FastAPI with 7 endpoints**: health check, SKU creation, stock adjustment, reservation management (create/confirm/cancel), and paginated order lookup
+- **Service layer** enforces business rules: stock availability checks, idempotent reservation creation (via idempotency keys), reservation expiration (15-minute TTL), and proper state transitions
+- **Repository pattern** wraps SQLite with clean data access (auto-initializes database on first request)
+- **API-key authentication** (`X-API-Key: test-key-123`) on all mutating endpoints
+- **Test coverage**: 13 API tests + 11 service tests covering happy paths, insufficient stock, idempotency, expiration, pagination, and error cases

@@ -1,0 +1,159 @@
+I have enough evidence. All files reviewed, tests run, and the key invariant probed directly. Compiling the evaluation.
+
+```json
+{
+  "rubric_version": "benchmark-codegen-review-v1",
+  "score_scale": "0-100 per category",
+  "weights": {
+    "task_fulfillment": 0.20,
+    "functional_correctness": 0.25,
+    "executability": 0.15,
+    "test_quality": 0.15,
+    "code_quality": 0.10,
+    "minimality": 0.10,
+    "security_safety": 0.05
+  },
+  "task_fulfillment_score": 82,
+  "task_fulfillment_breakdown": {
+    "instruction_compliance": 80,
+    "required_artifacts": 90,
+    "feature_coverage": 82,
+    "constraint_adherence": 75
+  },
+  "functional_correctness_score": 41,
+  "functional_correctness_breakdown": {
+    "domain_invariants": 30,
+    "edge_case_behavior": 45,
+    "data_consistency": 35,
+    "error_semantics": 55
+  },
+  "executability_score": 58,
+  "executability_breakdown": {
+    "installability": 85,
+    "runtime_entrypoints": 80,
+    "command_result": 20,
+    "runtime_isolation": 45
+  },
+  "test_quality_score": 51,
+  "test_quality_breakdown": {
+    "required_test_coverage": 75,
+    "behavioral_assertions": 70,
+    "integration_realism": 30,
+    "repeatability": 30
+  },
+  "code_quality_score": 74,
+  "code_quality_breakdown": {
+    "readability": 80,
+    "maintainability": 60,
+    "boundary_design": 80,
+    "documentation_quality": 75
+  },
+  "minimality_score": 71,
+  "minimality_breakdown": {
+    "no_speculative_infrastructure": 75,
+    "no_dead_or_duplicate_code": 60,
+    "appropriate_abstractions": 80,
+    "dependency_minimality": 70
+  },
+  "security_safety_score": 78,
+  "security_safety_breakdown": {
+    "auth_enforcement": 80,
+    "secret_handling": 65,
+    "input_safety": 75,
+    "unsafe_operations": 90
+  },
+  "review_confidence_score": 90,
+  "review_confidence_breakdown": {
+    "inspection_depth": 92,
+    "command_evidence": 90,
+    "issue_specificity": 90,
+    "uncertainty_handling": 88
+  },
+  "weighted_components": {
+    "task_fulfillment": 16.4,
+    "functional_correctness": 10.3,
+    "executability": 8.7,
+    "test_quality": 7.7,
+    "code_quality": 7.4,
+    "minimality": 7.1,
+    "security_safety": 3.9
+  },
+  "weighted_total": 61.4,
+  "verdict": "mixed",
+  "key_findings": [
+    "The declared test command fails: `pytest` reports 13 failed, 13 passed, 3 errors. Nearly all of tests/test_api.py fails because the in-memory SQLite fixture in tests/conftest.py is not shared across threads (no StaticPool/check_same_thread), producing 'no such table' OperationalErrors and 'SQLite objects created in a thread' errors under TestClient.",
+    "Domain invariant violation (overselling): confirm_reservation creates an order but never decrements SKU.available_stock, and confirmed reservations drop out of sum_reserved_quantity (which counts only RESERVED). Verified directly: after confirming 50 of 100 units, the service still allowed reserving another 100 units (service.py:97-131, repository.py:131-144).",
+    "Contradictory idempotency tests: a reservation is always immediately moved to RESERVED (service.py:84-87), so the DuplicateReservationError branch (service.py:63-66) is effectively unreachable. test_create_reservation_duplicate_key_raises_error fails while test_create_reservation_idempotent passes — the spec for duplicate keys is internally inconsistent.",
+    "Missing API key returns 422, not an auth error: APIKeyValidator uses Header(...) (security.py:8), so a request with no X-API-Key yields a 422 validation error; test_create_sku_unauthorized expects 403 and fails.",
+    "Idempotent re-confirm is broken: confirm_reservation looks up the order via repo.get_order(reservation_id) (service.py:103), but orders are keyed by a fresh uuid, not the reservation id, so it returns None and re-confirmation raises ValueError -> 400 (service.py:113-114).",
+    "Service-layer logic is otherwise sound and well-structured: 11 of 12 test_service.py cases pass in single-threaded isolation; layering (models/repository/service/app/security) is clean."
+  ],
+  "score_rationale": {
+    "task_fulfillment": "All requested artifacts exist (pyproject, README, src package, tests) and every endpoint in the contract is present with auth, pagination, idempotency, and expiration concepts. Points deducted for production-minded gaps: broad `except Exception` -> 400 masking real errors and a hardcoded default API key.",
+    "functional_correctness": "Core stock accounting is broken — confirming an order neither decrements stock nor keeps the quantity reserved, allowing oversell (verified). Stock can also go negative via adjust_stock with no floor. Idempotency semantics are self-contradictory, and missing-header auth produces 422. Insufficient-stock (409), expiration (410), and not-found (404) paths are reasonable.",
+    "executability": "Packaging and pinned dependencies are complete and install cleanly, and the FastAPI app imports and serves with usable defaults. However the declared `pytest` command fails heavily (13 failed, 3 errors), and app.py creates engine + commerce.db and runs create_all at import time, a side effect that also undermines test isolation.",
+    "test_quality": "Tests nominally cover all required areas (happy paths, insufficient stock, idempotency, expiration, auth, pagination) with behavioral assertions on quantities/statuses. But the API/integration tests do not actually run because of the broken thread-shared in-memory DB, so integration realism and repeatability are poor.",
+    "code_quality": "Readable, idiomatic FastAPI with clear repository/service/schema/security boundaries and an accurate README. Maintainability is hurt by scattered invariant handling, the unreachable duplicate-key branch, and the transient PENDING_RESERVATION state that never persists.",
+    "minimality": "No speculative queues/workers/CLIs. Deductions for dead code (Repository.count_active_reservations is never used), an effectively unreachable DuplicateReservationError path, an Order.status column that is always CONFIRMED, and an unused declared dependency (pydantic-settings is never imported).",
+    "security_safety": "All mutating endpoints depend on the API-key validator and ORM use is parameterized (no injection). Deductions for a hardcoded fallback key 'dev-key-12345' and lack of a stock floor on adjust_stock; missing key returns 422 rather than a clean 401/403.",
+    "review_confidence": "All source and test files were read, the full test suite was executed, and the oversell invariant was reproduced with a direct probe. Remaining uncertainty is mainly whether the API DB-wiring failures stem solely from the conftest fixture vs. additional issues."
+  },
+  "instruction_failures": [
+    "Declared test command does not pass on a fresh workspace (13 failed / 3 errors).",
+    "Unauthorized request without the API key returns 422 instead of a 401/403 auth status, conflicting with the implied auth contract."
+  ],
+  "correctness_failures": [
+    "Confirming a reservation does not decrement SKU.available_stock and releases the reserved quantity, enabling oversell (verified: reserved 100 more units after confirming 50 of 100).",
+    "adjust_stock permits stock to go negative; no floor or reserved-quantity check (service.py:41-50, repository.py:24-30).",
+    "Duplicate idempotency-key behavior is contradictory: DuplicateReservationError is unreachable because reservations are immediately RESERVED; test_create_reservation_duplicate_key_raises_error fails.",
+    "Idempotent re-confirm raises ValueError -> 400 because order lookup uses reservation_id instead of the order id (service.py:103).",
+    "tests/conftest.py in-memory SQLite is not shared across threads, so API tests hit 'no such table' / cross-thread errors."
+  ],
+  "execution_failures": [
+    "pytest: 13 failed, 13 passed, 3 errors (e.g. test_create_sku_authorized assert 400 == 200, test_list_orders_empty OperationalError no such table).",
+    "Cross-thread SQLite usage under TestClient: 'SQLite objects created in a thread can only be used in that same thread'.",
+    "app.py runs create_engine + Base.metadata.create_all at import and writes ./commerce.db, an import-time side effect affecting isolation."
+  ],
+  "test_gaps": [
+    "No test asserts stock is decremented/conserved after confirmation (the oversell bug would have been caught).",
+    "No test for adjust_stock driving stock negative.",
+    "API integration tests are present but effectively non-functional due to DB wiring, so real request/response persistence is unverified.",
+    "No test for confirming an already-confirmed reservation (idempotent confirm) or confirming an expired reservation through the HTTP layer."
+  ],
+  "quality_notes": [
+    "Clean separation: models.py (ORM + Pydantic), repository.py (data access), service.py (rules), app.py (routes/DI), security.py (auth).",
+    "Transient PENDING_RESERVATION status is written then immediately overwritten to RESERVED in a second commit (service.py:84-87) — confusing and a non-atomic two-commit sequence.",
+    "Broad `except Exception -> HTTPException(400)` in every route masks programming/DB errors as client errors (app.py:64-65, 79-80, 99-100, 115-116, 130-131).",
+    "Order.status column always defaults to CONFIRMED and is never set to any other value, making it redundant."
+  ],
+  "unnecessary_code_examples": [
+    "repository.py:116 count_active_reservations is defined but never called anywhere.",
+    "pyproject.toml:14 declares pydantic-settings but it is never imported or used.",
+    "service.py:63-66 DuplicateReservationError branch is unreachable in practice (reservations never remain PENDING).",
+    "models.py:47 Order.status is effectively a constant (always CONFIRMED)."
+  ],
+  "security_safety_notes": [
+    "All mutating endpoints (POST /skus, PATCH stock, POST /reservations, confirm, DELETE) require the APIKeyValidator dependency (app.py).",
+    "Hardcoded fallback API key 'dev-key-12345' (app.py:21); acceptable as a dev default but should not ship as the production default.",
+    "SQLAlchemy ORM queries are parameterized; no raw SQL injection vector observed.",
+    "No shell/file/network side effects beyond creating the SQLite DB file."
+  ],
+  "file_evidence": [
+    {"path": "src/commerce_service/service.py", "note": "confirm_reservation (97-131) creates order without decrementing stock; reserved qty released on confirm -> oversell. Unreachable DuplicateReservationError (63-66). get_order(reservation_id) breaks idempotent re-confirm (103)."},
+    {"path": "src/commerce_service/repository.py", "note": "sum_reserved_quantity counts only RESERVED (131-144), so confirmed orders vanish from accounting. update_stock has no negative floor (24-30). count_active_reservations (116) unused."},
+    {"path": "src/commerce_service/security.py", "note": "Header(...) makes missing X-API-Key a 422 validation error rather than a 401/403 auth failure (8-11)."},
+    {"path": "src/commerce_service/app.py", "note": "Import-time create_engine + create_all + commerce.db (24-27); broad except->400 masks errors; hardcoded default API key (21)."},
+    {"path": "tests/conftest.py", "note": "In-memory SQLite without StaticPool/check_same_thread; not shared across TestClient threads -> API tests fail with no-such-table/cross-thread errors."},
+    {"path": "tests/test_service.py", "note": "test_create_reservation_duplicate_key_raises_error (60-64) contradicts test_create_reservation_idempotent (53-57); the former fails."},
+    {"path": "pyproject.toml", "note": "pydantic-settings dependency declared (14) but never used."}
+  ],
+  "commands_run": [
+    "find . -type f (list project files)",
+    "python3 --version && import check for fastapi/sqlalchemy/pydantic/httpx/pytest (deps OK)",
+    "PYTHONPATH=src python3 -m pytest -q  => 13 failed, 13 passed, 3 errors",
+    "PYTHONPATH=src python3 -c '<probe>'  => reproduced oversell: reserved 100 more after confirming 50 of 100; available_stock stayed 100",
+    "grep for count_active_reservations / pydantic-settings / BaseSettings / 401 usage"
+  ],
+  "review_risk": "low — all source and test files were read, the declared test command and a direct invariant probe were executed and captured; remaining uncertainty is only whether the API test failures have causes beyond the conftest DB-fixture wiring."
+}
+```

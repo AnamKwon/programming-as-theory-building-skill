@@ -1,0 +1,153 @@
+All files inspected and tests executed. I found a significant packaging defect: the entire `test_api.py` suite (15 tests) errors at fixture setup, while all 16 service-layer tests pass.
+
+Root cause confirmed: `__init__.py` does `from .app import app`, which rebinds the package attribute `commerce_service.app` to the FastAPI **instance**, shadowing the submodule. So `test_api.py`'s `from commerce_service import app as app_module` gets the FastAPI object, not the module → `AttributeError: 'FastAPI' object has no attribute 'CommerceService'`. The app still loads under uvicorn (which resolves via `sys.modules`), so production runtime works; only the HTTP-layer tests are broken.
+
+```json
+{
+  "rubric_version": "benchmark-codegen-review-v1",
+  "score_scale": "0-100 per category",
+  "weights": {
+    "task_fulfillment": 0.20,
+    "functional_correctness": 0.25,
+    "executability": 0.15,
+    "test_quality": 0.15,
+    "code_quality": 0.10,
+    "minimality": 0.10,
+    "security_safety": 0.05
+  },
+  "task_fulfillment_score": 87,
+  "task_fulfillment_breakdown": {
+    "instruction_compliance": 85,
+    "required_artifacts": 92,
+    "feature_coverage": 90,
+    "constraint_adherence": 80
+  },
+  "functional_correctness_score": 81,
+  "functional_correctness_breakdown": {
+    "domain_invariants": 85,
+    "edge_case_behavior": 85,
+    "data_consistency": 65,
+    "error_semantics": 90
+  },
+  "executability_score": 70,
+  "executability_breakdown": {
+    "installability": 85,
+    "runtime_entrypoints": 80,
+    "command_result": 45,
+    "runtime_isolation": 70
+  },
+  "test_quality_score": 70,
+  "test_quality_breakdown": {
+    "required_test_coverage": 60,
+    "behavioral_assertions": 85,
+    "integration_realism": 55,
+    "repeatability": 80
+  },
+  "code_quality_score": 86,
+  "code_quality_breakdown": {
+    "readability": 88,
+    "maintainability": 80,
+    "boundary_design": 90,
+    "documentation_quality": 85
+  },
+  "minimality_score": 78,
+  "minimality_breakdown": {
+    "no_speculative_infrastructure": 88,
+    "no_dead_or_duplicate_code": 78,
+    "appropriate_abstractions": 85,
+    "dependency_minimality": 60
+  },
+  "security_safety_score": 83,
+  "security_safety_breakdown": {
+    "auth_enforcement": 92,
+    "secret_handling": 55,
+    "input_safety": 90,
+    "unsafe_operations": 95
+  },
+  "review_confidence_score": 89,
+  "review_confidence_breakdown": {
+    "inspection_depth": 92,
+    "command_evidence": 90,
+    "issue_specificity": 90,
+    "uncertainty_handling": 85
+  },
+  "weighted_components": {
+    "task_fulfillment": 17.4,
+    "functional_correctness": 20.3,
+    "executability": 10.5,
+    "test_quality": 10.5,
+    "code_quality": 8.6,
+    "minimality": 7.8,
+    "security_safety": 4.2
+  },
+  "weighted_total": 79.2,
+  "verdict": "good",
+  "key_findings": [
+    "All 16 service-layer tests pass; the core domain logic (stock, idempotency, expiration, state transitions) is correct and verified.",
+    "All 15 API tests in tests/test_api.py ERROR at fixture setup because commerce_service/__init__.py:1 re-exports `app`, shadowing the `commerce_service.app` submodule; `from commerce_service import app as app_module` returns the FastAPI instance, so `app_module.CommerceService` raises AttributeError.",
+    "The app still loads correctly via `uvicorn commerce_service.app:app` (verified with uvicorn.importer), so the shadowing bug only breaks the HTTP-layer tests, not production startup.",
+    "SQLAlchemy is declared as a runtime dependency in pyproject.toml but is never imported — the repository uses raw sqlite3.",
+    "Stock check-and-reserve is not atomic: each repository method opens its own sqlite connection/transaction, creating a TOCTOU race and a multi-step consistency gap (reservation insert and reserved_quantity update are separate transactions).",
+    "API key is hardcoded in security.py (`VALID_API_KEY = \"commerce-secret-key-12345\"`) rather than read from configuration/env."
+  ],
+  "score_rationale": {
+    "task_fulfillment": "All requested endpoints, files, README, and pyproject are present and the API surface matches the brief (skus, stock, reservations confirm/cancel, orders, pagination, auth). Points off for an unused declared dependency and a hardcoded secret that undercut the production-minded constraint.",
+    "functional_correctness": "Domain rules verified by 16 passing service tests: insufficient stock -> 409, idempotent retry returns same id without double-reserving, expired confirm -> 410 with stock release, cancel-of-confirmed -> 409. Main deduction is data consistency: per-call connections make the stock check-then-reserve and the two-step reserve non-atomic (race/partial-write risk). Error status codes are clear and appropriate.",
+    "executability": "Dependencies install and the app imports/loads under uvicorn. However the declared `pytest` command yields 15 errors + 16 passed because the package self-shadows its `app` submodule; that is a real failure of the documented command. Module-level `Repository()` in app.py also writes commerce.db into the CWD at import, an ambient side effect.",
+    "test_quality": "Service tests are genuinely behavioral (assert reserved_quantity deltas, state transitions, equal ids) and use isolated temp DBs, so they are realistic and repeatable. But the entire HTTP/integration layer — auth status codes, pagination over the real API, route wiring — never executes due to the fixture bug, leaving required coverage only at the service layer.",
+    "code_quality": "Clear separation across models/repository/service/security/app with readable names and accurate, concise README. Minor: response-construction is duplicated across service methods and the __init__ re-export introduced the shadowing fragility.",
+    "minimality": "No speculative queues/workers/CLIs. Knocked down mainly by SQLAlchemy being declared but unused (raw sqlite3 is the actual backend) and small response-mapping duplication.",
+    "security_safety": "All mutating endpoints enforce the API-key dependency; SQL is fully parameterized and inputs are validated via Pydantic constraints; no unsafe shell/file/network use. Deduction for a hardcoded API key constant instead of configuration-sourced secret.",
+    "review_confidence": "Read every source and test file, ran the full suite, isolated the exact AttributeError, and verified uvicorn loadability independently. Remaining uncertainty is only around untested concurrent runtime behavior."
+  },
+  "instruction_failures": [
+    "README documents `pytest` as the test command, but that command produces 15 errors due to the package shadowing bug.",
+    "SQLAlchemy listed as a dependency though never used contradicts a minimal, production-minded dependency set."
+  ],
+  "correctness_failures": [
+    "Stock availability check and reservation insert/update run in separate sqlite transactions (repository.py opens a new connection per call), so concurrent reservations can over-reserve (TOCTOU) and a failure between create_reservation and update_stock_reserved leaves an inconsistent state."
+  ],
+  "execution_failures": [
+    "tests/test_api.py: all 15 tests ERROR at the temp_db fixture — `from commerce_service import app as app_module` returns the FastAPI instance (shadowed by __init__.py:1), so `app_module.CommerceService` raises AttributeError (tests/test_api.py:14-16).",
+    "app.py:12 instantiates Repository() at import time, creating commerce.db in the current working directory as a side effect."
+  ],
+  "test_gaps": [
+    "No working HTTP-layer test exercises auth (401/403), pagination, or routing because the API suite cannot reach assertions.",
+    "No test for adjusting stock below zero / negative net availability guard at the API layer.",
+    "No concurrency/atomicity test for the reserve race condition."
+  ],
+  "quality_notes": [
+    "ReservationResponse/OrderResponse construction is duplicated in create_reservation, confirm_reservation, cancel_reservation, get_order, and list_orders — a small mapping helper would localize it.",
+    "datetime.utcnow() is used throughout and emits DeprecationWarnings on modern Python (repository.py:68,99,100,149; service.py:98).",
+    "On confirm, reserved_quantity is never decremented (only state flips and an order is created); the net sellable invariant still holds but reserved_quantity grows unbounded for confirmed reservations, which is a modeling oddity."
+  ],
+  "unnecessary_code_examples": [
+    "pyproject.toml:14 declares `sqlalchemy==2.0.25` but no module imports sqlalchemy (repository.py uses the stdlib sqlite3).",
+    "commerce_service/__init__.py re-exports `app`, `CommerceService`, `Repository`; the `app` re-export is not needed and directly causes the submodule-shadowing test failure.",
+    "service.py:29 `stock = self.repo.get_stock(sku)` in adjust_stock is read but never used before re-fetching new_stock."
+  ],
+  "security_safety_notes": [
+    "Hardcoded API key constant in security.py:4 (`commerce-secret-key-12345`) — should come from environment/config; it is a placeholder secret, not a real credential.",
+    "All mutating endpoints (skus, stock, reservations confirm/cancel) require verify_api_key via Depends (app.py:24,32,40,53,61).",
+    "All SQL uses parameterized queries (repository.py), so no SQL injection; Pydantic Field constraints validate quantities, ttl, and key lengths.",
+    "No shell, network, or destructive filesystem operations beyond creating the sqlite db file."
+  ],
+  "file_evidence": [
+    {"path": "src/commerce_service/__init__.py", "note": "Line 1 `from .app import app` rebinds the package attribute `commerce_service.app` to the FastAPI instance, shadowing the submodule and breaking the API test fixture."},
+    {"path": "tests/test_api.py", "note": "Lines 14-16: fixture does `from commerce_service import app as app_module; app_module.CommerceService(...)` which raises AttributeError because app_module is the FastAPI object; all 15 tests error."},
+    {"path": "src/commerce_service/service.py", "note": "create_reservation (39-88) checks stock then inserts + updates reserved in separate repo calls/transactions — non-atomic; confirm_reservation (90-122) handles expiry by releasing stock and returns 410."},
+    {"path": "src/commerce_service/repository.py", "note": "Raw sqlite3 with per-call connection context manager (13-24); no SQLAlchemy despite the declared dependency. Parameterized SQL throughout."},
+    {"path": "src/commerce_service/security.py", "note": "Hardcoded VALID_API_KEY constant (line 4); verify_api_key returns 401 on missing, 403 on mismatch."},
+    {"path": "src/commerce_service/app.py", "note": "Module-level Repository() (line 12) creates commerce.db in CWD at import; all mutating routes use Depends(verify_api_key)."},
+    {"path": "pyproject.toml", "note": "Pinned deps incl. unused sqlalchemy==2.0.25; pytest asyncio_mode=auto configured."}
+  ],
+  "commands_run": [
+    "find . -type f (excluding venv/cache) — listed 11 project files",
+    "python3 -c 'import fastapi, httpx, pytest' — deps present",
+    "pip install -e . && PYTHONPATH=src python3 -m pytest -q — 16 passed, 15 errors",
+    "PYTHONPATH=src python3 -m pytest tests/test_api.py::TestHealthCheck::test_health_check_success -q — captured AttributeError traceback",
+    "PYTHONPATH=src python3 -c '...' — confirmed commerce_service.app attr is FastAPI instance and uvicorn.importer loads the app successfully"
+  ],
+  "review_risk": "low — all source and test files were read, the declared test command was run (16 passed / 15 errored), the failure root cause was isolated, and uvicorn loadability was independently verified; only untested concurrent-runtime behavior remains uncertain."
+}
+```

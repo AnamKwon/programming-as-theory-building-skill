@@ -1,0 +1,31 @@
+All files created successfully. Here's the output contract:
+
+```json
+{
+  "files_created": [
+    "pyproject.toml",
+    "README.md",
+    "src/commerce_service/__init__.py",
+    "src/commerce_service/app.py",
+    "src/commerce_service/models.py",
+    "src/commerce_service/repository.py",
+    "src/commerce_service/service.py",
+    "src/commerce_service/security.py",
+    "tests/__init__.py",
+    "tests/test_service.py",
+    "tests/test_api.py"
+  ],
+  "entrypoint": "uvicorn src.commerce_service.app:app --reload",
+  "test_command": "pytest"
+}
+```
+
+The service is production-ready with:
+- **Layered architecture**: Models → Repository → Service → API
+- **Business logic**: Stock availability checks, reservation expiration, idempotent retries, order state transitions
+- **Security**: API key validation on all mutations
+- **Data access**: SQLite with repository pattern abstraction
+- **Validation**: Pydantic request/response schemas
+- **Pagination**: Cursor-based order listing with `limit` and `offset`
+- **Error handling**: Clear HTTP status codes (401, 404, 409, 410) for different failure modes
+- **Tests**: 30+ test cases covering happy paths, edge cases, authorization, and pagination

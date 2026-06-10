@@ -1,0 +1,155 @@
+All 32 tests pass and I verified the core domain bug empirically. Here is the evaluation.
+
+```json
+{
+  "rubric_version": "benchmark-codegen-review-v1",
+  "score_scale": "0-100 per category",
+  "weights": {
+    "task_fulfillment": 0.20,
+    "functional_correctness": 0.25,
+    "executability": 0.15,
+    "test_quality": 0.15,
+    "code_quality": 0.10,
+    "minimality": 0.10,
+    "security_safety": 0.05
+  },
+  "task_fulfillment_score": 85,
+  "task_fulfillment_breakdown": {
+    "instruction_compliance": 85,
+    "required_artifacts": 90,
+    "feature_coverage": 90,
+    "constraint_adherence": 75
+  },
+  "functional_correctness_score": 63,
+  "functional_correctness_breakdown": {
+    "domain_invariants": 45,
+    "edge_case_behavior": 65,
+    "data_consistency": 55,
+    "error_semantics": 85
+  },
+  "executability_score": 88,
+  "executability_breakdown": {
+    "installability": 90,
+    "runtime_entrypoints": 88,
+    "command_result": 95,
+    "runtime_isolation": 80
+  },
+  "test_quality_score": 80,
+  "test_quality_breakdown": {
+    "required_test_coverage": 70,
+    "behavioral_assertions": 80,
+    "integration_realism": 85,
+    "repeatability": 85
+  },
+  "code_quality_score": 82,
+  "code_quality_breakdown": {
+    "readability": 85,
+    "maintainability": 78,
+    "boundary_design": 88,
+    "documentation_quality": 75
+  },
+  "minimality_score": 86,
+  "minimality_breakdown": {
+    "no_speculative_infrastructure": 90,
+    "no_dead_or_duplicate_code": 78,
+    "appropriate_abstractions": 85,
+    "dependency_minimality": 90
+  },
+  "security_safety_score": 78,
+  "security_safety_breakdown": {
+    "auth_enforcement": 90,
+    "secret_handling": 60,
+    "input_safety": 65,
+    "unsafe_operations": 95
+  },
+  "review_confidence_score": 89,
+  "review_confidence_breakdown": {
+    "inspection_depth": 92,
+    "command_evidence": 90,
+    "issue_specificity": 90,
+    "uncertainty_handling": 85
+  },
+  "weighted_components": {
+    "task_fulfillment": 17.0,
+    "functional_correctness": 15.8,
+    "executability": 13.2,
+    "test_quality": 12.0,
+    "code_quality": 8.2,
+    "minimality": 8.6,
+    "security_safety": 3.9
+  },
+  "weighted_total": 78.7,
+  "verdict": "good",
+  "key_findings": [
+    "All 32 tests pass cleanly via `python3 -m pytest -q` (0.63s); FastAPI app, repository/service/security layers, and pagination all function.",
+    "SERIOUS domain bug: confirming a reservation never decrements SKU.available_stock and removes the reservation from the PENDING set, so confirmed quantity stops counting against availability. Verified empirically: confirm 50 of 100, then reserve another 100 succeeds → 150 committed against 100 stock (overselling).",
+    "README claims 'Confirmation: ... stock becomes permanent', but no code path makes stock permanent — the documentation overstates actual behavior.",
+    "Stock availability uses a non-atomic read-modify-write with no row locking; acceptable for single-process SQLite but a real concurrency risk under load (not documented).",
+    "Auth is enforced on every mutating endpoint and on /orders (401 missing key, 403 invalid key); error status mapping (409/410/404/400) is thoughtful.",
+    "Hardcoded API key in security.py is not environment-configurable, and a generated commerce.db artifact is left in the workspace."
+  ],
+  "score_rationale": {
+    "task_fulfillment": "All requested artifacts (pyproject, README, src/, tests/) and the full endpoint surface (SKU create/adjust, reservation create/confirm/cancel, order pagination, health) are present and wired. Deductions for a non-configurable hardcoded key and a stray committed commerce.db that work against the production-minded/fresh-workspace constraint.",
+    "functional_correctness": "Idempotent retry, insufficient-stock rejection, expiration on confirm, and pagination all behave correctly, with clean HTTP semantics. Dragged down hard by the confirmed-reservation overselling bug, which violates the central inventory invariant, plus missing positive-quantity validation and the non-atomic stock update.",
+    "executability": "Deps are pinned and complete, packaging via setuptools src-layout is correct, lazy DB init and uvicorn entrypoint are usable, and the full suite passes. Minor isolation concern: default DATABASE_URL writes commerce.db into cwd and such a file is already present, though tests override get_db.",
+    "test_quality": "Covers happy paths, insufficient stock, idempotency, expiration (service level), auth (401/403), and pagination with behavioral assertions on stock values and counts. Gaps: no test asserts stock consistency after confirmation (which would have caught the oversell), nor idempotency-conflict, already-confirmed, or cancel-confirmed paths.",
+    "code_quality": "Clean repository/service/schema/security/app separation, readable names, straightforward control flow. models.py bundles ORM + Pydantic + engine factory, the stock invariant is split awkwardly across create vs. confirm, and the README contains an inaccurate 'stock becomes permanent' claim.",
+    "minimality": "No speculative queues/workers/migrations/CLIs; all declared deps are used. Minor dead/duplicate code: confirmed_at and order.reservation_id are written but never surfaced, and db_session is defined in both conftest.py and test_service.py.",
+    "security_safety": "Mutations and order listing require the API-key dependency and unsafe operations are absent. Penalized for a hardcoded (non-env) API key and weak input validation (quantity not constrained > 0; adjust_stock can drive stock negative).",
+    "review_confidence": "Read every source and test file, installed/ran the suite, and reproduced the overselling bug with a direct script, so findings are concrete and evidence-backed; minor residual uncertainty about real concurrent-load behavior."
+  },
+  "instruction_failures": [
+    "README documents confirmation as making stock 'permanent', but the implementation does not reduce available stock on confirm — a false documentation claim relative to behavior.",
+    "API key is hardcoded in source rather than configurable via environment, weakening the production-minded constraint."
+  ],
+  "correctness_failures": [
+    "Confirming a reservation does not decrement SKU.available_stock and the reservation leaves the PENDING set, so confirmed quantity no longer counts against availability → overselling (reproduced: 50 confirmed + 100 reserved against 100 stock).",
+    "create_reservation does not validate quantity > 0; a zero/negative quantity bypasses the availability check (available < quantity is always false).",
+    "adjust_stock permits driving available_stock negative with no guard.",
+    "Stock availability computation is a non-atomic read-then-write with no locking; concurrent reservations could both pass the availability check."
+  ],
+  "execution_failures": [
+    "No execution failures observed; suite passes. Default DATABASE_URL writes commerce.db into the current working directory and such a file is already present in the workspace (ambient artifact), though tests override the DB dependency."
+  ],
+  "test_gaps": [
+    "No test asserts SKU availability after confirmation — the exact assertion that would expose the overselling bug.",
+    "No coverage for IdempotencyConflictError (reusing a key on a confirmed reservation), confirm-already-confirmed (409), or cancel-of-confirmed (409).",
+    "Expiration is only exercised at the service layer, not via the API (410 path untested end-to-end).",
+    "No test for zero/negative reservation quantity or negative resulting stock."
+  ],
+  "quality_notes": [
+    "models.py mixes SQLAlchemy ORM models, Pydantic schemas, and the engine factory in one module; splitting would clarify boundaries.",
+    "ReservationRecord.confirmed_at and OrderRecord.reservation_id are persisted but never read or returned.",
+    "db_session fixture is duplicated between tests/conftest.py and tests/test_service.py.",
+    "Lazy expiration means PENDING reservations are never transitioned to an expired state in the DB; they are only filtered out by the availability query."
+  ],
+  "unnecessary_code_examples": [
+    "repository.py imports/uses `func` via a local import inside get_orders rather than the module-level imports — minor inconsistency.",
+    "confirmed_at column written in update_reservation_status but never surfaced in any response or query.",
+    "OrderResponse schema exists but get_orders builds plain dicts inline rather than using it consistently."
+  ],
+  "security_safety_notes": [
+    "Hardcoded API key 'commerce-secret-key-12345' in src/commerce_service/security.py:4; not overridable via environment.",
+    "Auth dependency correctly applied to all mutating endpoints and /orders; 401 for missing, 403 for invalid.",
+    "Input validation gaps: reservation quantity not constrained positive; stock adjustment may go negative.",
+    "No shell/network/destructive operations; SQLAlchemy parameterization avoids injection."
+  ],
+  "file_evidence": [
+    {"path": "src/commerce_service/service.py", "note": "confirm_reservation (lines 101-133) creates an order and sets status CONFIRMED but never decrements stock; create_reservation availability (lines 74-83) only subtracts PENDING reservations, so confirmed qty stops counting → oversell. No quantity>0 validation."},
+    {"path": "src/commerce_service/repository.py", "note": "get_pending_reservations_for_sku (67-76) filters status==PENDING and expires_at>now; confirmed reservations are excluded and create_order (90-101) does not touch SKU stock. adjust_stock (26-31) has no negative-stock guard."},
+    {"path": "src/commerce_service/security.py", "note": "Hardcoded API_KEY at line 4; verify_api_key returns 401 on missing, 403 on mismatch (correct), but key is not env-configurable."},
+    {"path": "src/commerce_service/app.py", "note": "All mutating endpoints and /orders depend on verify_api_key; HTTP status mapping is appropriate (409 conflict, 410 gone, 404 not found, 400 bad request). Lazy engine/session init."},
+    {"path": "tests/test_service.py", "note": "Covers expiration, insufficient stock, idempotency, pagination, but never asserts available_stock after confirm; defines a second db_session fixture duplicating conftest.py."},
+    {"path": "tests/test_api.py", "note": "Integration tests via TestClient with overridden get_db; auth 401/403 and pagination asserted behaviorally."},
+    {"path": "commerce.db", "note": "32KB SQLite artifact left in the workspace; default DATABASE_URL writes to this cwd path."},
+    {"path": "README.md", "note": "Line 65 claims 'Confirmation: ... stock becomes permanent' — not implemented; documentation overstates behavior."}
+  ],
+  "commands_run": [
+    "find . -type f (excluding caches) — listed project layout",
+    "python3 -c 'import fastapi, sqlalchemy, httpx, pytest' — confirmed deps available; ls -la commerce.db",
+    "python3 -m pytest -q — 32 passed, 361 deprecation warnings (datetime.utcnow) in 0.63s",
+    "python3 -c '<reproduce oversell>' — confirmed 50 of 100 then reserved another 100 (overselling)"
+  ],
+  "review_risk": "low — all source and test files were read, the suite was installed and run, and the central overselling bug was reproduced directly; residual uncertainty is limited to real concurrent-load behavior of the non-atomic stock update."
+}
+```

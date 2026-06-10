@@ -1,0 +1,35 @@
+Perfect! All project files have been created. Here's the output:
+
+```json
+{
+  "files_created": [
+    "pyproject.toml",
+    "README.md",
+    "src/commerce_service/__init__.py",
+    "src/commerce_service/app.py",
+    "src/commerce_service/models.py",
+    "src/commerce_service/repository.py",
+    "src/commerce_service/service.py",
+    "src/commerce_service/security.py",
+    "tests/__init__.py",
+    "tests/test_service.py",
+    "tests/test_api.py"
+  ],
+  "entrypoint": "python -m uvicorn commerce_service.app:app --reload",
+  "test_command": "pytest -v"
+}
+```
+
+**Key design decisions:**
+
+- **Architecture**: Clean separation of concerns with models (Pydantic + SQLAlchemy), repository (database access), service (business logic), and API (FastAPI routes).
+- **Stock Availability**: Inventory tracks both `quantity` and `reserved` stock; available = quantity - reserved.
+- **Idempotency**: Reservations store idempotency keys; retries with the same key return the existing reservation instead of creating a duplicate.
+- **Expiration**: Reservations have a 30-minute TTL; confirm fails if expired. Check via `is_expired()` method.
+- **Order State Machine**: Orders transition through pending → confirmed → completed (or cancelled). State is enforced in the service layer.
+- **Security**: Mutating endpoints (`POST /skus`, `/reservations`, `/stock`) require `X-API-Key` header. Read endpoints are public.
+- **Pagination**: `/orders` supports `?page=X&size=Y` with validation (page ≥ 1, size ≤ 100).
+- **Database**: SQLite with SQLAlchemy ORM; indexes on frequently-queried columns (sku_id, status, idempotency_key).
+- **Error Handling**: Clear HTTP status codes (409 conflict, 404 not found, 400 bad request, 401/403 auth).
+
+Tests cover happy paths, stock validation, idempotent retries, expiration rejection, unauthorized access, and pagination.

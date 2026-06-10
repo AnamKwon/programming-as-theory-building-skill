@@ -1,0 +1,155 @@
+I've reviewed all source files, tests, packaging, and run the test suite. Two API tests fail on a full run due to shared global state. Here is the evaluation.
+
+```json
+{
+  "rubric_version": "benchmark-codegen-review-v1",
+  "score_scale": "0-100 per category",
+  "weights": {
+    "task_fulfillment": 0.20,
+    "functional_correctness": 0.25,
+    "executability": 0.15,
+    "test_quality": 0.15,
+    "code_quality": 0.10,
+    "minimality": 0.10,
+    "security_safety": 0.05
+  },
+  "task_fulfillment_score": 87,
+  "task_fulfillment_breakdown": {
+    "instruction_compliance": 85,
+    "required_artifacts": 90,
+    "feature_coverage": 88,
+    "constraint_adherence": 85
+  },
+  "functional_correctness_score": 73,
+  "functional_correctness_breakdown": {
+    "domain_invariants": 70,
+    "edge_case_behavior": 75,
+    "data_consistency": 60,
+    "error_semantics": 85
+  },
+  "executability_score": 79,
+  "executability_breakdown": {
+    "installability": 90,
+    "runtime_entrypoints": 92,
+    "command_result": 45,
+    "runtime_isolation": 90
+  },
+  "test_quality_score": 71,
+  "test_quality_breakdown": {
+    "required_test_coverage": 85,
+    "behavioral_assertions": 82,
+    "integration_realism": 80,
+    "repeatability": 35
+  },
+  "code_quality_score": 83,
+  "code_quality_breakdown": {
+    "readability": 85,
+    "maintainability": 78,
+    "boundary_design": 85,
+    "documentation_quality": 82
+  },
+  "minimality_score": 64,
+  "minimality_breakdown": {
+    "no_speculative_infrastructure": 60,
+    "no_dead_or_duplicate_code": 62,
+    "appropriate_abstractions": 80,
+    "dependency_minimality": 55
+  },
+  "security_safety_score": 85,
+  "security_safety_breakdown": {
+    "auth_enforcement": 90,
+    "secret_handling": 70,
+    "input_safety": 85,
+    "unsafe_operations": 95
+  },
+  "review_confidence_score": 91,
+  "review_confidence_breakdown": {
+    "inspection_depth": 95,
+    "command_evidence": 90,
+    "issue_specificity": 90,
+    "uncertainty_handling": 88
+  },
+  "weighted_components": {
+    "task_fulfillment": 17.4,
+    "functional_correctness": 18.3,
+    "executability": 11.9,
+    "test_quality": 10.7,
+    "code_quality": 8.3,
+    "minimality": 6.4,
+    "security_safety": 4.3
+  },
+  "weighted_total": 77.1,
+  "verdict": "good",
+  "key_findings": [
+    "Clean layered design (models/repository/service/security/app) implementing the full requested API surface; the service-layer test suite (test_service.py) passes fully and proves domain behavior.",
+    "Test suite is NOT repeatable: `python -m pytest` yields 2 failed, 36 passed. test_api.py shares a module-level global repo (app.py:32-33) with no reset, so accumulated orders break test_list_orders (assert 4==3) and test_list_orders_pagination (assert 9==5).",
+    "Expiration leaks stock: confirm_reservation marks an expired reservation EXPIRED (service.py:94-96) but never returns its reserved quantity to the SKU; there is no sweep/endpoint to release expired holds.",
+    "State-transition bug: confirm_reservation checks expiry before state, so a re-confirm of an already-CONFIRMED reservation past its expiry flips it to EXPIRED (service.py:94-101).",
+    "Reserve is non-atomic and TOCTOU-prone: get_sku check then separate INSERT + adjust_stock commits (service.py:70-84) can oversell under concurrency; adjust_stock has no floor so stock can go negative.",
+    "Dead/unused code and dependencies: idempotency_keys table (repository.py:62-70) is never read/written, ErrorResponse (models.py:109) and IdempotencyError (service.py:34) are unused, and sqlalchemy/pydantic-settings/pytest-asyncio are declared but unused (stdlib sqlite3 + sync TestClient are used instead)."
+  ],
+  "score_rationale": {
+    "task_fulfillment": "All requested artifacts exist (pyproject.toml, README.md, src/commerce_service package, tests) and every documented endpoint is implemented with API-key auth, idempotency, expiration, and pagination. README accurately matches routes. Slight deductions for relying on a hardcoded demo key and global singletons rather than configurable, production-minded wiring.",
+    "functional_correctness": "Happy paths and most edge cases (insufficient stock 409, idempotent retry, auth 403, expiry 410, pagination) work. Deducted for genuine consistency gaps: expired reservations never release stock, a non-atomic check-then-decrement that can oversell, negative-stock allowance via adjust_stock, idempotent retries silently ignoring mismatched sku/quantity, and a confirmed→expired state flip on re-confirm.",
+    "executability": "Dependencies install cleanly, the package layout is valid (src/ + package-dir), and the uvicorn entrypoint imports fine with in-memory SQLite (no parent/ambient dependence). The declared `pytest` command, however, fails 2 of 38 tests, which materially lowers command_result.",
+    "test_quality": "Coverage of required scenarios is strong and assertions check real behavior (stock release, state, counts), with service tests using isolated per-test in-memory fixtures. But the API tests share one global repo and never reset state, so the full suite is not repeatable and two tests fail — a core repeatability defect.",
+    "code_quality": "Readable, well-named, with coherent repo/service/schema/security boundaries and accurate docstrings/README. Maintainability is slightly hurt by module-level mutable singletons (repo/service) that block per-request isolation and an app factory.",
+    "minimality": "Several pieces of speculative/dead infrastructure: an unused idempotency_keys table, unused ErrorResponse model and IdempotencyError exception, and three unused declared dependencies (sqlalchemy, pydantic-settings, pytest-asyncio). The two idempotency-key repository methods also duplicate row-mapping logic.",
+    "security_safety": "All mutating endpoints enforce the verify_api_key dependency, SQL is parameterized, and Pydantic validates inputs (min_length, gt/ge). Deducted for a hardcoded API key compared non-constant-time in security.py and adjust_stock permitting negative resulting quantities.",
+    "review_confidence": "All source and test files were read and the declared test command was executed with captured output, so findings are concrete; minor uncertainty remains around concurrency behavior which was reasoned about rather than load-tested."
+  },
+  "instruction_failures": [
+    "Declared test command `pytest` does not pass cleanly: 2 of 38 tests fail on a normal run (tests/test_api.py TestOrderEndpoints)."
+  ],
+  "correctness_failures": [
+    "Expired reservation does not release reserved stock back to the SKU (service.py:88-96) — permanent inventory leak.",
+    "confirm_reservation evaluates expiry before state, allowing a previously CONFIRMED reservation to be overwritten to EXPIRED on a later confirm attempt (service.py:94-101).",
+    "Reservation creation is non-atomic (separate commits for INSERT and stock decrement) and uses read-then-write availability check, enabling oversell under concurrency (service.py:70-84, repository.py:90-101).",
+    "adjust_stock has no non-negative floor, so stock can be driven negative via PATCH /skus/{id}/stock (repository.py:90-101).",
+    "Idempotent retry with a different sku_id/quantity but same idempotency_key silently returns the original reservation without validating the request matches (service.py:66-68)."
+  ],
+  "execution_failures": [
+    "tests/test_api.py::TestOrderEndpoints::test_list_orders failed: assert 4 == 3 (orders accumulated from earlier tests via shared global repo).",
+    "tests/test_api.py::TestOrderEndpoints::test_list_orders_pagination failed: assert 9 == 5 (same shared-state cause)."
+  ],
+  "test_gaps": [
+    "No test asserts that cancelling a reservation actually restores SKU stock at the API layer (only covered at service layer).",
+    "No test covers expiration via the HTTP API (only the service-level test manually rewrites expires_at).",
+    "No test for adjust_stock driving quantity negative, nor for idempotent-retry with mismatched payload.",
+    "API tests are order-dependent and not isolated; there is no fixture/conftest resetting the global repo between tests, which is the direct cause of the two failures."
+  ],
+  "quality_notes": [
+    "app.py instantiates module-level `repo`/`service` singletons (app.py:31-33), preventing dependency-injected per-test isolation and an app factory.",
+    "get_reservation and get_reservation_by_idempotency_key duplicate identical row-to-model mapping (repository.py:139-183).",
+    "Uses deprecated datetime.utcnow() throughout (repository.py:108,198; service.py:94), emitting DeprecationWarnings under Python 3.12.",
+    "Generic `except Exception` handlers in app.py map unexpected errors to 400 and echo str(e), which can leak internal messages (e.g. raw SQLite UNIQUE constraint text on duplicate SKU)."
+  ],
+  "unnecessary_code_examples": [
+    "repository.py:62-70 — idempotency_keys table created but never queried or written.",
+    "models.py:109-111 — ErrorResponse model defined but never referenced.",
+    "service.py:34-37 — IdempotencyError exception defined and imported but never raised.",
+    "pyproject.toml:15 — sqlalchemy declared as a dependency though only stdlib sqlite3 is used; pydantic-settings (line 13) and pytest-asyncio (line 21) are also unused."
+  ],
+  "security_safety_notes": [
+    "API key 'test-key-123' is hardcoded in security.py:11 and README; comparison is a direct `!=` (non-constant-time) and not environment-configurable.",
+    "All mutating endpoints correctly require Depends(verify_api_key); APIKeyHeader auto-returns 403 when the header is missing.",
+    "SQL queries are fully parameterized; Pydantic enforces input constraints (min_length, gt, ge) on request bodies and query params.",
+    "adjust_stock allows negative resulting stock, a data-integrity weakness for untrusted callers."
+  ],
+  "file_evidence": [
+    {"path": "src/commerce_service/app.py", "note": "Module-level global repo/service (lines 31-33) shared by TestClient; broad except->400 handlers may leak error text; full auth dependency coverage on mutating routes."},
+    {"path": "src/commerce_service/service.py", "note": "Expiry checked before state (94-101) causing CONFIRMED->EXPIRED flip; expired reservations never release stock; non-atomic reserve+decrement (70-84); idempotent retry ignores payload mismatch (66-68)."},
+    {"path": "src/commerce_service/repository.py", "note": "Unused idempotency_keys table (62-70); adjust_stock has no non-negative floor (90-101); duplicated reservation row-mapping (139-183); deprecated utcnow."},
+    {"path": "src/commerce_service/security.py", "note": "Hardcoded key 'test-key-123' with non-constant-time comparison (line 11)."},
+    {"path": "tests/test_api.py", "note": "Shares one global repo with no reset; test_list_orders/test_list_orders_pagination assert absolute totals that break due to cross-test accumulation."},
+    {"path": "tests/test_service.py", "note": "Solid isolated service-layer tests (fresh :memory: repo per test) covering stock, idempotency, confirm/cancel, expiry, pagination — all pass."},
+    {"path": "pyproject.toml", "note": "Declares sqlalchemy/pydantic-settings/pytest-asyncio that the code does not use."}
+  ],
+  "commands_run": [
+    "python3 --version (3.12.4)",
+    "python3 -c 'import fastapi, pydantic, httpx, pytest' (deps available)",
+    "PYTHONPATH=src python3 -m pytest -q (result: 2 failed, 36 passed)"
+  ],
+  "review_risk": "low — all source and test files were read and the declared test suite was executed with captured failures; concurrency/transaction concerns were reasoned about statically rather than load-tested."
+}
+```

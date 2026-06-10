@@ -1,0 +1,34 @@
+Perfect! I've created a production-style inventory and order orchestration API with all required components. Here's the summary:
+
+```json
+{
+  "files_created": [
+    "pyproject.toml",
+    "README.md",
+    "src/commerce_service/__init__.py",
+    "src/commerce_service/app.py",
+    "src/commerce_service/models.py",
+    "src/commerce_service/repository.py",
+    "src/commerce_service/service.py",
+    "src/commerce_service/security.py",
+    "tests/__init__.py",
+    "tests/test_service.py",
+    "tests/test_api.py"
+  ],
+  "entrypoint": "python -m uvicorn commerce_service.app:app --reload",
+  "test_command": "pytest tests/ -v"
+}
+```
+
+**Key design features:**
+
+- **Repository pattern**: All database access isolated in `repository.py` with SQLite for persistence
+- **Service layer**: Business rules (stock validation, idempotency, expiration) in `service.py`
+- **API security**: Header-based API key validation for all mutating endpoints
+- **Idempotency**: Reservations deduplicated by idempotency key
+- **Pagination**: Order listing supports limit/offset with validation (1-100 range)
+- **State machines**: Enforced transitions for reservations (pending→confirmed/cancelled) and orders
+- **Error handling**: Clear HTTP errors (409 conflicts, 400 validation, 401/403 auth)
+- **Tests**: 20+ assertions covering happy paths, stock insufficiency, expiry, unauthorized access, and pagination
+
+Install with `pip install -e ".[dev]"` then run the service or tests using the commands above.

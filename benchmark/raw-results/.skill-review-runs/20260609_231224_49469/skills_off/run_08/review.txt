@@ -1,0 +1,159 @@
+All checks complete. Tests pass (34/34), but I confirmed a critical auth bypass and dead expiration code. Here is the evaluation.
+
+```json
+{
+  "rubric_version": "benchmark-codegen-review-v1",
+  "score_scale": "0-100 per category",
+  "weights": {
+    "task_fulfillment": 0.20,
+    "functional_correctness": 0.25,
+    "executability": 0.15,
+    "test_quality": 0.15,
+    "code_quality": 0.10,
+    "minimality": 0.10,
+    "security_safety": 0.05
+  },
+  "task_fulfillment_score": 75,
+  "task_fulfillment_breakdown": {
+    "instruction_compliance": 70,
+    "required_artifacts": 95,
+    "feature_coverage": 70,
+    "constraint_adherence": 65
+  },
+  "functional_correctness_score": 60,
+  "functional_correctness_breakdown": {
+    "domain_invariants": 62,
+    "edge_case_behavior": 50,
+    "data_consistency": 62,
+    "error_semantics": 65
+  },
+  "executability_score": 87,
+  "executability_breakdown": {
+    "installability": 78,
+    "runtime_entrypoints": 88,
+    "command_result": 95,
+    "runtime_isolation": 88
+  },
+  "test_quality_score": 78,
+  "test_quality_breakdown": {
+    "required_test_coverage": 55,
+    "behavioral_assertions": 80,
+    "integration_realism": 85,
+    "repeatability": 90
+  },
+  "code_quality_score": 71,
+  "code_quality_breakdown": {
+    "readability": 85,
+    "maintainability": 68,
+    "boundary_design": 72,
+    "documentation_quality": 60
+  },
+  "minimality_score": 70,
+  "minimality_breakdown": {
+    "no_speculative_infrastructure": 85,
+    "no_dead_or_duplicate_code": 50,
+    "appropriate_abstractions": 78,
+    "dependency_minimality": 65
+  },
+  "security_safety_score": 69,
+  "security_safety_breakdown": {
+    "auth_enforcement": 15,
+    "secret_handling": 80,
+    "input_safety": 88,
+    "unsafe_operations": 92
+  },
+  "review_confidence_score": 90,
+  "review_confidence_breakdown": {
+    "inspection_depth": 92,
+    "command_evidence": 90,
+    "issue_specificity": 92,
+    "uncertainty_handling": 85
+  },
+  "weighted_components": {
+    "task_fulfillment": 15.0,
+    "functional_correctness": 15.0,
+    "executability": 13.1,
+    "test_quality": 11.7,
+    "code_quality": 7.1,
+    "minimality": 7.0,
+    "security_safety": 3.5
+  },
+  "weighted_total": 72.3,
+  "verdict": "mixed",
+  "key_findings": [
+    "CRITICAL auth bypass: mutation endpoints declare api_key as a Query param (alias 'X-API-Key') and only check 'if api_key: await verify_api_key(...)'. Requests with no key, or with the key sent as the documented HTTP header, are NOT authenticated. Empirically verified: POST /skus with no key -> 201, with a WRONG key sent as a header -> 201; only a query string '?X-API-Key=' is ever enforced (app.py:45-50, 65-70, 82-87, 102-107, 122-127, 140-145).",
+    "The proper FastAPI auth machinery (APIKeyHeader + Depends(verify_api_key)) in security.py is dead code: verify_api_key is never wired as a dependency, so the header-based contract documented in README never takes effect.",
+    "Reservation expiration is non-functional: Database.expire_old_reservations() (repository.py:246) is never called anywhere. confirm_reservation only checks status == EXPIRED (service.py:95), but nothing ever transitions pending->expired, so a reservation past expires_at can still be confirmed. README's claim 'Expired reservations are automatically cleaned up when accessed' is false.",
+    "All 34 tests pass (pytest: 34 passed), but tests send the API key as a header that the app ignores, so the suite green-lights the broken auth; test_unauthorized_mutation_without_api_key even asserts 201-or-403 and comments 'Should succeed without API key'.",
+    "Pagination total count is computed (list_orders returns (orders, total)) but discarded at the API layer (app.py:147 'orders, _ ='); GET /orders returns a bare list with no total/page metadata.",
+    "ruff reports 6 lint errors: unused imports (ErrorResponse, typing.Optional, datetime.timedelta), unsorted import blocks, and one E501 long line."
+  ],
+  "score_rationale": {
+    "task_fulfillment": "All requested files and endpoints exist (health, skus, inventory PATCH, reservation create/confirm/cancel, orders list) with idempotency and pagination. Marked down because the documented header-based auth contract does not actually work and the expiration feature is inert, so the delivered behavior diverges from the stated/README contract.",
+    "functional_correctness": "Core stock invariants use conditional SQL updates (reserve/release/confirm with WHERE guards) and idempotency via a UNIQUE key both hold and are tested. However two required edge cases fail: expiration never triggers (dead method) and unauthorized mutation is not blocked. reserve_inventory + create_reservation run in separate connections/transactions, so a failure between them can leak reserved stock.",
+    "executability": "Deps are present and pinned; tests run cleanly (34 passed) and uvicorn entrypoint is valid. Minor risk: src-layout wheel build may need [tool.hatch.build.targets.wheel] packages config for 'pip install -e .', though tests import via the src.* path and don't require install. Tests isolate state with temp DBs.",
+    "test_quality": "Good behavioral assertions (inventory math, idempotent quantity, reverse-chronological ordering) and realistic SQLite integration with per-test temp DBs. But there is no expiration test, and the auth test encodes the bug rather than asserting enforcement, leaving two required scenarios effectively uncovered.",
+    "code_quality": "Clear repository/service/schema/security layering and readable names. Maintainability suffers from auth logic copy-pasted into every endpoint instead of a single dependency, and documentation overstates capabilities (false auto-expiration and header-auth claims), which is worse than no docs.",
+    "minimality": "No speculative queues/workers. But notable dead/unused surface: expire_old_reservations(), ErrorResponse model, OrderStatus.FULFILLED, the entire Depends/APIKeyHeader path in security.py, plus unused imports. pydantic-settings is declared as a dependency but never used.",
+    "security_safety": "Parametrized SQL (no injection) and pydantic input validation are solid, and there are no unsafe shell/file/network operations. The auth enforcement is essentially absent for the documented usage, which is the dominant weakness; the dev-default API key is acceptable and documented.",
+    "review_confidence": "Read all source and test files, ran the full test suite, ran ruff, grepped for dead code/unused deps, and executed a live TestClient probe that empirically confirmed the auth bypass and header/query mismatch."
+  },
+  "instruction_failures": [
+    "Documented API-key auth via 'X-API-Key' header does not function; key is read from a query param, and auth is skipped entirely when absent (app.py:45-50).",
+    "README claims expired reservations are cleaned up when accessed; no code path performs expiration (repository.py:246 never called).",
+    "GET /orders does not surface the pagination total it computes (app.py:147)."
+  ],
+  "correctness_failures": [
+    "Auth not enforced on any mutating endpoint for the documented (no-key / header) usage — verified live: no key -> 201, wrong key via header -> 201.",
+    "Expired-but-pending reservations can still be confirmed because pending->expired transition is never executed (service.py:88-121).",
+    "create_reservation maps a missing SKU to HTTP 400 (app.py:92) rather than 404; adjust_stock maps insufficient-inventory ValueError to 404 (app.py:75) instead of 400/409.",
+    "reserve_inventory and create_reservation execute in independent SQLite transactions; a failure after the inventory decrement leaves stock reserved with no reservation row."
+  ],
+  "execution_failures": [
+    "No hard execution failure: 34 tests pass. Potential 'pip install -e .' wheel-discovery issue for the src layout is unverified (tests do not require installation)."
+  ],
+  "test_gaps": [
+    "No test for reservation expiration (no time-advance or expired-status path).",
+    "Auth test (test_unauthorized_mutation_without_api_key) accepts the bypass (asserts 201 or 403) instead of requiring 403; no test sends a wrong key the way enforcement actually works (query param).",
+    "No test asserts inventory reserved->released on cancel via the API layer (only service layer covers it).",
+    "No test covers confirm/cancel of a nonexistent reservation ID at the API layer."
+  ],
+  "quality_notes": [
+    "Auth check duplicated inline across five endpoints; should be a single Depends dependency so the invariant is localized and unbypassable.",
+    "get_orders uses OrderStatus[order['status'].upper()] (name lookup) while reservations use value-based ReservationStatus(row['status']); inconsistent and fragile.",
+    "README contains false operational claims (header auth, auto-expiration on access) that mislead operators.",
+    "datetime.utcnow() is deprecated on Python 3.12 (warnings emitted across repository.py)."
+  ],
+  "unnecessary_code_examples": [
+    "repository.py:246 expire_old_reservations() — implemented but never invoked.",
+    "models.py:80 ErrorResponse — defined and imported (app.py:11) but never used; flagged by ruff F401.",
+    "models.py:19 OrderStatus.FULFILLED — never assigned anywhere (orders are always 'confirmed').",
+    "security.py:15-28 APIKeyHeader + Depends(verify_api_key) dependency path — never wired into any route.",
+    "pyproject.toml:18 pydantic-settings dependency — never imported/used.",
+    "Unused imports: typing.Optional (service.py:4), datetime.timedelta (tests/test_service.py:5)."
+  ],
+  "security_safety_notes": [
+    "Auth bypass is the central risk: mutating endpoints accept requests with no key and ignore the documented header (empirically confirmed).",
+    "API_KEY falls back to a hardcoded dev default 'dev-key-12345' (security.py:11) — acceptable as a documented dev default, not a leaked production secret.",
+    "All SQL uses parameterized queries; no injection vector observed.",
+    "No shell/file/network/destructive operations beyond a local SQLite file."
+  ],
+  "file_evidence": [
+    {"path": "src/commerce_service/app.py", "note": "Lines 45-50/65-70/82-87/102-107/122-127/140-145: api_key is a Query param and auth runs only 'if api_key', so missing/header keys bypass auth. Live test confirmed."},
+    {"path": "src/commerce_service/security.py", "note": "verify_api_key built as an APIKeyHeader Depends dependency (lines 15-28) but never used as one; effectively dead."},
+    {"path": "src/commerce_service/repository.py", "note": "expire_old_reservations (line 246) never called; reserve/release/confirm use guarded WHERE updates which are correct at row level; separate connection per op (no cross-step transaction)."},
+    {"path": "src/commerce_service/service.py", "note": "confirm_reservation (88-121) only treats status==EXPIRED; never lazily expires by comparing expires_at, so stale pending reservations confirm successfully."},
+    {"path": "tests/test_api.py", "note": "Lines 366-378: unauthorized test asserts 201-or-403 and comments the bypass; all tests send X-API-Key as a header the app ignores."},
+    {"path": "pyproject.toml", "note": "pydantic-settings dependency (line 18) is never imported anywhere in src/."}
+  ],
+  "commands_run": [
+    "find . -type f (excluding caches) — listed project layout",
+    "python3 --version (3.12.4); import fastapi/httpx/pytest — deps present",
+    "python3 -m pytest -q — 34 passed, 136 warnings",
+    "live TestClient probe of POST /skus: no key -> 201, wrong key via header -> 201, wrong key via query -> 403, correct key via query -> 201",
+    "grep for expire_old_reservations / Depends / expiration / pydantic-settings / ErrorResponse / FULFILLED usage",
+    "python3 -m ruff check . — 6 errors (F401 unused imports, I001 unsorted imports, E501)"
+  ],
+  "review_risk": "Low: all source and tests were read, the full suite and ruff were run, and the auth bypass and header/query mismatch were confirmed with a live TestClient probe; the only unverified item is whether 'pip install -e .' needs explicit hatch wheel-package config for the src layout, since tests import via the src.* path and do not require installation."
+}
+```

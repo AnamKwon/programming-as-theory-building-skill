@@ -1,0 +1,155 @@
+All 39 tests pass. I've inspected all source and test files. Here's my benchmark evaluation.
+
+```json
+{
+  "rubric_version": "benchmark-codegen-review-v1",
+  "score_scale": "0-100 per category",
+  "weights": {
+    "task_fulfillment": 0.20,
+    "functional_correctness": 0.25,
+    "executability": 0.15,
+    "test_quality": 0.15,
+    "code_quality": 0.10,
+    "minimality": 0.10,
+    "security_safety": 0.05
+  },
+  "task_fulfillment_score": 89,
+  "task_fulfillment_breakdown": {
+    "instruction_compliance": 90,
+    "required_artifacts": 95,
+    "feature_coverage": 92,
+    "constraint_adherence": 78
+  },
+  "functional_correctness_score": 77,
+  "functional_correctness_breakdown": {
+    "domain_invariants": 75,
+    "edge_case_behavior": 85,
+    "data_consistency": 68,
+    "error_semantics": 78
+  },
+  "executability_score": 89,
+  "executability_breakdown": {
+    "installability": 92,
+    "runtime_entrypoints": 90,
+    "command_result": 95,
+    "runtime_isolation": 80
+  },
+  "test_quality_score": 89,
+  "test_quality_breakdown": {
+    "required_test_coverage": 85,
+    "behavioral_assertions": 88,
+    "integration_realism": 90,
+    "repeatability": 92
+  },
+  "code_quality_score": 86,
+  "code_quality_breakdown": {
+    "readability": 88,
+    "maintainability": 80,
+    "boundary_design": 90,
+    "documentation_quality": 85
+  },
+  "minimality_score": 86,
+  "minimality_breakdown": {
+    "no_speculative_infrastructure": 90,
+    "no_dead_or_duplicate_code": 72,
+    "appropriate_abstractions": 88,
+    "dependency_minimality": 92
+  },
+  "security_safety_score": 86,
+  "security_safety_breakdown": {
+    "auth_enforcement": 90,
+    "secret_handling": 70,
+    "input_safety": 90,
+    "unsafe_operations": 95
+  },
+  "review_confidence_score": 91,
+  "review_confidence_breakdown": {
+    "inspection_depth": 95,
+    "command_evidence": 92,
+    "issue_specificity": 90,
+    "uncertainty_handling": 88
+  },
+  "weighted_components": {
+    "task_fulfillment": 17.8,
+    "functional_correctness": 19.3,
+    "executability": 13.4,
+    "test_quality": 13.4,
+    "code_quality": 8.6,
+    "minimality": 8.6,
+    "security_safety": 4.3
+  },
+  "weighted_total": 85.3,
+  "verdict": "good",
+  "key_findings": [
+    "All 39 tests pass cleanly via `PYTHONPATH=src python3 -m pytest` in ~0.77s; full layered architecture (repository/service/api/security/models) is present and coherent.",
+    "Full requested API surface implemented: SKU create/adjust, reservation create/confirm/cancel, order pagination, health check, API-key auth on all mutations.",
+    "Idempotency (200 vs 201), insufficient-stock (409), expiration, and pagination validation (422) all behave correctly and are tested.",
+    "SKUModel.reserved_stock is persisted but never updated — every CreateSKUResponse/AdjustStockResponse reports reserved_stock=0 even with active reservations; availability is computed dynamically elsewhere, so the persisted/reported field is misleading dead state (models.py:31, repository.py:29, app.py:48-49).",
+    "Stock check and reservation creation run in separate sessions/transactions (service.py:46-58), so the availability invariant is not atomic and could oversell under concurrency — untested.",
+    "A leftover commerce.db (32KB) is committed in the otherwise-fresh workspace because Repository() at module import writes a relative `sqlite:///commerce.db` to CWD (repository.py:18, app.py:30)."
+  ],
+  "score_rationale": {
+    "task_fulfillment": "Every requested file, endpoint, and workflow is present and the README documents them. Docked for the committed commerce.db artifact in a 'fresh workspace' and a hardcoded (non-env) API key, which cut against the production-minded constraint.",
+    "functional_correctness": "Core invariants (availability via dynamic reserved-stock query, idempotent dedup, lazy expiration, reservation state transitions) hold and edge cases return correct status codes. Lowered for non-atomic check-then-reserve, the never-maintained reserved_stock column reported as 0, and adjust_stock not guarding against dropping available below reserved (repository.py:45-54).",
+    "executability": "Pinned deps and hatchling packaging are complete; `app:app` entrypoint works; tests pass. Isolation docked because module-level Repository() writes to CWD and a stale DB ships with the project, though tests correctly use temp DBs.",
+    "test_quality": "Two suites cover happy paths, insufficient stock, idempotency, expiration, auth, and pagination with behavioral (not just status) assertions, using realistic sqlite temp DBs cleaned per test. Gaps: no test that an expired reservation frees stock for a later reservation, and no adjust-below-reserved or oversell test.",
+    "code_quality": "Clear naming and clean layer separation. Docked for redundant if/else branches in service.confirm_reservation (service.py:73-75), an unused reserved_stock column, and a broad `except Exception` in create_sku (app.py:51).",
+    "minimality": "No speculative queues/workers/migrations and all dependencies are used. Docked for dead code: redundant confirm branches, unused OrderStatus.RESERVED/SHIPPED enum values, unused get_order repository method, and the unmaintained reserved_stock column.",
+    "security_safety": "All mutating endpoints enforce verify_api_key via Depends; inputs validated by Pydantic; ORM avoids injection; no unsafe shell/file/network ops. Docked for the hardcoded VALID_API_KEY constant instead of env-based config.",
+    "review_confidence": "All six source files and both test files were read; declared test command was run with results captured; findings cite concrete file/line references. Untested concurrency behavior is the main residual uncertainty."
+  },
+  "instruction_failures": [
+    "Committed commerce.db state artifact present in a workspace expected to be fresh (relative sqlite path written at import time).",
+    "API key is a hardcoded module constant rather than environment-sourced, weakening the production-minded expectation."
+  ],
+  "correctness_failures": [
+    "reserved_stock column is never incremented/decremented; API responses always report reserved_stock=0 regardless of active reservations (models.py:31, app.py:48-49).",
+    "Availability check (service.create_reservation) and persistence (repository.create_reservation) span separate transactions — not atomic, can oversell under concurrent requests.",
+    "adjust_stock only prevents available_stock < 0; it can reduce available_stock below the amount currently reserved (repository.py:51-53).",
+    "Idempotent replay returns the stored reservation without verifying the new request's sku_id/quantity match the original (repository.py:67-72)."
+  ],
+  "execution_failures": [
+    "No functional execution failure; tests pass. Only isolation concern: module-level Repository() creates commerce.db in the current working directory on import."
+  ],
+  "test_gaps": [
+    "No test verifying an expired (or cancelled) reservation releases reserved stock so a later reservation succeeds.",
+    "No test that adjust_stock cannot reduce available below reserved quantity.",
+    "No concurrency/oversell test exercising the non-atomic check-then-reserve path.",
+    "No test for duplicate SKU id creation (the broad 400 path in create_sku)."
+  ],
+  "quality_notes": [
+    "service.confirm_reservation has two if/else branches that both do `raise InvalidReservationStateError(str(e))` — redundant (service.py:72-75).",
+    "create_sku catches bare Exception and maps everything to 400 (app.py:51), obscuring unexpected errors.",
+    "Non-existent SKU on reservation/adjust returns 400 via ValueError rather than a 404, a minor error-semantics inconsistency.",
+    "README claims 'automatic expiration' but expiration is lazy (evaluated on read/confirm), not swept — accurate enough but slightly overstated."
+  ],
+  "unnecessary_code_examples": [
+    "OrderStatus.RESERVED and OrderStatus.SHIPPED enum values are never used (models.py:11,13).",
+    "Repository.get_order and CommerceService.get_order are defined but unused by any endpoint (repository.py:172, service.py:95).",
+    "SKUModel.reserved_stock column is persisted but never written, only ever read as a constant 0.",
+    "Unused import: `IntegrityError` imported in repository.py:5 but never referenced."
+  ],
+  "security_safety_notes": [
+    "verify_api_key dependency correctly gates all mutating endpoints (POST /skus, stock, reservations create/confirm/cancel); GET /orders is intentionally open per README.",
+    "VALID_API_KEY is a hardcoded constant 'test-api-key-12345' (security.py:6) — should be sourced from environment/config for production.",
+    "Inputs validated via Pydantic constraints (ge/gt/min_length); SQLAlchemy ORM parameterizes queries, avoiding injection.",
+    "No shell, filesystem-traversal, or network operations beyond the intended local SQLite/HTTP server."
+  ],
+  "file_evidence": [
+    {"path": "src/commerce_service/repository.py", "note": "Availability computed dynamically via get_reserved_stock (lines 179-191) excluding expired; but reserved_stock column never updated and check-then-create spans separate sessions."},
+    {"path": "src/commerce_service/service.py", "note": "Business rules layer; lines 72-75 contain a redundant if/else both raising InvalidReservationStateError."},
+    {"path": "src/commerce_service/app.py", "note": "Routes map errors to 409/404/400; create_reservation returns 201/200 for new/idempotent (lines 96-101); module-level Repository() writes commerce.db to CWD (line 30)."},
+    {"path": "src/commerce_service/models.py", "note": "reserved_stock column (line 31) unused; OrderStatus.RESERVED/SHIPPED (lines 11,13) unused; idempotency_key has unique constraint (line 42)."},
+    {"path": "src/commerce_service/security.py", "note": "Hardcoded VALID_API_KEY constant; APIKeyHeader dependency returns 403 on mismatch."},
+    {"path": "tests/test_api.py", "note": "TestClient over temp sqlite DB with monkeypatched repo/service; covers auth, idempotency (200/201), insufficient stock (409), pagination (422)."},
+    {"path": "tests/test_service.py", "note": "Service-level tests incl. expired reservation (lines 104-125) and reservation-respects-existing (lines 88-92); behavioral assertions on quantities/ids/status."},
+    {"path": "commerce.db", "note": "32KB SQLite file committed into the workspace — leftover runtime state in a supposedly fresh project."}
+  ],
+  "commands_run": [
+    "ls -la && find . -type f",
+    "python3 --version && python3 -c 'import fastapi, sqlalchemy, pydantic, httpx, pytest'",
+    "PYTHONPATH=src python3 -m pytest -q  (39 passed, 315 deprecation warnings, 0.77s)"
+  ],
+  "review_risk": "low — all source and test files were read and the declared pytest suite ran green with dependencies already available; main residual uncertainty is concurrency behavior (non-atomic stock check) which is not exercised by the single-threaded test suite."
+}
+```

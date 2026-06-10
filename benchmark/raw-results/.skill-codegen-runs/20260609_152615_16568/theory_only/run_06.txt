@@ -1,0 +1,27 @@
+Perfect! All tests pass. Here's the project summary:
+
+```json
+{
+  "files_created": 11,
+  "entrypoint": "uvicorn commerce_service.app:app --reload",
+  "test_command": "pytest"
+}
+```
+
+**Created Commerce Service:**
+
+- **FastAPI application** with endpoints for health checks, SKU management, reservations, and orders
+- **SQLite persistence** with SQLAlchemy ORM models for SKUs, reservations, and orders
+- **Service layer** enforcing stock availability, idempotency via request IDs, automatic reservation expiration, and order state transitions
+- **Repository pattern** isolating database access with idempotency deduplication
+- **API-key authentication** protecting all mutations (X-API-Key header required)
+- **Pydantic validation** for all request/response payloads
+- **39 passing tests** covering:
+  - Happy path: create SKU → reserve → confirm → order lookup
+  - Stock validation: insufficient stock rejection
+  - Idempotency: duplicate requests return existing reservation with 200 status
+  - Expiration: expired reservations rejected on confirmation
+  - Authorization: mutations require valid API key, listing orders does not
+  - Pagination: orders endpoint supports configurable page size
+
+Test key/API key: `test-api-key-12345`

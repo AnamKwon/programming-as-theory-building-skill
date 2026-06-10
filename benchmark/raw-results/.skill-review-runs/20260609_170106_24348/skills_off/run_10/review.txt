@@ -1,0 +1,164 @@
+I have enough evidence. Summary of what I verified:
+
+- **All source + test files read.** Service business logic is correct and fully proven: `tests/test_service.py` → **16/16 pass**.
+- **The declared test command (`pytest tests/`) fails: 16 of 35 tests fail** — the entire API/integration suite. Root cause confirmed: `tests/test_api.py:14` creates `sqlite:///:memory:` without `StaticPool`/`check_same_thread=False`, so FastAPI's `TestClient` request thread gets a separate empty in-memory DB → `no such table: skus` and cross-thread connection errors. The 3 API tests that pass (`health`, two auth-rejection) never touch the DB.
+- **Dead code confirmed via grep:** `get_sku_by_code`, `ErrorResponse`, `OrderStatus.COMPLETED`/`CANCELLED`, `contextmanager` import (app.py:2), `Depends` import (security.py:1) — all unused.
+- **Domain nuances:** stock is decremented only at confirm, not at reservation (reservations don't hold stock; first-confirm-wins); orders never leave `PENDING`; `confirm_reservation` performs 4 separate commits (non-atomic); broad `except Exception → 400` masks real errors; `test_confirm_reservation_expired` in test_api.py is logically broken (operates on a separate engine).
+
+```json
+{
+  "rubric_version": "benchmark-codegen-review-v1",
+  "score_scale": "0-100 per category",
+  "weights": {
+    "task_fulfillment": 0.20,
+    "functional_correctness": 0.25,
+    "executability": 0.15,
+    "test_quality": 0.15,
+    "code_quality": 0.10,
+    "minimality": 0.10,
+    "security_safety": 0.05
+  },
+  "task_fulfillment_score": 86,
+  "task_fulfillment_breakdown": {
+    "instruction_compliance": 85,
+    "required_artifacts": 92,
+    "feature_coverage": 85,
+    "constraint_adherence": 80
+  },
+  "functional_correctness_score": 69,
+  "functional_correctness_breakdown": {
+    "domain_invariants": 68,
+    "edge_case_behavior": 82,
+    "data_consistency": 55,
+    "error_semantics": 70
+  },
+  "executability_score": 68,
+  "executability_breakdown": {
+    "installability": 88,
+    "runtime_entrypoints": 85,
+    "command_result": 30,
+    "runtime_isolation": 70
+  },
+  "test_quality_score": 63,
+  "test_quality_breakdown": {
+    "required_test_coverage": 85,
+    "behavioral_assertions": 80,
+    "integration_realism": 35,
+    "repeatability": 50
+  },
+  "code_quality_score": 83,
+  "code_quality_breakdown": {
+    "readability": 88,
+    "maintainability": 78,
+    "boundary_design": 88,
+    "documentation_quality": 78
+  },
+  "minimality_score": 80,
+  "minimality_breakdown": {
+    "no_speculative_infrastructure": 88,
+    "no_dead_or_duplicate_code": 58,
+    "appropriate_abstractions": 82,
+    "dependency_minimality": 90
+  },
+  "security_safety_score": 79,
+  "security_safety_breakdown": {
+    "auth_enforcement": 92,
+    "secret_handling": 62,
+    "input_safety": 75,
+    "unsafe_operations": 85
+  },
+  "review_confidence_score": 90,
+  "review_confidence_breakdown": {
+    "inspection_depth": 92,
+    "command_evidence": 92,
+    "issue_specificity": 90,
+    "uncertainty_handling": 85
+  },
+  "weighted_components": {
+    "task_fulfillment": 17.2,
+    "functional_correctness": 17.3,
+    "executability": 10.2,
+    "test_quality": 9.5,
+    "code_quality": 8.3,
+    "minimality": 8.0,
+    "security_safety": 4.0
+  },
+  "weighted_total": 74.4,
+  "verdict": "mixed",
+  "key_findings": [
+    "Service business logic is correct and well-tested: tests/test_service.py passes 16/16, covering happy path, insufficient stock, idempotency, lazy expiration, invalid state transitions, and pagination.",
+    "The entire API/integration suite is broken: pytest tests/ yields 16 failed, 19 passed. Root cause is the in-memory SQLite fixture in tests/test_api.py:14 lacking StaticPool/check_same_thread=False, so the TestClient request thread sees a separate empty DB ('no such table: skus') and cross-thread connection errors.",
+    "Reservation semantics are weak: stock is only decremented at confirm (service.py:89), not at reservation creation, so reservations do not actually hold stock and overselling is possible at reserve time (first-confirm-wins).",
+    "Order state machine is inert: OrderStatus.COMPLETED/CANCELLED are never assigned (models.py:22-24); orders are created PENDING and never transition, contradicting README's 'full state tracking' claim.",
+    "confirm_reservation performs four independent commits (create_order, update_reservation_order, update_reservation_status, update_stock) with no surrounding transaction (service.py:86-89), risking partial state on failure.",
+    "Several dead artifacts: get_sku_by_code (repository.py:30), ErrorResponse (models.py:109), unused contextmanager import (app.py:2), unused Depends import (security.py:1)."
+  ],
+  "score_rationale": {
+    "task_fulfillment": "All requested endpoints, files, and features exist (SKUs, reservations, confirm/cancel, orders, pagination, idempotency, expiration, API-key auth) with clean package structure. Order-completion lifecycle and production-mindedness (hardcoded key, non-atomic writes) are partial.",
+    "functional_correctness": "Core service logic is verified correct by 16 passing unit tests and correct status mapping, but reservations don't reserve stock, orders never transition states, confirm is non-atomic, and a broad except-Exception masks errors (it converted a DB error into HTTP 400).",
+    "executability": "Dependencies install and the app imports/runs, but the declared test command fails 16/35 because the API test harness is misconfigured; default DB also writes commerce.db in cwd at import time.",
+    "test_quality": "Required scenarios are covered on paper and the service-level tests assert real domain behavior, but the integration layer is entirely non-functional (16 failures) and test_api.py's expired test operates on an unrelated engine, so integration realism and repeatability are poor.",
+    "code_quality": "Readable, well-named, cleanly layered (models/repository/service/security/app). Minor downgrades for the catch-all exception handler and a README that overstates order state tracking.",
+    "minimality": "No speculative infra and all declared dependencies are used, but multiple dead items remain (unused repository method, unused ErrorResponse schema, unused enum members, two unused imports).",
+    "security_safety": "All five mutating endpoints enforce the API-key dependency and inputs are validated via Pydantic constraints; downgraded for a hardcoded non-configurable API key and stock that can be driven negative via adjust-stock (no guard).",
+    "review_confidence": "All source and test files were read, the declared test command was executed, the API failure root cause was reproduced and diagnosed, and dead code was confirmed via grep."
+  },
+  "instruction_failures": [
+    "README claims orders have 'full state tracking', but OrderStatus.COMPLETED/CANCELLED are never used; orders remain PENDING permanently.",
+    "Production-minded constraint weakly met: API key is hardcoded in security.py:4 with no environment override."
+  ],
+  "correctness_failures": [
+    "Reservations do not hold/decrement stock (service.py:52 checks but service.py:57 does not reserve); concurrent reservations can over-commit until confirm-time recheck.",
+    "confirm_reservation is non-atomic: four separate commits (service.py:86-89) can leave partial state (order created but stock not decremented) if an intermediate step fails.",
+    "adjust_stock applies any delta without a floor (repository.py:33-40), allowing negative stock_available.",
+    "Broad `except Exception -> HTTPException(400)` in app.py (e.g. lines 80-81, 124-125) masks server-side faults as 400 client errors."
+  ],
+  "execution_failures": [
+    "pytest tests/ -> 16 failed, 19 passed. All DB-touching API tests fail.",
+    "tests/test_api.py:14 uses sqlite:///:memory: without StaticPool and without check_same_thread=False, so the TestClient request thread gets a distinct empty in-memory database -> 'no such table: skus' and 'SQLite objects created in a thread can only be used in that same thread' errors."
+  ],
+  "test_gaps": [
+    "No working API/integration coverage at all — every endpoint test that hits the DB fails.",
+    "tests/test_api.py:226-234 (test_confirm_reservation_expired) creates a brand-new unrelated in-memory engine and updates a reservation there, so it would not exercise the real reservation even if threading were fixed.",
+    "No test asserts that confirming a reservation actually decrements SKU stock via the HTTP API (only the service-level test checks this).",
+    "No test for negative-stock prevention or for cancelling an expired reservation."
+  ],
+  "quality_notes": [
+    "Clean layering across models/repository/service/security/app with clear names and docstring-free but self-explanatory code.",
+    "Lazy expiration handling in confirm_reservation (service.py:65-70) is reasonable but expiry is never proactively swept.",
+    "Catch-all exception handlers reduce error fidelity and hid the actual DB error during the test run.",
+    "Deprecation warnings: declarative_base from sqlalchemy.ext (models.py:9) and datetime.utcnow usage are deprecated under installed SQLAlchemy 2.0 / Python 3.12."
+  ],
+  "unnecessary_code_examples": [
+    "repository.py:30 get_sku_by_code — never called.",
+    "models.py:109 ErrorResponse — imported in app.py:26 but never used as a response_model.",
+    "models.py:22-24 OrderStatus.COMPLETED and CANCELLED — never assigned anywhere.",
+    "app.py:2 `from contextlib import contextmanager` — unused.",
+    "security.py:1 `Depends` import — unused."
+  ],
+  "security_safety_notes": [
+    "All mutating endpoints (create_sku, adjust_stock, create_reservation, confirm, cancel) require verify_api_key; GET endpoints are intentionally open.",
+    "API key 'secret-api-key-12345' is hardcoded in security.py:4 with no env-based override — acceptable as a demo placeholder but not production-configurable.",
+    "Pydantic constraints validate untrusted input (quantity gt=0, sku_code/idempotency_key length).",
+    "No shell/network/destructive operations; the app does create a local commerce.db file in the working directory at import time."
+  ],
+  "file_evidence": [
+    {"path": "tests/test_api.py", "note": "Lines 12-32: in-memory SQLite fixture lacks StaticPool/check_same_thread=False -> all 16 DB-touching API tests fail. Lines 226-234: expired test uses a separate unrelated engine."},
+    {"path": "tests/test_service.py", "note": "16/16 pass; asserts real behavior (e.g. line 97 stock decremented to 50, line 120-128 confirm-time insufficient stock)."},
+    {"path": "src/commerce_service/service.py", "note": "Lines 52/57: reservation checks stock but does not decrement; lines 86-89: non-atomic four-commit confirm; lines 65-70 lazy expiration."},
+    {"path": "src/commerce_service/app.py", "note": "Catch-all except->400 (e.g. 80-81, 124-125) masks server errors; init_db() at import (line 63); unused contextmanager import (line 2)."},
+    {"path": "src/commerce_service/models.py", "note": "OrderStatus.COMPLETED/CANCELLED unused (22-24); ErrorResponse defined unused (109); deprecated declarative_base (9)."},
+    {"path": "src/commerce_service/repository.py", "note": "get_sku_by_code (30) unused; update_stock (33-40) allows negative stock."},
+    {"path": "src/commerce_service/security.py", "note": "Hardcoded API_KEY (line 4); unused Depends import (line 1); all mutating endpoints enforce it."}
+  ],
+  "commands_run": [
+    "find . -type f (project file listing)",
+    "python3 --version; python3 -c 'import fastapi, sqlalchemy, pytest, httpx' (deps present, Python 3.12.4)",
+    "PYTHONPATH=src python3 -m pytest tests/ -v (16 failed, 19 passed)",
+    "PYTHONPATH=src python3 -m pytest tests/test_service.py -q (16 passed)",
+    "PYTHONPATH=src python3 -m pytest tests/test_api.py::test_create_sku_success -q (reproduced 'no such table: skus')",
+    "grep for get_sku_by_code / ErrorResponse / OrderStatus / contextmanager / Depends (confirmed dead code)"
+  ],
+  "review_risk": "low — all source and test files were read, dependencies were available, the declared test command was executed, and the API-suite failure root cause was reproduced and diagnosed directly."
+}
+```
