@@ -1,0 +1,158 @@
+I've inspected all source and test files, run the test suite (40 passed), confirmed the latent `func_sum` bug, and inspected the committed DB. Here is the evaluation.
+
+```json
+{
+  "rubric_version": "benchmark-codegen-review-v1",
+  "score_scale": "0-100 per category",
+  "weights": {
+    "task_fulfillment": 0.20,
+    "functional_correctness": 0.25,
+    "executability": 0.15,
+    "test_quality": 0.15,
+    "code_quality": 0.10,
+    "minimality": 0.10,
+    "security_safety": 0.05
+  },
+  "task_fulfillment_score": 88,
+  "task_fulfillment_breakdown": {
+    "instruction_compliance": 88,
+    "required_artifacts": 92,
+    "feature_coverage": 90,
+    "constraint_adherence": 80
+  },
+  "functional_correctness_score": 69,
+  "functional_correctness_breakdown": {
+    "domain_invariants": 50,
+    "edge_case_behavior": 70,
+    "data_consistency": 65,
+    "error_semantics": 90
+  },
+  "executability_score": 83,
+  "executability_breakdown": {
+    "installability": 65,
+    "runtime_entrypoints": 88,
+    "command_result": 95,
+    "runtime_isolation": 85
+  },
+  "test_quality_score": 87,
+  "test_quality_breakdown": {
+    "required_test_coverage": 88,
+    "behavioral_assertions": 82,
+    "integration_realism": 88,
+    "repeatability": 90
+  },
+  "code_quality_score": 82,
+  "code_quality_breakdown": {
+    "readability": 88,
+    "maintainability": 80,
+    "boundary_design": 88,
+    "documentation_quality": 72
+  },
+  "minimality_score": 76,
+  "minimality_breakdown": {
+    "no_speculative_infrastructure": 80,
+    "no_dead_or_duplicate_code": 62,
+    "appropriate_abstractions": 85,
+    "dependency_minimality": 75
+  },
+  "security_safety_score": 87,
+  "security_safety_breakdown": {
+    "auth_enforcement": 92,
+    "secret_handling": 85,
+    "input_safety": 75,
+    "unsafe_operations": 95
+  },
+  "review_confidence_score": 90,
+  "review_confidence_breakdown": {
+    "inspection_depth": 92,
+    "command_evidence": 90,
+    "issue_specificity": 90,
+    "uncertainty_handling": 88
+  },
+  "weighted_components": {
+    "task_fulfillment": 17.6,
+    "functional_correctness": 17.3,
+    "executability": 12.5,
+    "test_quality": 13.1,
+    "code_quality": 8.2,
+    "minimality": 7.6,
+    "security_safety": 4.4
+  },
+  "weighted_total": 80.5,
+  "verdict": "good",
+  "key_findings": [
+    "Clean, layered FastAPI implementation (models/repository/service/security/app) with full requested API surface; all 40 tests pass under PYTHONPATH=src python -m pytest.",
+    "Core domain invariant is not enforced: stock is never decremented and availability = stock - PENDING reservations only, so confirming a reservation releases its hold and allows overselling (see service.py:91 and the test that encodes this as expected behavior, test_service.py:219).",
+    "Expiration is purely lazy and only evaluated inside confirm_reservation (service.py:127); an expired-but-still-PENDING reservation keeps blocking availability indefinitely because _get_pending_reserved counts all PENDING rows regardless of expires_at.",
+    "Dead and latently broken code: repository.get_total_reserved_for_sku (repository.py:155-166) is never called and would raise IndexError, since it calls `func_sum(...)` where func_sum is `sqlalchemy.func` (must be `func.sum(...)`) — confirmed by reproduction.",
+    "Excellent HTTP error semantics: distinct 400/404/409/410/422 codes mapped from typed service exceptions (app.py:58-85).",
+    "README/packaging mismatch: documented install `pip install -e \".[dev]\"` will not find a `dev` extra because pyproject uses the non-standard `dev-dependencies` key instead of `[project.optional-dependencies]` (pyproject.toml:17-21)."
+  ],
+  "score_rationale": {
+    "task_fulfillment": "All requested artifacts and endpoints exist (SKU, stock, reservation create/confirm/cancel, orders list/get, health, pagination, idempotency, API-key auth) and the README documents them faithfully. Minor deduction for a leftover commerce.db committed in the otherwise-fresh workspace.",
+    "functional_correctness": "Error handling and most edge cases are solid, but the central availability invariant is wrong: confirmed reservations no longer reduce availability and stock is never consumed, permitting overselling; expired pending reservations never free stock without an explicit confirm attempt. These are real domain-rule violations, lowering domain_invariants and data_consistency.",
+    "executability": "Tests run green and the app entrypoint/uvicorn command are valid. Installability is the weak point: the documented `[dev]` extra does not exist due to the non-PEP-621 `dev-dependencies` key, so the README install command fails to provide test deps.",
+    "test_quality": "Coverage spans happy paths, insufficient stock, idempotency (and conflict), expiration, auth (403), and pagination, at both service and API layers with isolated temp/in-memory DBs. Slight deduction because one test asserts the overselling/release behavior as correct, locking in a buggy invariant.",
+    "code_quality": "Readable, well-separated layers with clear names. Maintainability and docs are dinged by the false README invariant claim ('Confirmed orders hold reserved stock'), the bogus 'avoid circular import' comment forcing a bottom-of-file import (repository.py:169-170), and split/implicit availability logic.",
+    "minimality": "No speculative infrastructure (no queues/workers/CLIs). Deductions for dead+broken get_total_reserved_for_sku, unused python-dotenv dependency, unused ErrorResponse model, and unused idempotency_key fields on Confirm/Cancel request schemas.",
+    "security_safety": "All mutating endpoints enforce verify_api_key; ORM use avoids injection and no unsafe shell/file/network ops. Default key is a documented env-driven placeholder. Input validation gap: quantity/base_price/ttl lack positivity constraints, so negative quantities are accepted.",
+    "review_confidence": "Read every source and test file, ran the full suite, reproduced the func_sum IndexError, and inspected the committed DB (empty). Residual uncertainty only around concurrent/transactional behavior under real load, which was not exercised."
+  },
+  "instruction_failures": [
+    "README's documented install command `pip install -e \".[dev]\"` cannot resolve a `dev` extra (pyproject.toml uses `dev-dependencies`, not `[project.optional-dependencies]`).",
+    "A binary commerce.db artifact is left in the supposedly fresh workspace (empty schema only)."
+  ],
+  "correctness_failures": [
+    "Overselling: confirming a reservation removes it from the PENDING availability calculation while stock is never decremented, so the same physical units can be reserved again (service.py:88-110 + confirm_reservation; test_service.py:219-234 asserts this as expected).",
+    "Expired but unconfirmed reservations stay PENDING and keep blocking availability forever; expiration is only resolved when confirm_reservation is called (service.py:127-133); _get_pending_reserved ignores expires_at (service.py:188-191).",
+    "repository.get_total_reserved_for_sku would raise IndexError if ever invoked because it calls `func_sum(col)` instead of `func.sum(col)` (repository.py:165, 170).",
+    "Check-then-reserve is not atomic and there is no row locking; concurrent reservation requests can both pass the availability check (service.py:90-108)."
+  ],
+  "execution_failures": [
+    "`pip install -e \".[dev]\"` from the README would warn that extra 'dev' is not provided and install no test dependencies; tests then rely on a globally available pytest."
+  ],
+  "test_gaps": [
+    "No test asserting that an expired pending reservation frees availability (because the implementation does not, the gap masks the bug).",
+    "No test guarding against overselling across confirm (the existing test endorses the overselling behavior rather than flagging it).",
+    "No negative/zero quantity or negative base_price validation test; such inputs are currently accepted.",
+    "No test exercising repository.get_total_reserved_for_sku, leaving its IndexError undetected."
+  ],
+  "quality_notes": [
+    "README invariant 'Confirmed orders hold reserved stock' is contradicted by the code, which releases the hold on confirm (README.md:78 vs service.py:91).",
+    "repository.py:169-170 imports `func as func_sum` at file bottom with a misleading 'avoid circular import' comment; no circular import exists and the alias hides that it should be `func.sum`.",
+    "Confirm/Cancel request bodies declare idempotency_key (models.py:119-124) but the service ignores it.",
+    "ErrorResponse Pydantic model (models.py:142-143) is defined but never used."
+  ],
+  "unnecessary_code_examples": [
+    "repository.get_total_reserved_for_sku — dead and broken method (repository.py:155-166).",
+    "python-dotenv dependency declared (pyproject.toml:15) but no dotenv loading anywhere.",
+    "ErrorResponse model unused (models.py:142).",
+    "idempotency_key fields on ConfirmReservationRequest/CancelReservationRequest unused (models.py:119-124)."
+  ],
+  "security_safety_notes": [
+    "All mutating endpoints attach Depends(verify_api_key) (app.py:95,130,156,199,221,244); GET endpoints intentionally open per README.",
+    "API key sourced from env API_KEY with documented 'test-key' default; no real secret committed (security.py:8).",
+    "verify_api_key uses a plain `!=` comparison rather than a constant-time compare (security.py:9) — minor timing concern.",
+    "Quantity/base_price/ttl_seconds lack positivity validation in Pydantic schemas (models.py:80-106); negative quantities pass through service logic."
+  ],
+  "file_evidence": [
+    {"path": "src/commerce_service/service.py", "note": "Availability = stock - pending only (line 91); confirm/cancel never adjust stock; overselling after confirm and indefinite hold on expired pending reservations (lines 88-167, 188-191)."},
+    {"path": "src/commerce_service/repository.py", "note": "get_total_reserved_for_sku is dead code calling func_sum(col) (line 165) where func_sum is sqlalchemy.func; reproduced IndexError. Bottom-of-file import with misleading comment (lines 169-170)."},
+    {"path": "src/commerce_service/app.py", "note": "Clean endpoint wiring; typed exception handlers map to 400/404/409/410/422 (lines 58-85); mutations protected via verify_api_key."},
+    {"path": "pyproject.toml", "note": "Uses non-standard `dev-dependencies` (lines 17-21) instead of [project.optional-dependencies]; README's `pip install -e \".[dev]\"` cannot resolve the dev extra. python-dotenv (line 15) unused."},
+    {"path": "tests/test_service.py", "note": "Strong behavioral coverage but test_confirmed_then_canceled_release_availability (lines 219-234) encodes the overselling behavior as expected."},
+    {"path": "tests/test_api.py", "note": "Realistic TestClient + temp-file SQLite with dependency override and cleanup; auth 403 paths and pagination covered."},
+    {"path": "README.md", "note": "Invariant #5 claims confirmed orders hold reserved stock (line 78), contradicted by the implementation."},
+    {"path": "commerce.db", "note": "Committed leftover SQLite file in the workspace; inspected and contains only empty tables."}
+  ],
+  "commands_run": [
+    "ls -la and find for project layout",
+    "python3 --version; import check for fastapi/sqlalchemy/pydantic/httpx/pytest/pytest_asyncio (deps present: fastapi 0.110.0, sqlalchemy 2.0.25, pytest 7.4.4)",
+    "PYTHONPATH=src python3 -m pytest -q  → 40 passed",
+    "grep for get_total_reserved_for_sku usage (defined only, never called)",
+    "PYTHONPATH=src python3 -c reproduce func_sum(col) → IndexError",
+    "sqlite3 inspection of commerce.db → all tables empty"
+  ],
+  "review_risk": "low — all source/tests read, full suite run green, the func_sum bug reproduced, and commerce.db inspected; residual uncertainty only about concurrency/transaction behavior under real load, which was not load-tested."
+}
+```

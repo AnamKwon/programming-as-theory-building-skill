@@ -1,0 +1,149 @@
+All 27 tests pass. I've inspected all source and test files and run the suite. Here is my evaluation.
+
+```json
+{
+  "rubric_version": "benchmark-codegen-review-v1",
+  "score_scale": "0-100 per category",
+  "weights": {
+    "task_fulfillment": 0.20,
+    "functional_correctness": 0.25,
+    "executability": 0.15,
+    "test_quality": 0.15,
+    "code_quality": 0.10,
+    "minimality": 0.10,
+    "security_safety": 0.05
+  },
+  "task_fulfillment_score": 87,
+  "task_fulfillment_breakdown": {
+    "instruction_compliance": 88,
+    "required_artifacts": 95,
+    "feature_coverage": 85,
+    "constraint_adherence": 80
+  },
+  "functional_correctness_score": 72,
+  "functional_correctness_breakdown": {
+    "domain_invariants": 68,
+    "edge_case_behavior": 75,
+    "data_consistency": 65,
+    "error_semantics": 78
+  },
+  "executability_score": 90,
+  "executability_breakdown": {
+    "installability": 92,
+    "runtime_entrypoints": 92,
+    "command_result": 95,
+    "runtime_isolation": 80
+  },
+  "test_quality_score": 89,
+  "test_quality_breakdown": {
+    "required_test_coverage": 88,
+    "behavioral_assertions": 88,
+    "integration_realism": 88,
+    "repeatability": 92
+  },
+  "code_quality_score": 84,
+  "code_quality_breakdown": {
+    "readability": 82,
+    "maintainability": 85,
+    "boundary_design": 90,
+    "documentation_quality": 78
+  },
+  "minimality_score": 87,
+  "minimality_breakdown": {
+    "no_speculative_infrastructure": 90,
+    "no_dead_or_duplicate_code": 78,
+    "appropriate_abstractions": 88,
+    "dependency_minimality": 92
+  },
+  "security_safety_score": 89,
+  "security_safety_breakdown": {
+    "auth_enforcement": 92,
+    "secret_handling": 80,
+    "input_safety": 88,
+    "unsafe_operations": 95
+  },
+  "review_confidence_score": 91,
+  "review_confidence_breakdown": {
+    "inspection_depth": 95,
+    "command_evidence": 92,
+    "issue_specificity": 90,
+    "uncertainty_handling": 88
+  },
+  "weighted_components": {
+    "task_fulfillment": 17.4,
+    "functional_correctness": 18.0,
+    "executability": 13.5,
+    "test_quality": 13.4,
+    "code_quality": 8.4,
+    "minimality": 8.7,
+    "security_safety": 4.5
+  },
+  "weighted_total": 83.8,
+  "verdict": "good",
+  "key_findings": [
+    "Clean layered architecture (models / repository / service / app / security); all 27 tests pass on the local environment.",
+    "Core flows are correct: stock reservation decrements stock, cancel restores it, idempotent reservation returns the same record, confirm produces an order, auth is enforced on all mutating endpoints.",
+    "Significant invariant gap: expired reservations never release held stock. service.py:85 only blocks confirmation of expired reservations; there is no sweep or restoration, so stock held by a PENDING reservation that expires is permanently lost (README claims 'automatic expiration').",
+    "Reserve operation is non-atomic: create_reservation commits the reservation (repository.py:57) then separately decrements stock (service.py:76) with no transaction wrapping; the availability check (service.py:63) reads without a lock, creating a TOCTOU oversell race under concurrency.",
+    "adjust_stock below-zero raises ValueError mapped to HTTP 404 (app.py:73-74), which is a misleading status for a quantity-constraint violation."
+  ],
+  "score_rationale": {
+    "task_fulfillment": "All requested artifacts and the full API surface (SKUs, stock, reservations, confirm/cancel, orders pagination, idempotency, API-key auth) are present and documented. Deducted for a committed commerce.db artifact in the workspace and for 'automatic expiration' being only partially implemented.",
+    "functional_correctness": "Happy paths and most edge cases hold, but two real domain issues lower the score: expired reservations do not restore inventory, and the reserve path is non-atomic with a check-then-decrement race. with_for_update() (repository.py:35,75) is effectively a no-op on SQLite. Error semantics are mostly appropriate (409/410/404/401) except the below-zero adjust returning 404.",
+    "executability": "pyproject.toml has pinned deps and a hatchling build; uvicorn entrypoint and DATABASE_URL default are usable; pytest run produced 27 passed. Runtime isolation is slightly weakened by a shipped commerce.db and the app default writing to cwd, though tests correctly override get_db with in-memory StaticPool.",
+    "test_quality": "Tests cover happy paths, insufficient stock, idempotency, expiration (confirm-blocking), auth, and pagination at both service and API layers, with behavioral assertions on quantities/states/ids rather than just status codes. In-memory DB per test ensures repeatability. Missing: no test for stock restoration after expiry (because it isn't implemented) and no oversell/concurrency test.",
+    "code_quality": "Module boundaries are clean and the TTL is a named constant. Readability is dinged by inconsistent ORM class casing (SKUorm vs ReservationORM vs OrderORM in models.py) and sparse docstrings; the expiry comparison via datetime.fromisoformat(str(...)) (service.py:85) is a roundabout round-trip. README is mostly accurate but overstates expiration.",
+    "minimality": "No speculative queues/workers/migrations; dependencies are all used. Minor dead code: repository.get_order(order_id) (repository.py:93) is never called, and `event` is imported but unused in tests/test_api.py:3.",
+    "security_safety": "All mutating endpoints depend on validate_api_key and this is tested (test_unauthorized_mutation_endpoints). Inputs are validated via Pydantic and queries are parameterized through the ORM. The single valid key is a hardcoded demo value with no env override, which is acceptable for a sample but not production-grade secret handling.",
+    "review_confidence": "All source and test files were read and the full suite was executed successfully; findings cite concrete file/line references. Remaining uncertainty is around concurrency behavior, which was reasoned about rather than load-tested."
+  },
+  "instruction_failures": [
+    "A generated commerce.db is present in the workspace, conflicting with a clean/fresh-workspace expectation.",
+    "'Automatic expiration' advertised in README.md:9 is only partially realized — expiry blocks confirmation but never releases held inventory."
+  ],
+  "correctness_failures": [
+    "Expired PENDING reservations never restore stock to the SKU (no expiry sweep/restoration), permanently leaking inventory (service.py:80-86).",
+    "Non-atomic reservation: reservation insert and stock decrement are separate commits (repository.py:57, service.py:76) with an unlocked availability read (service.py:63), allowing oversell under concurrency.",
+    "with_for_update() (repository.py:35,75) provides no row locking on SQLite, so the intended concurrency guard is ineffective on the default backend.",
+    "adjust_stock below-zero reduction returns HTTP 404 instead of a 400/409 (app.py:73-74).",
+    "Re-confirming an already-confirmed reservation after its expires_at has passed raises ReservationExpiredError (410) because the expiry check precedes the CONFIRMED-state short-circuit (service.py:85-91)."
+  ],
+  "execution_failures": [],
+  "test_gaps": [
+    "No test asserting stock is restored (or intentionally not restored) after a reservation expires.",
+    "No concurrency/oversell test exercising the check-then-decrement race.",
+    "No test for the adjust_stock below-zero error path at the API layer (status code expectation).",
+    "No test for confirm idempotency returning the existing order on a second confirm call."
+  ],
+  "quality_notes": [
+    "Inconsistent ORM class naming: SKUorm vs ReservationORM vs OrderORM (models.py:23,31,42).",
+    "Expiry comparison uses datetime.fromisoformat(str(reservation.expires_at)) (service.py:85) — an unnecessary string round-trip given expires_at is already a datetime.",
+    "Uses deprecated datetime.utcnow() (service.py:68,85) producing DeprecationWarnings.",
+    "Pydantic v1-style `class Config: from_attributes` triggers deprecation warnings under Pydantic 2.5 (models.py:56,78,94)."
+  ],
+  "unnecessary_code_examples": [
+    "repository.get_order(order_id) is defined but never used (repository.py:93-95).",
+    "`event` imported but unused in tests/test_api.py:3."
+  ],
+  "security_safety_notes": [
+    "Single valid API key is hardcoded in security.py:6 with no environment override; acceptable as a demo default but documented publicly in README.md:47.",
+    "No injection risk: all DB access is via SQLAlchemy ORM with bound parameters; inputs validated by Pydantic with length/range constraints.",
+    "No shell/file/network/destructive operations present."
+  ],
+  "file_evidence": [
+    {"path": "src/commerce_service/service.py", "note": "Core logic; expiry only blocks confirm (l.85) without restoring stock; non-atomic reserve (l.69-76); below-zero adjust raises ValueError (l.43-44)."},
+    {"path": "src/commerce_service/repository.py", "note": "with_for_update() no-op on SQLite (l.35,75); unused get_order (l.93); separate commits per operation."},
+    {"path": "src/commerce_service/app.py", "note": "All mutating routes depend on validate_api_key; ValueError mapped to 404 (l.73-74); good 409/410 mapping for reservation errors; default DB writes to ./commerce.db (l.28)."},
+    {"path": "src/commerce_service/security.py", "note": "APIKeyHeader with auto_error=False, hardcoded VALID_API_KEYS set; returns 401 on missing/invalid key."},
+    {"path": "tests/test_api.py", "note": "TestClient + in-memory StaticPool, dependency override; covers auth, idempotency, pagination, state transitions; unused `event` import."},
+    {"path": "tests/test_service.py", "note": "Service-layer tests for stock, reservation, expiry-confirm, cancel restoration, pagination."},
+    {"path": "commerce.db", "note": "Generated SQLite DB committed into the workspace — ambient artifact."}
+  ],
+  "commands_run": [
+    "find . -type f (project listing)",
+    "python3 -c 'import fastapi, sqlalchemy, pydantic, httpx, pytest' (dependency check: ok)",
+    "python3 -m pytest tests/ -q (result: 27 passed, 122 warnings)"
+  ],
+  "review_risk": "low — all source/test files were read and the full suite ran green; concurrency/oversell and expiry-restoration concerns were reasoned from code rather than load-tested."
+}
+```

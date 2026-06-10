@@ -1,0 +1,154 @@
+I have decisive evidence. The `:memory:` SQLite database combined with a new connection per operation means the schema created in `_init_schema()` is discarded immediately — every subsequent connection gets a fresh, empty in-memory database. The test run confirms it: **28 failed, 5 passed** (only the health check and pre-DB auth-rejection paths survive). The app cannot function at runtime.
+
+```json
+{
+  "rubric_version": "benchmark-codegen-review-v1",
+  "score_scale": "0-100 per category",
+  "weights": {
+    "task_fulfillment": 0.20,
+    "functional_correctness": 0.25,
+    "executability": 0.15,
+    "test_quality": 0.15,
+    "code_quality": 0.10,
+    "minimality": 0.10,
+    "security_safety": 0.05
+  },
+  "task_fulfillment_score": 76,
+  "task_fulfillment_breakdown": {
+    "instruction_compliance": 70,
+    "required_artifacts": 95,
+    "feature_coverage": 85,
+    "constraint_adherence": 55
+  },
+  "functional_correctness_score": 22,
+  "functional_correctness_breakdown": {
+    "domain_invariants": 22,
+    "edge_case_behavior": 22,
+    "data_consistency": 10,
+    "error_semantics": 35
+  },
+  "executability_score": 53,
+  "executability_breakdown": {
+    "installability": 80,
+    "runtime_entrypoints": 35,
+    "command_result": 10,
+    "runtime_isolation": 85
+  },
+  "test_quality_score": 69,
+  "test_quality_breakdown": {
+    "required_test_coverage": 90,
+    "behavioral_assertions": 85,
+    "integration_realism": 70,
+    "repeatability": 30
+  },
+  "code_quality_score": 74,
+  "code_quality_breakdown": {
+    "readability": 85,
+    "maintainability": 65,
+    "boundary_design": 85,
+    "documentation_quality": 60
+  },
+  "minimality_score": 70,
+  "minimality_breakdown": {
+    "no_speculative_infrastructure": 70,
+    "no_dead_or_duplicate_code": 70,
+    "appropriate_abstractions": 85,
+    "dependency_minimality": 55
+  },
+  "security_safety_score": 81,
+  "security_safety_breakdown": {
+    "auth_enforcement": 95,
+    "secret_handling": 45,
+    "input_safety": 90,
+    "unsafe_operations": 95
+  },
+  "review_confidence_score": 90,
+  "review_confidence_breakdown": {
+    "inspection_depth": 95,
+    "command_evidence": 90,
+    "issue_specificity": 90,
+    "uncertainty_handling": 85
+  },
+  "weighted_components": {
+    "task_fulfillment": 15.2,
+    "functional_correctness": 5.5,
+    "executability": 8.0,
+    "test_quality": 10.4,
+    "code_quality": 7.4,
+    "minimality": 7.0,
+    "security_safety": 4.1
+  },
+  "weighted_total": 57.5,
+  "verdict": "mixed",
+  "key_findings": [
+    "FATAL: repository.py uses db_path=':memory:' with a fresh sqlite3.connect() per method call (repository.py:54-61). Each connection is an independent empty in-memory DB, so the schema from _init_schema() is lost immediately. Confirmed by test run: 28 failed, 5 passed, all failures 'sqlite3.OperationalError: no such table'.",
+    "The app (app.py:17 'Database(\":memory:\")') is therefore non-functional: every DB-touching endpoint raises OperationalError -> HTTP 500. Only /health and pre-DB 401 auth checks work.",
+    "Design quality is otherwise solid: clean repo/service/schema/security/app separation, correct HTTP status semantics (409/404/400/410/401), parameterized SQL, pydantic input bounds, API-key dependency on all mutations.",
+    "Domain logic is conceptually correct (idempotency via UNIQUE key + pre-check, inventory deduction on reserve, refund on cancel/expire, order creation on confirm) but never executes successfully.",
+    "Latent double-refund bug: confirm_reservation checks expiration BEFORE state (service.py:52-61); confirming an already-EXPIRED reservation repeatedly re-adds inventory each time.",
+    "Declared dependencies sqlalchemy==2.0.23 and pydantic-settings==2.1.0 are never imported anywhere (raw sqlite3 used instead) — dead dependencies."
+  ],
+  "score_rationale": {
+    "task_fulfillment": "All requested artifacts exist (pyproject, README, src package, tests) and the full endpoint surface and workflows are present in code. Dropped for the broken 'production-grade' claim and unused declared dependencies.",
+    "functional_correctness": "Despite conceptually correct domain logic, nothing executes: the per-call ':memory:' connection makes all persistence fail. Plus a real double-refund bug on repeated confirm of an expired reservation and TOCTOU race between availability check and deduction across separate autocommitting connections.",
+    "executability": "Packaging and pinned deps are plausible and isolation from parent dirs is clean, but the declared test command fails 28/33 and the app cannot serve any data request.",
+    "test_quality": "Tests are well-designed: cover happy paths, insufficient stock, idempotency, expiration, auth, and pagination with behavioral assertions (state/quantity/order creation). Penalized because the whole suite currently fails, test_api shares one module-level app/db (state leakage), and the expiration test uses leaked, unclosed db._connection().__enter__() calls.",
+    "code_quality": "Readable names and coherent module boundaries; invariants localized in the service layer. Hurt by the fundamental persistence design flaw, absent docstrings, and a README that overstates ('production-grade', 'SQLite persistence') what the broken code delivers.",
+    "minimality": "Mostly lean, but expire_reservations() (service.py:89) is never wired to any scheduler or endpoint (dead), and two declared dependencies are unused.",
+    "security_safety": "All mutating endpoints enforce validate_api_key; SQL is parameterized; inputs are bounded by pydantic. Lowered for a hardcoded accepted key literal 'test-api-key' in security.py:5 with no env/config sourcing.",
+    "review_confidence": "All source and test files were read and the declared test command was executed, directly confirming the root-cause failure mode."
+  },
+  "instruction_failures": [
+    "README claims 'production-grade' and 'SQLite persistence' but the service does not persist anything and crashes on every data operation.",
+    "Declared but unused dependencies (sqlalchemy, pydantic-settings) violate production-minded/minimality expectations."
+  ],
+  "correctness_failures": [
+    "repository.py:54-61 + app.py:17: ':memory:' with new connection per call -> schema discarded, every DB operation raises 'no such table'.",
+    "service.py:52-61: expiration checked before state, so repeated confirm on an EXPIRED reservation re-credits inventory each call (double refund).",
+    "service.py:31-42: stock check, reservation insert, and inventory deduction run on three separate autocommitting connections -> TOCTOU/over-reservation under concurrency.",
+    "repository.py:78-88 adjust_inventory has no non-negative floor; a direct negative adjustment can drive inventory below zero."
+  ],
+  "execution_failures": [
+    "pytest tests/ => 28 failed, 5 passed; all failures 'sqlite3.OperationalError: no such table: skus' (and similar).",
+    "uvicorn app would return HTTP 500 on every endpoint except /health due to the same root cause."
+  ],
+  "test_gaps": [
+    "test_api uses a single module-level app/db shared across all tests (app.py:17-18), so test ordering/state can leak — masked here only because every test errors.",
+    "No test asserts inventory is decremented on reserve / restored on cancel/expire (the financial invariant is unverified).",
+    "No test for the double-refund-on-repeated-expired-confirm path.",
+    "test_confirm_expired_reservation (test_service.py:120-124) opens connections via db._connection().__enter__() without closing them, leaking handles and relying on a broken persistence model."
+  ],
+  "quality_notes": [
+    "Good separation of concerns across repository/service/models/security/app.",
+    "HTTP status mapping is thoughtful (409 conflict, 404 not found, 410 gone for expired, 400 for business errors, 401 unauthorized).",
+    "No docstrings on classes/methods; README overstates capabilities.",
+    "adjust endpoint declares response_model=dict (app.py:40), losing schema validation on its response."
+  ],
+  "unnecessary_code_examples": [
+    "service.py:89-95 expire_reservations() is never invoked by any endpoint or scheduler.",
+    "pyproject.toml:15 sqlalchemy dependency is unused (raw sqlite3 used throughout).",
+    "pyproject.toml:13 pydantic-settings dependency is unused (no Settings/BaseSettings anywhere)."
+  ],
+  "security_safety_notes": [
+    "All mutating endpoints depend on validate_api_key (app.py:29,43,57,72,87); GET /api/orders is unauthenticated which is acceptable for a read endpoint.",
+    "Hardcoded accepted API key literal 'test-api-key' in security.py:5 — not sourced from env/config; unsuitable for production.",
+    "SQL is parameterized throughout (no injection vector); pydantic enforces input bounds.",
+    "No shell/file/network/destructive operations."
+  ],
+  "file_evidence": [
+    {"path": "src/commerce_service/repository.py", "note": "Lines 10,54-61: ':memory:' default with new sqlite3.connect per _connection() -> schema not shared; root cause of total failure."},
+    {"path": "src/commerce_service/app.py", "note": "Line 17 instantiates Database(':memory:'); all data endpoints will 500 at runtime."},
+    {"path": "src/commerce_service/service.py", "note": "Lines 52-61 expiration-before-state ordering enables double inventory refund; lines 31-42 multi-connection check-then-act race."},
+    {"path": "src/commerce_service/security.py", "note": "Line 5 hardcoded accepted key 'test-api-key'; correct dependency wiring but not config-driven."},
+    {"path": "tests/test_service.py", "note": "Well-structured behavioral tests but all fail; lines 120-124 leak unclosed connections."},
+    {"path": "tests/test_api.py", "note": "Comprehensive endpoint coverage but shares module-level app/db and all DB paths fail."},
+    {"path": "pyproject.toml", "note": "Lines 13,15: pydantic-settings and sqlalchemy declared but never imported."}
+  ],
+  "commands_run": [
+    "find . -type f (project file listing)",
+    "python3 --version; python3 -c 'import fastapi, pydantic, sqlalchemy, httpx, pytest' (deps present)",
+    "python3 -m pytest tests/ -q (result: 28 failed, 5 passed)"
+  ],
+  "review_risk": "low — all source and test files were read and the declared pytest command was executed, directly confirming the ':memory:' connection root cause and the full failure mode."
+}
+```

@@ -1,0 +1,158 @@
+I've reviewed all source files, the tests, packaging, and run the suite plus a targeted invariant check. Here's my benchmark evaluation.
+
+```json
+{
+  "rubric_version": "benchmark-codegen-review-v1",
+  "score_scale": "0-100 per category",
+  "weights": {
+    "task_fulfillment": 0.20,
+    "functional_correctness": 0.25,
+    "executability": 0.15,
+    "test_quality": 0.15,
+    "code_quality": 0.10,
+    "minimality": 0.10,
+    "security_safety": 0.05
+  },
+  "task_fulfillment_score": 84,
+  "task_fulfillment_breakdown": {
+    "instruction_compliance": 85,
+    "required_artifacts": 90,
+    "feature_coverage": 88,
+    "constraint_adherence": 72
+  },
+  "functional_correctness_score": 60,
+  "functional_correctness_breakdown": {
+    "domain_invariants": 40,
+    "edge_case_behavior": 62,
+    "data_consistency": 50,
+    "error_semantics": 88
+  },
+  "executability_score": 82,
+  "executability_breakdown": {
+    "installability": 88,
+    "runtime_entrypoints": 85,
+    "command_result": 85,
+    "runtime_isolation": 68
+  },
+  "test_quality_score": 83,
+  "test_quality_breakdown": {
+    "required_test_coverage": 82,
+    "behavioral_assertions": 85,
+    "integration_realism": 85,
+    "repeatability": 80
+  },
+  "code_quality_score": 80,
+  "code_quality_breakdown": {
+    "readability": 85,
+    "maintainability": 72,
+    "boundary_design": 85,
+    "documentation_quality": 78
+  },
+  "minimality_score": 73,
+  "minimality_breakdown": {
+    "no_speculative_infrastructure": 70,
+    "no_dead_or_duplicate_code": 68,
+    "appropriate_abstractions": 82,
+    "dependency_minimality": 70
+  },
+  "security_safety_score": 85,
+  "security_safety_breakdown": {
+    "auth_enforcement": 90,
+    "secret_handling": 70,
+    "input_safety": 90,
+    "unsafe_operations": 90
+  },
+  "review_confidence_score": 89,
+  "review_confidence_breakdown": {
+    "inspection_depth": 92,
+    "command_evidence": 90,
+    "issue_specificity": 90,
+    "uncertainty_handling": 85
+  },
+  "weighted_components": {
+    "task_fulfillment": 16.8,
+    "functional_correctness": 15.0,
+    "executability": 12.3,
+    "test_quality": 12.5,
+    "code_quality": 8.0,
+    "minimality": 7.3,
+    "security_safety": 4.3
+  },
+  "weighted_total": 76.1,
+  "verdict": "good",
+  "key_findings": [
+    "Reservations do NOT hold/decrement stock: availability is checked only against raw SKU quantity, so multiple reservations can exceed stock. Demonstrated: 3 reservations of 10 against stock of 10 all succeed and all confirm into orders.",
+    "confirm_reservation ignores the return of adjust_stock; when stock would go negative adjust_stock silently returns None (repository.py:106-108) and the order is still created + reservation marked confirmed (service.py:70-78), so stock floors at 0 while over-quantity orders persist — a real data-consistency defect.",
+    "All mutating endpoints correctly enforce verify_api_key; read endpoints (orders list/get, health) are open, which is acceptable.",
+    "Test suite is comprehensive for declared behaviors: 43 tests pass (happy paths, insufficient stock, idempotency, expiration, auth, pagination), but there is no test for the over-reservation invariant that is actually broken.",
+    "API tests bind to the module-level file-based repo (commerce.db), not :memory:; a commerce.db artifact is left in the workspace.",
+    "Several minimality issues: pydantic-settings declared but never used, unused JSONResponse import, unused timedelta import in repository.py, OrderState.FULFILLED + test import of OrderState unused, delete_expired_reservations never called."
+  ],
+  "score_rationale": {
+    "task_fulfillment": "All requested endpoints, files, and packaging are present and the README documents them. Docked for the 'production-grade' claim while the core reservation-hold behavior is missing and a stateful commerce.db is left in the workspace.",
+    "functional_correctness": "Error semantics and most edge cases are solid, but the central inventory-reservation invariant is violated — reservations never reserve stock and confirms can exceed availability without surfacing an error. The confirm path's silent stock-floor is a data-consistency bug. This is the dominant deduction.",
+    "executability": "Dependencies pinned, src layout valid, uvicorn entrypoint usable; pytest passes (verified with src on path / documented editable install). Isolation is weaker because API tests share a file-backed sqlite db and leave commerce.db behind.",
+    "test_quality": "Good behavioral assertions (stock deduction to 90, states, ids) and realistic TestClient+sqlite integration; repeatable via :memory: (service) and clear_all (api). Missing coverage of the over-reservation/over-confirm case lets the real bug slip through.",
+    "code_quality": "Clean module boundaries (repo/service/schemas/security/app) and readable code, but stock-availability logic is not centralized so the reservation invariant has no single home, and docs overstate maturity.",
+    "minimality": "Mostly tight, but contains an unused dependency, several dead imports, an unused enum member, and an uncalled cleanup method.",
+    "security_safety": "Parameterized SQL (no injection), pydantic input validation, API-key dependency on all mutations. Docked for a hardcoded API key in source with no env-based override despite pydantic-settings being a dependency.",
+    "review_confidence": "All source and test files read; suite executed; the headline invariant bug was reproduced with a direct script. Minor uncertainty only around intended reservation semantics vs. what was implemented."
+  },
+  "instruction_failures": [
+    "Project ships a populated/empty commerce.db state file in the 'fresh workspace', and the default app + API tests persist to it rather than an isolated store."
+  ],
+  "correctness_failures": [
+    "Reservations do not decrement or hold stock (service.py:37-55); availability check uses raw SKU quantity, allowing unlimited concurrent over-reservation.",
+    "confirm_reservation does not detect adjust_stock failure: repository.adjust_stock returns None when new_quantity<0 (repository.py:106-108) and service.confirm_reservation discards it (service.py:77), creating confirmed orders that exceed real stock while quantity stays at 0.",
+    "Order create + reservation status update + stock deduction are three separate commits with no transaction (service.py:70-77); a mid-sequence failure leaves inconsistent state."
+  ],
+  "execution_failures": [
+    "Bare `pytest` per README fails until `pip install -e` is run (ModuleNotFoundError: commerce_service) because the package was not installed in this env; passes with the package installed or PYTHONPATH=src (43 passed)."
+  ],
+  "test_gaps": [
+    "No test that reserving/confirming beyond available stock is rejected (the actual defect goes untested).",
+    "No test asserting stock is held at reservation time (only deduction at confirm is tested).",
+    "No test for unauthorized adjust-stock specifically, and no negative-path test for confirming an already-confirmed reservation via the API.",
+    "delete_expired_reservations has no test and is never exercised by the app."
+  ],
+  "quality_notes": [
+    "RESERVATION_TTL is well-named and centralized (service.py:20).",
+    "datetime.utcnow() is deprecated on Python 3.12 (warnings throughout repository.py/service.py).",
+    "README states 'production-grade' which is not supported given the reservation invariant gap.",
+    "expired status is only set lazily in the confirm path; there is no background or request-time sweep wired up."
+  ],
+  "unnecessary_code_examples": [
+    "src/commerce_service/app.py:2 — `from fastapi.responses import JSONResponse` imported but never used.",
+    "src/commerce_service/repository.py:2 — `timedelta` imported but unused in this module.",
+    "src/commerce_service/models.py:8 — OrderState enum (FULFILLED never used; orders only ever 'confirmed').",
+    "tests/test_api.py:5 — `from commerce_service.models import OrderState` imported but unused.",
+    "src/commerce_service/repository.py:228 — delete_expired_reservations defined but never called anywhere.",
+    "pyproject.toml:17 — pydantic-settings dependency declared but not imported by any module."
+  ],
+  "security_safety_notes": [
+    "All mutating endpoints depend on verify_api_key (app.py:31,41,55,76,92); read endpoints intentionally open.",
+    "API key 'sk-test-key-12345' is hardcoded in security.py:3 with no environment override despite pydantic-settings being a listed dependency.",
+    "All SQL uses parameterized queries — no injection risk (repository.py).",
+    "No shell, network, or destructive filesystem operations beyond local sqlite file creation."
+  ],
+  "file_evidence": [
+    {"path": "src/commerce_service/service.py", "note": "create_reservation (37-55) checks raw stock but never reserves it; confirm_reservation (57-78) ignores adjust_stock failure and performs 3 non-transactional writes."},
+    {"path": "src/commerce_service/repository.py", "note": "adjust_stock returns None silently when result would be negative (96-113); delete_expired_reservations (228) unused; timedelta import unused."},
+    {"path": "src/commerce_service/app.py", "note": "Mutating routes gated by verify_api_key; reads open; unused JSONResponse import; module-level Repository() uses default file db commerce.db."},
+    {"path": "src/commerce_service/security.py", "note": "Hardcoded API key set; 403 on missing/invalid key."},
+    {"path": "tests/test_api.py", "note": "Uses app's file-backed repo with autouse clear_all; covers auth, pagination, validation 422; no over-reservation test; unused OrderState import."},
+    {"path": "tests/test_service.py", "note": "Service-level tests on :memory: repo; asserts stock deduction to 90 and expiration; no over-reservation test."},
+    {"path": "commerce.db", "note": "Stateful sqlite artifact present in the workspace root."},
+    {"path": "pyproject.toml", "note": "Pinned deps and src layout; pydantic-settings declared but unused."}
+  ],
+  "commands_run": [
+    "find . -type f (excluding vcs/build/cache) — enumerated project files",
+    "python3 -c 'import fastapi, pydantic, httpx' — confirmed deps available",
+    "python3 -m pytest -q — failed: ModuleNotFoundError (package not installed)",
+    "PYTHONPATH=src python3 -m pytest -q — 43 passed, 263 warnings",
+    "PYTHONPATH=src python3 -c '<over-reservation repro>' — demonstrated 3x over-reservation confirming into orders with stock floored at 0",
+    "grep -rn for settings/JSONResponse/OrderState/timedelta/delete_expired — confirmed unused deps/imports"
+  ],
+  "review_risk": "low — all source and tests inspected and the suite plus a targeted invariant repro were executed; only caveat is that bare `pytest` needs the documented editable install (verified passing via PYTHONPATH=src), and intended reservation semantics are inferred from the README rather than an original task spec."
+}
+```

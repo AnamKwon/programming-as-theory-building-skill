@@ -1,0 +1,155 @@
+I have enough evidence. Verified findings: full test run (25 passed, 1 failed) and an empirical check of the reservation stock-release behavior.
+
+```json
+{
+  "rubric_version": "benchmark-codegen-review-v1",
+  "score_scale": "0-100 per category",
+  "weights": {
+    "task_fulfillment": 0.20,
+    "functional_correctness": 0.25,
+    "executability": 0.15,
+    "test_quality": 0.15,
+    "code_quality": 0.10,
+    "minimality": 0.10,
+    "security_safety": 0.05
+  },
+  "task_fulfillment_score": 90,
+  "task_fulfillment_breakdown": {
+    "instruction_compliance": 88,
+    "required_artifacts": 95,
+    "feature_coverage": 88,
+    "constraint_adherence": 90
+  },
+  "functional_correctness_score": 65,
+  "functional_correctness_breakdown": {
+    "domain_invariants": 50,
+    "edge_case_behavior": 68,
+    "data_consistency": 55,
+    "error_semantics": 85
+  },
+  "executability_score": 84,
+  "executability_breakdown": {
+    "installability": 90,
+    "runtime_entrypoints": 90,
+    "command_result": 70,
+    "runtime_isolation": 85
+  },
+  "test_quality_score": 77,
+  "test_quality_breakdown": {
+    "required_test_coverage": 82,
+    "behavioral_assertions": 72,
+    "integration_realism": 82,
+    "repeatability": 72
+  },
+  "code_quality_score": 81,
+  "code_quality_breakdown": {
+    "readability": 88,
+    "maintainability": 72,
+    "boundary_design": 85,
+    "documentation_quality": 78
+  },
+  "minimality_score": 74,
+  "minimality_breakdown": {
+    "no_speculative_infrastructure": 74,
+    "no_dead_or_duplicate_code": 68,
+    "appropriate_abstractions": 85,
+    "dependency_minimality": 70
+  },
+  "security_safety_score": 88,
+  "security_safety_breakdown": {
+    "auth_enforcement": 90,
+    "secret_handling": 75,
+    "input_safety": 90,
+    "unsafe_operations": 95
+  },
+  "review_confidence_score": 89,
+  "review_confidence_breakdown": {
+    "inspection_depth": 92,
+    "command_evidence": 90,
+    "issue_specificity": 90,
+    "uncertainty_handling": 85
+  },
+  "weighted_components": {
+    "task_fulfillment": 18.0,
+    "functional_correctness": 16.3,
+    "executability": 12.6,
+    "test_quality": 11.6,
+    "code_quality": 8.1,
+    "minimality": 7.4,
+    "security_safety": 4.4
+  },
+  "weighted_total": 78.3,
+  "verdict": "good",
+  "key_findings": [
+    "Coherent, well-layered FastAPI project (models/repository/service/security/app) implementing the full requested API surface with API-key auth, idempotent reservations, expiration checks, and paginated orders.",
+    "Serious domain-invariant bug: cancelling a PENDING reservation does NOT release reserved stock (verified empirically: reserved stays 40 after cancel). Same leak occurs on expiry — confirm_reservation marks an expired reservation 'cancelled' but never calls release_stock.",
+    "1 of 26 tests fails: tests/test_api.py::test_expired_reservation_rejection creates the reservation in a SEPARATE Database file than the app's global db, so /confirm returns 404, not the asserted 400 — the API expiration path is never truly exercised.",
+    "Dead/unused code: Database.cleanup_expired_reservations (never called, and also wouldn't release reserved stock), Database.get_order (unused), and an unused 'timedelta' import in repository.py.",
+    "Unused declared dependency 'pydantic-settings' (no BaseSettings/pydantic_settings usage anywhere).",
+    "Insecure default API key 'default-key-for-testing' allows authenticated access when API_KEY env var is unset."
+  ],
+  "score_rationale": {
+    "task_fulfillment": "All requested artifacts (pyproject, README, src package, tests) exist and every endpoint in the spec is implemented; self-contained with no parent reads. Minor: production-mindedness undercut by an insecure default key and uncalled cleanup routine.",
+    "functional_correctness": "Idempotency, insufficient-stock rejection, status transitions, and HTTP error semantics are solid, but the core inventory invariant is broken — reserved stock leaks on pending-cancel and on expiry (verified), so available stock permanently understates after cancellations/expiry. Confirm also never decrements physical stock, leaving the reserved/stock model muddled. Multi-connection per-method commits make create_reservation non-atomic (check-then-reserve race).",
+    "executability": "Packaging and entrypoints are complete and plausible; deps installed cleanly and the app imports/runs. 25/26 tests pass; the single failure is an isolated test-wiring bug, not a runtime crash. Global db writes commerce.db in CWD at import, but no parent/ambient dependence.",
+    "test_quality": "Good breadth across happy paths, insufficient stock, idempotency retry and collision, auth 401/403, and pagination, with one real behavioral assertion on reserved count. Weaknesses: the API expiration test is broken (wrong db), no test asserts pending-cancel/expiry releases reserved stock (which would have caught the central bug), and api tests mutate a shared global db/service.",
+    "code_quality": "Readable names and clean separation of repository/service/schemas/security. Maintainability is reduced because the stock-accounting invariant is split awkwardly across create/confirm/cancel and is not consistently enforced, making the reserved counter's lifecycle hard to reason about.",
+    "minimality": "Mostly lean, but contains an unused dependency (pydantic-settings), a never-called cleanup_expired_reservations method, an unused get_order method, and an unused timedelta import.",
+    "security_safety": "Parameterized SQL (no injection), pydantic input validation, and API-key enforcement on all mutations and on /orders (the '_: APIKeyDep = None' default still runs the dependency — 403 confirmed by test). Main concern is the permissive default API key when API_KEY is unset.",
+    "review_confidence": "All source and test files read; full pytest run captured; the reserved-stock leak and the test-wiring failure were both reproduced directly. Concurrency behavior under real load not exercised."
+  },
+  "instruction_failures": [
+    "Declared but unused dependency 'pydantic-settings' violates dependency-minimality expectations.",
+    "cleanup_expired_reservations / get_order / timedelta import are unused, conflicting with minimal-surface, production-minded intent."
+  ],
+  "correctness_failures": [
+    "cancel_reservation only calls release_stock when status == 'confirmed'; cancelling a PENDING reservation leaves 'reserved' inflated forever (verified: reserved=40 after cancel of a 40-unit pending reservation). service.py:115-130.",
+    "Expired reservations are marked 'cancelled' in confirm_reservation (service.py:105-110) but reserved stock is never released; cleanup_expired_reservations (repository.py:218) also fails to release reserved stock and is never invoked.",
+    "confirm_reservation never decrements physical 'stock' on sale, so the stock/reserved accounting model is internally inconsistent.",
+    "create_reservation performs get_sku, create_reservation, reserve_stock across separate SQLite connections/commits (no shared transaction), so the available-stock check and the reserve are not atomic — possible oversell under concurrency. repository.py:13-24, service.py:64-87."
+  ],
+  "execution_failures": [
+    "tests/test_api.py::test_expired_reservation_rejection FAILS (assert 404 == 400): the reservation is created in a freshly constructed Database(f.name) rather than the app's global db, so /confirm cannot find it."
+  ],
+  "test_gaps": [
+    "No test asserts that cancelling a PENDING reservation releases reserved stock — the exact gap that hides the central bug.",
+    "No test verifies stock/reserved state after confirm.",
+    "The only API-level expiration test is mis-wired and does not actually exercise the app's expiration branch.",
+    "No test covers the idempotency-key-collision 409 path at the API layer (only service layer).",
+    "API tests share a mutated global db/service rather than dependency-injected per-test instances."
+  ],
+  "quality_notes": [
+    "Pydantic v2 'class Config: from_attributes' triggers deprecation warnings (models.py:33,57,67); ConfigDict is preferred.",
+    "datetime.utcnow() is deprecated on Python 3.12 (service.py:80,105; repository.py:221).",
+    "Reserved-stock lifecycle logic is spread across service methods with no single enforcement point, hurting maintainability."
+  ],
+  "unnecessary_code_examples": [
+    "repository.py:218 cleanup_expired_reservations — defined, never called.",
+    "repository.py:186 get_order — unused.",
+    "repository.py:3 'from datetime import datetime, timedelta' — timedelta unused.",
+    "pyproject.toml:17 pydantic-settings — declared, never imported."
+  ],
+  "security_safety_notes": [
+    "security.py:7 default API key 'default-key-for-testing' permits access when API_KEY is unset; should fail closed in production.",
+    "All SQL uses parameterized queries (repository.py) — no injection risk observed.",
+    "All mutating endpoints and /orders enforce get_api_key; missing key -> 401, wrong key -> 403 (verified by tests).",
+    "No shell/file/network/destructive operations beyond local SQLite file creation."
+  ],
+  "file_evidence": [
+    {"path": "src/commerce_service/service.py", "note": "cancel_reservation (115-130) releases stock only for confirmed reservations; pending-cancel leaks reserved. Expired-confirm path (105-110) marks cancelled without releasing reserved."},
+    {"path": "src/commerce_service/repository.py", "note": "Each method opens its own connection and commits (13-24), so create_reservation's check/reserve is non-atomic. cleanup_expired_reservations (218) is dead and doesn't release reserved; get_order (186) and timedelta import (3) unused."},
+    {"path": "src/commerce_service/security.py", "note": "Insecure default API key fallback (line 7); otherwise correct 401/403 enforcement."},
+    {"path": "src/commerce_service/app.py", "note": "Global db/service instantiated at import (19-20); list_orders uses '_: APIKeyDep = None' (89) — dependency still runs, auth enforced."},
+    {"path": "tests/test_api.py", "note": "test_expired_reservation_rejection (257-287) creates reservation in a separate Database file than the app's db, causing a 404 and a failing test."},
+    {"path": "pyproject.toml", "note": "Lists pydantic-settings (17) which is never used in the codebase."}
+  ],
+  "commands_run": [
+    "find . -type f (list project files)",
+    "python3 --version; python3 -c 'import fastapi,pydantic,httpx,pytest' (deps available, fastapi 0.110.0, py3.12)",
+    "PYTHONPATH=src python3 -m pytest tests/ -q (1 failed, 25 passed)",
+    "PYTHONPATH=src python3 -c '<reserve/cancel reproduction>' (reserved stays 40 after pending cancel)",
+    "grep for pydantic_settings / cleanup_expired / get_order / timedelta usage (confirmed dead code & unused dep)"
+  ],
+  "review_risk": "low: all files read, full test suite run, and the stock-leak plus the failing-test wiring reproduced directly; concurrency/oversell behavior under real parallel load was reasoned about but not load-tested."
+}
+```

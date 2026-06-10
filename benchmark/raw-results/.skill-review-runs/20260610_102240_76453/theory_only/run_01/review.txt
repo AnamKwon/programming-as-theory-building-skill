@@ -1,0 +1,158 @@
+All 48 tests pass. I've inspected every source and test file, the packaging, README, and the stray `commerce.db`. Here is the benchmark evaluation.
+
+```json
+{
+  "rubric_version": "benchmark-codegen-review-v1",
+  "score_scale": "0-100 per category",
+  "weights": {
+    "task_fulfillment": 0.20,
+    "functional_correctness": 0.25,
+    "executability": 0.15,
+    "test_quality": 0.15,
+    "code_quality": 0.10,
+    "minimality": 0.10,
+    "security_safety": 0.05
+  },
+  "task_fulfillment_score": 83,
+  "task_fulfillment_breakdown": {
+    "instruction_compliance": 85,
+    "required_artifacts": 88,
+    "feature_coverage": 78,
+    "constraint_adherence": 80
+  },
+  "functional_correctness_score": 75,
+  "functional_correctness_breakdown": {
+    "domain_invariants": 68,
+    "edge_case_behavior": 80,
+    "data_consistency": 70,
+    "error_semantics": 82
+  },
+  "executability_score": 89,
+  "executability_breakdown": {
+    "installability": 88,
+    "runtime_entrypoints": 92,
+    "command_result": 95,
+    "runtime_isolation": 82
+  },
+  "test_quality_score": 87,
+  "test_quality_breakdown": {
+    "required_test_coverage": 82,
+    "behavioral_assertions": 88,
+    "integration_realism": 88,
+    "repeatability": 88
+  },
+  "code_quality_score": 84,
+  "code_quality_breakdown": {
+    "readability": 88,
+    "maintainability": 80,
+    "boundary_design": 88,
+    "documentation_quality": 78
+  },
+  "minimality_score": 73,
+  "minimality_breakdown": {
+    "no_speculative_infrastructure": 68,
+    "no_dead_or_duplicate_code": 65,
+    "appropriate_abstractions": 82,
+    "dependency_minimality": 78
+  },
+  "security_safety_score": 89,
+  "security_safety_breakdown": {
+    "auth_enforcement": 92,
+    "secret_handling": 80,
+    "input_safety": 90,
+    "unsafe_operations": 95
+  },
+  "review_confidence_score": 90,
+  "review_confidence_breakdown": {
+    "inspection_depth": 92,
+    "command_evidence": 90,
+    "issue_specificity": 90,
+    "uncertainty_handling": 88
+  },
+  "weighted_components": {
+    "task_fulfillment": 16.6,
+    "functional_correctness": 18.8,
+    "executability": 13.4,
+    "test_quality": 13.1,
+    "code_quality": 8.4,
+    "minimality": 7.3,
+    "security_safety": 4.5
+  },
+  "weighted_total": 81.9,
+  "verdict": "good",
+  "key_findings": [
+    "All 48 tests pass under `PYTHONPATH=src python3 -m pytest` with fastapi 0.110 already installed; clean layered design (models/repository/service/security/app).",
+    "Core domain flows are correct: stock reserve/release, create/confirm idempotency, TTL expiration releasing stock on confirm (410), insufficient stock (409), auth (403), and pagination all behave as claimed and are tested.",
+    "Domain-invariant gap: a CONFIRMED reservation is never consumed/marked when an order is created (service.py:144-168), so the same reservation can be placed into multiple orders, double-counting reserved stock.",
+    "Order state machine advertised in README is not wired: Order.confirm()/complete() (models.py:88-96) and Repository.update_order() (repository.py:186-193) are never called by any endpoint; orders are stuck in PENDING.",
+    "cleanup_expired_reservations() (service.py:179-189) is implemented but never invoked by any endpoint or scheduler, so expired stock is only released lazily on a confirm attempt — dead at the API level (only exercised in tests).",
+    "Stray runtime artifacts in the fresh workspace: commerce.db (an older schema lacking the idempotency table; current code uses :memory:) and src/commerce_service.egg-info/."
+  ],
+  "score_rationale": {
+    "task_fulfillment": "Full requested surface exists (SKUs, reservations, orders, auth, idempotency, pagination) with proper packaging and README. Knocked down because the order lifecycle is only partially delivered (no endpoints to confirm/complete/cancel orders) and the workspace carries leftover build/db artifacts despite the fresh-workspace expectation.",
+    "functional_correctness": "Most invariants and edge cases hold and are demonstrated by passing tests. The main deductions are the missing reservation consumption on order creation (allows double-ordering), no transaction wrapping multi-step service operations (each repo call commits independently, risking partial writes on failure), and a confirm-idempotency cache keyed only by idempotency_key (reusing a key across reservations returns get_reservation without confirming).",
+    "executability": "Installs from a complete pyproject, app:app entrypoint and uvicorn command are valid, and the declared pytest command yields 48 passed. Isolation is good at runtime (in-memory DB, fixtures reset globals) but the committed commerce.db and egg-info are ambient files that shouldn't be in a fresh tree.",
+    "test_quality": "Strong dual-layer suite (service + API) with behavioral assertions on stock levels, states, and pagination counts using real SQLite and TestClient, fully repeatable via :memory: fixtures. Gaps: no test of order state transitions, no API-level 410-expired test, no test that a confirmed reservation cannot be re-ordered, and TTL upper-bound validation untested.",
+    "code_quality": "Readable, well-named, cleanly separated boundaries. Maintainability is slightly hurt by an order lifecycle that is half-modeled-half-unused, and documentation overclaims ('production-grade', order state machine) relative to what is wired.",
+    "minimality": "Several unused/duplicated elements: update_order, Order.confirm/complete, and cleanup wiring are not reachable from the API; StockAdjustmentResponse duplicates SKUResponse; pydantic-settings is declared but never imported.",
+    "security_safety": "Every mutating endpoint enforces verify_api_key, SQL is fully parameterized, and inputs are validated via Pydantic with no unsafe shell/file/network operations. API keys are hardcoded but explicitly documented as test keys, not real secrets.",
+    "review_confidence": "Read all source and test files, the README and pyproject, inspected the stray DB schema, and executed the full test suite successfully, so findings are concrete and well-supported."
+  },
+  "instruction_failures": [
+    "README documents an order state flow (pending → confirmed → completed/cancelled) that has no implementing endpoints or service methods.",
+    "Fresh-workspace expectation partially violated: commerce.db and src/commerce_service.egg-info/ are present as leftover artifacts."
+  ],
+  "correctness_failures": [
+    "create_order does not mark/consume confirmed reservations (service.py:144-168), so one reservation can be ordered repeatedly, breaking the reserved-stock invariant.",
+    "Multi-step service operations are not transactional; reserve+update_sku, create_reservation, and record_idempotency commit separately (service.py:77-92), risking leaked reserved stock on a mid-operation failure.",
+    "confirm_reservation idempotency is keyed only by idempotency_key, not by reservation_id (service.py:99-101); reusing a prior key for a different reservation returns it unconfirmed.",
+    "Expired stock is only released on a confirm attempt or via the never-invoked cleanup; reading an expired reservation (GET) leaves stock reserved indefinitely."
+  ],
+  "execution_failures": [],
+  "test_gaps": [
+    "No test that a confirmed reservation cannot be reused across multiple orders (the actual bug).",
+    "No API-level test for confirming an expired reservation (HTTP 410).",
+    "No test exercising order state transitions (none exist to test).",
+    "No test for ttl_seconds upper-bound validation (>86400) or API-level adjust-below-zero (400).",
+    "cancel_reservation auth (403) is enforced but not covered by a test."
+  ],
+  "quality_notes": [
+    "datetime.utcnow() is used throughout (models.py, service.py, repository.py), producing deprecation warnings and naive timestamps; timezone-aware datetimes would be safer.",
+    "@app.on_event('startup') (app.py:50) is deprecated in favor of lifespan handlers.",
+    "Auth is invoked imperatively via verify_api_key(api_key) inside each route rather than as a FastAPI dependency, so it does not appear in the OpenAPI security scheme.",
+    "Missing/invalid keys return 403 rather than the conventional 401 (defensible given APIKeyHeader defaults)."
+  ],
+  "unnecessary_code_examples": [
+    "Repository.update_order (repository.py:186-193) — never called.",
+    "Order.confirm and Order.complete (models.py:88-96) — never called by any service/endpoint.",
+    "CommerceService.cleanup_expired_reservations (service.py:179-189) — only used in tests, not wired to any endpoint or scheduler.",
+    "StockAdjustmentResponse (models.py:115-118) is field-identical to SKUResponse.",
+    "pydantic-settings dependency (pyproject.toml:13) is declared but never imported."
+  ],
+  "security_safety_notes": [
+    "All mutating endpoints call verify_api_key (app.py create_sku/adjust_stock/create_reservation/confirm/cancel/create_order).",
+    "API keys are hardcoded in security.py:6 but clearly labeled test keys in README; no real secrets leaked.",
+    "All SQL uses parameterized queries (repository.py); no injection or shell/file/network side effects.",
+    "Pydantic Field constraints validate untrusted input (gt=0, min_length, ge/le on pagination)."
+  ],
+  "file_evidence": [
+    {"path": "src/commerce_service/service.py", "note": "create_order (144-168) checks CONFIRMED state but never consumes reservations; per-step commits are non-transactional; confirm idempotency keyed only by key (99-101); cleanup_expired_reservations (179-189) unused at API level."},
+    {"path": "src/commerce_service/app.py", "note": "All mutating routes enforce verify_api_key; clean error->status mapping (409/410/404/400); deprecated on_event startup; orders only ever created PENDING."},
+    {"path": "src/commerce_service/models.py", "note": "Clear domain models with invariant methods; Order.confirm/complete unused; StockAdjustmentResponse duplicates SKUResponse; utcnow() naive timestamps."},
+    {"path": "src/commerce_service/repository.py", "note": "Parameterized SQLite access, separate per-call commits, update_order unused; idempotency table present."},
+    {"path": "src/commerce_service/security.py", "note": "Hardcoded test API keys; 403 for missing/invalid; imperative verify (not a Depends security scheme)."},
+    {"path": "tests/test_service.py", "note": "32 service tests covering stock, idempotency, expiration, cleanup, pagination with behavioral assertions."},
+    {"path": "tests/test_api.py", "note": "API tests via TestClient covering auth(403), 409, pagination; fixtures reset globals to in-memory DB for repeatability."},
+    {"path": "commerce.db", "note": "Stray SQLite file with skus/reservations/orders but no idempotency table; not produced by current :memory: default — leftover from an older code version."},
+    {"path": "src/commerce_service.egg-info/", "note": "Committed build metadata artifact in a supposedly fresh workspace."},
+    {"path": "pyproject.toml", "note": "Deps complete; pydantic-settings declared but unused; pytest asyncio_mode=auto configured."}
+  ],
+  "commands_run": [
+    "find . -type f (excluding caches) — listed project layout",
+    "ls -la / file / sqlite3 schema dump of commerce.db — confirmed stray DB lacks idempotency table",
+    "python3 -c import fastapi,pytest,httpx — confirmed deps available (fastapi 0.110.0)",
+    "PYTHONPATH=src python3 -m pytest tests/ -q — 48 passed, 321 warnings in 2.58s"
+  ],
+  "review_risk": "Low: all source/tests inspected and the full suite ran green; concurrency/transactional risks and the reservation-reuse bug were reasoned from code rather than reproduced under load."
+}
+```

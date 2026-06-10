@@ -1,0 +1,162 @@
+I have thorough evidence. Here is my evaluation.
+
+```json
+{
+  "rubric_version": "benchmark-codegen-review-v1",
+  "score_scale": "0-100 per category",
+  "weights": {
+    "task_fulfillment": 0.20,
+    "functional_correctness": 0.25,
+    "executability": 0.15,
+    "test_quality": 0.15,
+    "code_quality": 0.10,
+    "minimality": 0.10,
+    "security_safety": 0.05
+  },
+  "task_fulfillment_score": 81,
+  "task_fulfillment_breakdown": {
+    "instruction_compliance": 78,
+    "required_artifacts": 90,
+    "feature_coverage": 85,
+    "constraint_adherence": 70
+  },
+  "functional_correctness_score": 61,
+  "functional_correctness_breakdown": {
+    "domain_invariants": 55,
+    "edge_case_behavior": 62,
+    "data_consistency": 55,
+    "error_semantics": 70
+  },
+  "executability_score": 56,
+  "executability_breakdown": {
+    "installability": 60,
+    "runtime_entrypoints": 80,
+    "command_result": 30,
+    "runtime_isolation": 55
+  },
+  "test_quality_score": 60,
+  "test_quality_breakdown": {
+    "required_test_coverage": 80,
+    "behavioral_assertions": 78,
+    "integration_realism": 38,
+    "repeatability": 42
+  },
+  "code_quality_score": 77,
+  "code_quality_breakdown": {
+    "readability": 85,
+    "maintainability": 72,
+    "boundary_design": 82,
+    "documentation_quality": 68
+  },
+  "minimality_score": 71,
+  "minimality_breakdown": {
+    "no_speculative_infrastructure": 78,
+    "no_dead_or_duplicate_code": 62,
+    "appropriate_abstractions": 80,
+    "dependency_minimality": 65
+  },
+  "security_safety_score": 65,
+  "security_safety_breakdown": {
+    "auth_enforcement": 35,
+    "secret_handling": 60,
+    "input_safety": 80,
+    "unsafe_operations": 85
+  },
+  "review_confidence_score": 91,
+  "review_confidence_breakdown": {
+    "inspection_depth": 95,
+    "command_evidence": 92,
+    "issue_specificity": 92,
+    "uncertainty_handling": 85
+  },
+  "weighted_components": {
+    "task_fulfillment": 16.2,
+    "functional_correctness": 15.3,
+    "executability": 8.4,
+    "test_quality": 9.0,
+    "code_quality": 7.7,
+    "minimality": 7.1,
+    "security_safety": 3.3
+  },
+  "weighted_total": 66.9,
+  "verdict": "mixed",
+  "key_findings": [
+    "Auth bypass confirmed: verify_api_key declares `valid_key: str = \"test-key\"` as an ordinary parameter, so FastAPI exposes it as a query parameter (verified via openapi() and a live POST /skus?valid_key=hacked with Authorization: Bearer hacked returning 200). Any caller can override the expected key.",
+    "Idempotent confirm is broken: a second confirm of the same reservation returns HTTP 400 'Reservation already confirmed but order not found' (verified live) because service.confirm_reservation calls repo.get_order(reservation.reservation_id) but get_order queries the Order primary key order_id, which is a distinct uuid — so the cached order is never found.",
+    "Test suite does not pass: 16 failed / 22 passed / 2 errors under `pytest tests/`. All DB-touching API tests fail with 'no such table: skus' / cross-thread SQLite errors because the test fixture shares an in-memory sqlite Session across threads without StaticPool/check_same_thread=False.",
+    "Global exception handler is broken: it returns an HTTPException object instead of a Response, so the 500 path itself raises TypeError.",
+    "Expiration only releases reserved stock lazily on confirm; a reservation that expires and is never confirmed/cancelled holds reserved_stock indefinitely (get_pending_reservations_for_sku exists but is never called).",
+    "Dead code and unused dependency: python-dateutil declared but unused, models.uuid4 imported unused, ErrorResponse imported but unused as a response model, repository.get_pending_reservations_for_sku unused.",
+    "README documents `X-API-Key` header auth, but the code uses HTTP Bearer (Authorization: Bearer ...) — documentation/implementation mismatch."
+  ],
+  "score_rationale": {
+    "task_fulfillment": "All requested artifacts and the full endpoint surface (SKUs, stock adjust, reservations, confirm/cancel, orders, pagination, idempotency, API-key auth) are present with a clean layered structure. Docked for the README/auth-scheme mismatch and a module-level engine that writes commerce.db into CWD on import, which undercuts the production-minded constraint.",
+    "functional_correctness": "Create-reservation idempotency, insufficient-stock (409), and expired-confirm (410) behave correctly, but the idempotent confirm retry is broken (wrong PK lookup) and expired-but-untouched reservations never release reserved_stock. create_reservation also commits in two non-atomic steps, and the broken exception handler degrades error semantics.",
+    "executability": "App entrypoint and imports load and the happy-path reservation→confirm works once, but the declared test command fails substantially (16 failures/2 errors), the hatchling/src-layout packaging lacks explicit package config, and the app writes a db file into CWD at import time.",
+    "test_quality": "Breadth is good — happy paths, insufficient stock, both idempotency flows, expiration, auth, cancel, and pagination, with behavioral assertions on stock/reserved/status — but the API test fixture is fundamentally broken (cross-thread in-memory sqlite), so the integration tests cannot actually run, and one service test correctly fails by exposing the confirm bug.",
+    "code_quality": "Readable, well-named, and cleanly separated into app/service/repository/models/security. Lowered for unused idempotency_key on confirm, dead repository method, and a README that misstates the auth header.",
+    "minimality": "No speculative queues/workers/CLIs, and abstractions match current behavior, but there is real dead code (unused import, unused ErrorResponse, unused repo method) and an unused python-dateutil dependency.",
+    "security_safety": "Pydantic input validation is solid and there are no unsafe shell/network/destructive operations, but the API-key dependency is bypassable via the leaked valid_key query parameter, which is a serious authentication flaw on every mutating endpoint.",
+    "review_confidence": "Read every source and test file, ran the full test suite, and reproduced both the auth bypass and the confirm-idempotency bug with live TestClient calls and the OpenAPI schema; remaining uncertainty is mainly around `pip install -e` packaging behavior, which I did not execute."
+  },
+  "instruction_failures": [
+    "README claims X-API-Key header authentication, but security.py implements HTTP Bearer auth — output/documentation contract mismatch.",
+    "Module-level init_db() creates commerce.db in the working directory at import time, leaving an ambient artifact rather than isolating runtime state."
+  ],
+  "correctness_failures": [
+    "service.py:87 confirm_reservation calls repo.get_order(reservation.reservation_id) but get_order (repository.py:92) matches Order.order_id (a separate uuid); idempotent re-confirm therefore returns HTTP 400 instead of the existing order (reproduced live).",
+    "Expired reservations that are never confirmed or cancelled never release reserved_stock; create_reservation availability (service.py:58) does not reclaim expired holds, so stock can be permanently locked.",
+    "app.py:188 general_exception_handler returns an HTTPException instead of a Response, so the 500 fallback itself raises TypeError.",
+    "create_reservation persists the reservation and increments reserved_stock in two separate commits (service.py:66-70); a failure between them leaves a reservation without its stock hold."
+  ],
+  "execution_failures": [
+    "`pytest tests/` -> 16 failed, 22 passed, 2 errors.",
+    "All DB-touching API tests fail with 'sqlite3.OperationalError: no such table: skus' and 'SQLite objects created in a thread can only be used in that same thread' because the in-memory Session is shared across TestClient request threads (test_api.py:11-26 lacks StaticPool/check_same_thread=False).",
+    "tests/test_service.py::TestOrderConfirmation::test_confirm_reservation_idempotent fails, exposing the confirm/get_order PK bug."
+  ],
+  "test_gaps": [
+    "No test asserts that auth actually rejects a key override — the leaked valid_key query parameter goes uncaught by the suite.",
+    "No test that an expired reservation releases reserved_stock back to availability (the orphaned-hold invariant is unverified).",
+    "API integration tests are non-functional due to the cross-thread sqlite fixture, so the API layer is effectively untested end-to-end.",
+    "No test for stock-adjust on a nonexistent SKU at the API layer or for the duplicate-SKU 400 path at the API layer."
+  ],
+  "quality_notes": [
+    "repository.py:99 counts orders via select(Order)).scalars().all().__len__(), loading all rows instead of a COUNT query.",
+    "confirm_reservation accepts idempotency_key (models.py:53, app.py:121) but never uses it; confirm idempotency relies solely on reservation status.",
+    "datetime.utcnow() is used throughout and emits deprecation warnings on Python 3.12.",
+    "README/docstrings are sparse and the README's auth section is factually wrong."
+  ],
+  "unnecessary_code_examples": [
+    "repository.py:102 get_pending_reservations_for_sku is never called.",
+    "models.py:3 `from uuid import uuid4` is unused in models.py.",
+    "models.py:71 ErrorResponse is defined and imported (app.py:9) but never used as a response model.",
+    "pyproject.toml:15 python-dateutil is declared but never imported anywhere."
+  ],
+  "security_safety_notes": [
+    "Critical: verify_api_key's `valid_key: str = \"test-key\"` default parameter is surfaced by FastAPI as a query parameter (confirmed via app.openapi()), allowing an attacker to bypass auth with POST /skus?valid_key=X and Authorization: Bearer X (reproduced: HTTP 200).",
+    "Hardcoded default development key 'test-key' embedded in code and README with no environment-variable override.",
+    "Positive: request bodies are validated with Pydantic constraints (min_length, ge, gt, ne), and there are no shell/network/destructive operations.",
+    "Read endpoints (/orders) also require the key, which exceeds the mutating-only requirement but is acceptable."
+  ],
+  "file_evidence": [
+    {"path": "src/commerce_service/security.py", "note": "verify_api_key declares valid_key as a plain default param, leaking it as a query parameter and enabling auth bypass; also uses Bearer, contradicting README's X-API-Key claim."},
+    {"path": "src/commerce_service/service.py", "note": "confirm_reservation (lines 86-90) looks up the cached order by reservation_id via repo.get_order, which matches order_id PK — idempotent confirm fails; lazy expiration (lines 92-98) only releases stock when touched."},
+    {"path": "src/commerce_service/repository.py", "note": "get_order queries Order.order_id (line 92); unused get_pending_reservations_for_sku (line 102); inefficient order count via .all().__len__() (line 99)."},
+    {"path": "src/commerce_service/app.py", "note": "general_exception_handler returns an HTTPException instead of a Response (line 188-190); module-level init_db() writes commerce.db at import (line 26)."},
+    {"path": "tests/test_api.py", "note": "db_session fixture shares an in-memory sqlite Session across threads without StaticPool/check_same_thread=False, causing 'no such table'/cross-thread errors for all API tests (lines 11-26)."},
+    {"path": "tests/test_service.py", "note": "test_confirm_reservation_idempotent (line 124) fails, exposing the confirm/get_order PK bug; otherwise solid behavioral assertions on stock/status."},
+    {"path": "pyproject.toml", "note": "python-dateutil dependency declared (line 15) but never imported; hatchling build with src layout lacks explicit package config."},
+    {"path": "README.md", "note": "Documents X-API-Key header auth (lines 12, 47) while the implementation uses HTTP Bearer."}
+  ],
+  "commands_run": [
+    "find . -type f (project file listing)",
+    "python3 --version; python3 -c 'import fastapi, sqlalchemy, httpx, pytest' (deps present, Python 3.12.4)",
+    "python3 -m pytest tests/ -v (16 failed, 22 passed, 2 errors)",
+    "python3 -m pytest <single API test + service idempotency test> -v (captured tracebacks: 'no such table: skus', cross-thread sqlite)",
+    "python3 -c app.openapi() parameters for POST /skus (revealed valid_key as a query parameter)",
+    "python3 TestClient harness with StaticPool (reproduced auth bypass -> 200 and confirm idempotency -> 400)",
+    "grep for dateutil / get_pending_reservations_for_sku / ErrorResponse / uuid4 usage (confirmed dead code and unused dependency)"
+  ],
+  "review_risk": "low — all source and test files were read, the full test suite was run, and both the auth bypass and confirm-idempotency bugs were reproduced live; the only unexecuted check is `pip install -e` packaging behavior under hatchling's src layout."
+}
+```

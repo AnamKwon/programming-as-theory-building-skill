@@ -1,0 +1,156 @@
+All 41 tests pass; I confirmed the key bugs. Here is the evaluation.
+
+```json
+{
+  "rubric_version": "benchmark-codegen-review-v1",
+  "score_scale": "0-100 per category",
+  "weights": {
+    "task_fulfillment": 0.20,
+    "functional_correctness": 0.25,
+    "executability": 0.15,
+    "test_quality": 0.15,
+    "code_quality": 0.10,
+    "minimality": 0.10,
+    "security_safety": 0.05
+  },
+  "task_fulfillment_score": 85,
+  "task_fulfillment_breakdown": {
+    "instruction_compliance": 88,
+    "required_artifacts": 85,
+    "feature_coverage": 88,
+    "constraint_adherence": 80
+  },
+  "functional_correctness_score": 77,
+  "functional_correctness_breakdown": {
+    "domain_invariants": 78,
+    "edge_case_behavior": 88,
+    "data_consistency": 62,
+    "error_semantics": 80
+  },
+  "executability_score": 86,
+  "executability_breakdown": {
+    "installability": 90,
+    "runtime_entrypoints": 90,
+    "command_result": 85,
+    "runtime_isolation": 78
+  },
+  "test_quality_score": 88,
+  "test_quality_breakdown": {
+    "required_test_coverage": 92,
+    "behavioral_assertions": 88,
+    "integration_realism": 88,
+    "repeatability": 85
+  },
+  "code_quality_score": 83,
+  "code_quality_breakdown": {
+    "readability": 90,
+    "maintainability": 80,
+    "boundary_design": 80,
+    "documentation_quality": 80
+  },
+  "minimality_score": 75,
+  "minimality_breakdown": {
+    "no_speculative_infrastructure": 72,
+    "no_dead_or_duplicate_code": 76,
+    "appropriate_abstractions": 82,
+    "dependency_minimality": 70
+  },
+  "security_safety_score": 86,
+  "security_safety_breakdown": {
+    "auth_enforcement": 92,
+    "secret_handling": 70,
+    "input_safety": 88,
+    "unsafe_operations": 95
+  },
+  "review_confidence_score": 91,
+  "review_confidence_breakdown": {
+    "inspection_depth": 95,
+    "command_evidence": 92,
+    "issue_specificity": 90,
+    "uncertainty_handling": 88
+  },
+  "weighted_components": {
+    "task_fulfillment": 17.0,
+    "functional_correctness": 19.3,
+    "executability": 12.9,
+    "test_quality": 13.2,
+    "code_quality": 8.3,
+    "minimality": 7.5,
+    "security_safety": 4.3
+  },
+  "weighted_total": 82.5,
+  "verdict": "good",
+  "key_findings": [
+    "Full requested API surface implemented across a clean layered design (models/repository/service/security/app); all 41 tests pass under PYTHONPATH=src (fastapi 0.104.1, sqlalchemy 2.0.23, pydantic 2.5.0).",
+    "Data-consistency bug: adjust_stock commits the delta in repository.update_stock and only checks for a negative result afterward in service.py:32, so a failing adjust raises 400 but leaves the stock row persisted at a negative value (reproduced: available = -10).",
+    "Cross-operation atomicity is weak: each repository method opens and commits its own session, so create_reservation reserves stock (commit) then persists the reservation in a separate transaction (service.py:49-59); a failure between them orphans reserved stock.",
+    "Idempotency, expiration, insufficient-stock, auth, and pagination are all implemented and individually tested; reservation idempotency relies on a DB unique constraint plus an early check.",
+    "Minor speculative/dead code: StockModel.version is incremented but never read for optimistic locking; OrderStatus.COMPLETED is defined and documented but never assigned; python-dotenv is declared but never used.",
+    "Committed runtime artifacts present: commerce.db (40KB) and src/commerce_service.egg-info/ are checked into the workspace; importing app.py creates commerce.db in the CWD as an import-time side effect (app.py:19)."
+  ],
+  "score_rationale": {
+    "task_fulfillment": "Every requested endpoint, workflow, and cross-cutting concern (auth, idempotency, expiration, pagination) is present and the project structure matches the brief. Deductions for production-minded constraint slips: a committed DB and egg-info, a hardcoded API key, an unused dependency, and a documented COMPLETED state that is never implemented.",
+    "functional_correctness": "Primary flows are correct and edge cases are handled with sensible status codes. The dominant issue is data consistency: the post-commit negative-stock guard persists invalid state, and per-method sessions prevent multi-step atomicity, so partial failures can desynchronize stock and reservations. reserve_stock itself checks availability before mutating, which is correct.",
+    "executability": "Packaging is complete with pinned deps and a correct src layout; app entrypoint and uvicorn command are usable. Tests pass once the package is on the path. README's `pytest` step assumes the preceding `pip install -e` ran; bare pytest in a fresh shell fails with ModuleNotFoundError until install. Import-time DB creation and committed artifacts slightly weaken runtime isolation, though tests themselves use temp DBs.",
+    "test_quality": "Strong coverage at both service and API layers including insufficient stock, dual idempotency, expiration (get and confirm), auth absence/invalidity, and pagination. Assertions check real behavior (stock release on cancel, status transitions, id equality). Gap: no test asserts persisted stock integrity after a failed adjust, which is why the negative-stock bug slipped through.",
+    "code_quality": "Readable names and coherent module boundaries. Maintainability is dented because an invariant (no negative stock) is enforced in the wrong layer relative to where the commit happens, and the session-per-method pattern blocks a unit-of-work. Docs are clear but overstate 'proper locking' (with_for_update is a no-op on SQLite) and describe an unimplemented COMPLETED transition.",
+    "minimality": "Mostly lean, but carries an unused python-dotenv dependency, a never-read version column suggesting optimistic locking that does not exist, and an unused OrderStatus.COMPLETED value. Abstractions are otherwise justified by current behavior.",
+    "security_safety": "All mutating endpoints depend on verify_api_key; reads are intentionally public. Pydantic validates inputs and the ORM parameterizes queries, so no injection surface. The API key set is hardcoded in source rather than env-driven — acceptable as a dev default but not production-grade secret handling.",
+    "review_confidence": "All source and test files were read, the suite was executed (41 passed), and the consistency bug and unused-code findings were reproduced directly. Main uncertainty is genuine concurrency behavior, which SQLite single-process tests cannot exercise."
+  },
+  "instruction_failures": [
+    "README Quick Start lists `pytest` before establishing the package is importable; in a fresh shell `pytest` fails (ModuleNotFoundError) until `pip install -e \".[dev]\"` runs first.",
+    "README documents reservation/order COMPLETED transitions and 'proper locking' that the code does not implement (OrderStatus.COMPLETED unused; with_for_update is a no-op on SQLite)."
+  ],
+  "correctness_failures": [
+    "service.adjust_stock (service.py:27-34) checks for negative stock only after repository.update_stock has committed, persisting an invalid negative quantity while returning a 400 (reproduced: available = -10).",
+    "No transactional boundary spans reserve_stock and create_reservation (service.py:49-59); a failure after reserve_stock leaves stock decremented with no corresponding reservation.",
+    "repository with_for_update() (repository.py:54,67,85) provides no real row locking on SQLite, so the README's locking/concurrency claims do not hold under real concurrency."
+  ],
+  "execution_failures": [
+    "Bare `pytest` from a fresh clone fails to collect both test modules (No module named 'commerce_service') until the package is installed or src is on PYTHONPATH.",
+    "Importing commerce_service.app creates commerce.db in the current working directory at import time (app.py:19), an ambient side effect."
+  ],
+  "test_gaps": [
+    "No test asserts stock-row integrity after a failed/over-drawing adjust_stock, so the persisted-negative-stock bug is uncaught.",
+    "No test for partial-failure atomicity between stock reservation and reservation persistence.",
+    "No concurrency/race test for duplicate idempotency keys arriving simultaneously (acceptable given SQLite, but the claimed locking is untested)."
+  ],
+  "quality_notes": [
+    "Negative-stock invariant is enforced in the service after the repository commits; it belongs inside the same transaction as the mutation (cf. reserve_stock which correctly checks before mutating).",
+    "Repository uses one session per method with no unit-of-work, preventing multi-step transactions across service operations.",
+    "Error routing relies on substring matching of exception messages (app.py:51,64,88-91), which is brittle to message wording changes."
+  ],
+  "unnecessary_code_examples": [
+    "StockModel.version (models.py:38) is incremented in three repository methods but never read — speculative optimistic-locking scaffolding.",
+    "OrderStatus.COMPLETED (models.py:20) is defined and documented but never assigned anywhere.",
+    "python-dotenv (pyproject.toml:15) is declared as a dependency but never imported or used.",
+    "src/commerce_service.egg-info/ and commerce.db are committed build/runtime artifacts."
+  ],
+  "security_safety_notes": [
+    "verify_api_key is required on all mutating endpoints (POST /skus, POST /stock/adjust, POST /reservations, PATCH confirm, DELETE cancel); GET endpoints are public by design.",
+    "API key set is hardcoded as {\"test-key-123\"} in security.py:6 rather than sourced from the environment — fine as a dev default, not production secret handling.",
+    "Inputs validated via Pydantic (min_length, gt=0, pagination ge/le bounds) and queries go through the ORM, so no obvious injection risk; no shell/file/network side effects beyond local SQLite."
+  ],
+  "file_evidence": [
+    {"path": "src/commerce_service/service.py", "note": "adjust_stock (lines 27-34) validates negative stock after update_stock has already committed, persisting invalid state; reserve path (49-59) commits stock and reservation in separate transactions."},
+    {"path": "src/commerce_service/repository.py", "note": "Each method opens/commits its own session; with_for_update() at lines 54/67/85 is a no-op on SQLite; list_orders provides offset/limit pagination with total count."},
+    {"path": "src/commerce_service/app.py", "note": "Routes enforce verify_api_key on all mutations; status codes 201/204/400/401/404/409 mapped via exception-message substring matching; module-level Repository() at line 19 creates commerce.db on import."},
+    {"path": "src/commerce_service/security.py", "note": "APIKeyHeader dependency with hardcoded VALID_API_KEYS={'test-key-123'}; returns 401 on missing/invalid key."},
+    {"path": "src/commerce_service/models.py", "note": "Pydantic schemas + SQLAlchemy models; StockModel.version and OrderStatus.COMPLETED defined but unused as locking/transition mechanisms."},
+    {"path": "tests/test_service.py", "note": "Covers duplicate SKU, insufficient stock, idempotency, expiration (get+confirm), non-pending confirm, cancel stock release, pagination; uses temp SQLite DB per test."},
+    {"path": "tests/test_api.py", "note": "TestClient integration tests for auth (401), insufficient stock (409), idempotent reservation/confirm, pagination; autouse fixture swaps service.repo to a temp DB."},
+    {"path": "pyproject.toml", "note": "Complete packaging with pinned deps and src layout; declares python-dotenv which is never used."},
+    {"path": "commerce.db", "note": "40KB SQLite file committed into the workspace; created as an import-time side effect of app.py."}
+  ],
+  "commands_run": [
+    "find . -type f (excluding caches/venv) — enumerated project files",
+    "python3 --version; import fastapi/sqlalchemy/pydantic/httpx — confirmed Python 3.12.4 and deps available (fastapi 0.104.1, sqlalchemy 2.0.23, pydantic 2.5.0)",
+    "python3 -m pytest -q — collection ImportError (package not installed)",
+    "PYTHONPATH=src python3 -m pytest -q — 41 passed, 89 deprecation warnings",
+    "PYTHONPATH=src python3 -c '... adjust_stock(-20) ...' — reproduced persisted negative stock (available = -10)",
+    "grep for dotenv/version/COMPLETED usage and ls commerce.db — confirmed unused dep, unused version/COMPLETED, committed db"
+  ],
+  "review_risk": "low — all source and tests were read and the suite ran green (41 passed) with src on the path, and the key consistency/minimality findings were reproduced directly; the only unverified area is true concurrent behavior, which SQLite single-process tests cannot exercise."
+}
+```

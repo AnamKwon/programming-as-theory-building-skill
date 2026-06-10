@@ -1,0 +1,149 @@
+All 42 tests pass; I've inspected every source and test file and confirmed unused dependencies and zero coverage of the production `app.py`/`security.py`. Here is the evaluation.
+
+```json
+{
+  "rubric_version": "benchmark-codegen-review-v1",
+  "score_scale": "0-100 per category",
+  "weights": {
+    "task_fulfillment": 0.20,
+    "functional_correctness": 0.25,
+    "executability": 0.15,
+    "test_quality": 0.15,
+    "code_quality": 0.10,
+    "minimality": 0.10,
+    "security_safety": 0.05
+  },
+  "task_fulfillment_score": 88,
+  "task_fulfillment_breakdown": {
+    "instruction_compliance": 88,
+    "required_artifacts": 92,
+    "feature_coverage": 90,
+    "constraint_adherence": 80
+  },
+  "functional_correctness_score": 79,
+  "functional_correctness_breakdown": {
+    "domain_invariants": 85,
+    "edge_case_behavior": 88,
+    "data_consistency": 68,
+    "error_semantics": 75
+  },
+  "executability_score": 91,
+  "executability_breakdown": {
+    "installability": 90,
+    "runtime_entrypoints": 92,
+    "command_result": 95,
+    "runtime_isolation": 85
+  },
+  "test_quality_score": 78,
+  "test_quality_breakdown": {
+    "required_test_coverage": 88,
+    "behavioral_assertions": 85,
+    "integration_realism": 50,
+    "repeatability": 90
+  },
+  "code_quality_score": 86,
+  "code_quality_breakdown": {
+    "readability": 88,
+    "maintainability": 78,
+    "boundary_design": 88,
+    "documentation_quality": 88
+  },
+  "minimality_score": 77,
+  "minimality_breakdown": {
+    "no_speculative_infrastructure": 82,
+    "no_dead_or_duplicate_code": 70,
+    "appropriate_abstractions": 85,
+    "dependency_minimality": 70
+  },
+  "security_safety_score": 87,
+  "security_safety_breakdown": {
+    "auth_enforcement": 90,
+    "secret_handling": 72,
+    "input_safety": 90,
+    "unsafe_operations": 95
+  },
+  "review_confidence_score": 90,
+  "review_confidence_breakdown": {
+    "inspection_depth": 92,
+    "command_evidence": 90,
+    "issue_specificity": 90,
+    "uncertainty_handling": 88
+  },
+  "weighted_components": {
+    "task_fulfillment": 17.6,
+    "functional_correctness": 19.8,
+    "executability": 13.7,
+    "test_quality": 11.7,
+    "code_quality": 8.6,
+    "minimality": 7.7,
+    "security_safety": 4.4
+  },
+  "weighted_total": 83.4,
+  "verdict": "good",
+  "key_findings": [
+    "Complete, coherent FastAPI + SQLAlchemy + SQLite project implementing all requested features: SKU CRUD, stock adjustment, reservations with TTL/expiration, idempotent creation, confirm-to-order, cancel, order retrieval and offset/limit pagination, API-key auth, and health check.",
+    "All 42 tests pass (pytest, 75% total coverage) with deps already available.",
+    "Critical test-quality flaw: tests/test_api.py re-defines a parallel FastAPI app and a duplicate verify_api_key inside a fixture instead of importing the real app; coverage report shows src/commerce_service/app.py at 0% and security.py at 0% — the production wiring and auth dependency are never exercised.",
+    "confirm_reservation performs stock deduction, reservation status change, and order creation in three separate repository sessions/transactions (service.py:92-94), so it is not atomic — a mid-sequence failure can leave inconsistent state.",
+    "Declared dependencies pydantic-settings and python-dotenv are never imported or used (pyproject.toml:14-16).",
+    "with_for_update() (repository.py:71,118,128) is a no-op on SQLite, so the implied row-locking concurrency protection does not actually apply."
+  ],
+  "score_rationale": {
+    "task_fulfillment": "Every requested artifact and endpoint exists and the layered architecture matches the README. Lost points for production-minded gaps: non-atomic confirm flow, a hardcoded default API key, and generated artifacts (commerce.db, .coverage, egg-info) left in the workspace.",
+    "functional_correctness": "Domain invariants, idempotency, expiration handling, and state transitions are correct and test-verified. Main deduction is data consistency: the confirm path spans multiple independent transactions rather than one. Error semantics are coarse — not-found, expired, and insufficient-stock all surface as HTTP 400 rather than 404/409.",
+    "executability": "pyproject is complete, the app imports cleanly with all routes registered, __main__ launches uvicorn, and the full test suite runs green. Minor isolation nit: importing app.py instantiates a module-level Repository bound to ./commerce.db.",
+    "test_quality": "Good scenario breadth (happy path, insufficient stock, idempotency, expiration, auth, pagination) with behavioral assertions on quantities/stock/status, and isolated tmp_path/in-memory DBs. Severely undercut because the 'integration' tests reconstruct the API rather than importing it, leaving the real app.py and security.py untested.",
+    "code_quality": "Clean naming, clear service/repository/schema/security separation, accurate README, and useful docstrings. Maintainability is the weak point: any change to app.py endpoints must be mirrored in the duplicated test app, and the _calculate_available_stock docstring claims it counts pending/confirmed while it only sums pending.",
+    "minimality": "No speculative queues/workers/migrations. Penalized for the large duplicated app in the test file, two unused dependencies, and unused enum states (order 'shipped'/'cancelled' are never set).",
+    "security_safety": "All mutating endpoints depend on verify_api_key, inputs are validated via Pydantic, and queries are ORM-parameterized. The hardcoded fallback key 'dev-key-not-for-production' allows access when API_KEY is unset, which is the main safety concern.",
+    "review_confidence": "Read all source and test files and ran the declared test command plus an import smoke check and dependency grep; findings cite concrete files/lines. Residual uncertainty is mainly around real concurrency behavior, which cannot be exercised on single-threaded SQLite tests."
+  },
+  "instruction_failures": [
+    "Generated build/runtime artifacts (commerce.db, .coverage, src/commerce_service.egg-info/) are left in the workspace rather than a clean source tree."
+  ],
+  "correctness_failures": [
+    "confirm_reservation is not atomic: adjust_stock, confirm_reservation, and create_order each commit in separate sessions (service.py:92-94); a failure between them leaves stock deducted without an order or vice versa.",
+    "Expired reservations continue to count against available stock (status stays 'pending') until someone attempts to confirm them; there is no sweep, so stock can be silently held by dead reservations.",
+    "Coarse error mapping: SKU/reservation/order not-found and expired reservation all return HTTP 400 instead of 404/409."
+  ],
+  "execution_failures": [],
+  "test_gaps": [
+    "Production app.py (0% coverage) and security.py (0% coverage) are never imported by tests; the real verify_api_key dependency and endpoint wiring are untested.",
+    "No test asserts that available-stock accounting excludes a cancelled reservation (i.e., that cancelling frees held stock for a new reservation).",
+    "No API-level test for the expired-reservation path (only the service-level test_confirm_expired_reservation exercises it).",
+    "No test that an idempotent retry with a different sku/qty but same idempotency_key still returns the original reservation (the service silently ignores the new payload)."
+  ],
+  "quality_notes": [
+    "tests/test_api.py:36-128 duplicates the entire FastAPI app and auth dependency in a fixture, creating a maintenance fork of app.py.",
+    "_calculate_available_stock docstring (service.py:125) says 'pending/confirmed' but the query only sums status == 'pending'.",
+    "Uses deprecated datetime.utcnow() throughout and the deprecated @app.on_event('startup') hook (app.py:33).",
+    "Order status enum includes 'shipped' and 'cancelled' values that are never written by any code path."
+  ],
+  "unnecessary_code_examples": [
+    "pyproject.toml:14 pydantic-settings and :16 python-dotenv are declared but never imported anywhere in src/ or tests/.",
+    "Full re-implementation of all endpoints inside the test_client fixture (tests/test_api.py).",
+    "with_for_update() calls in repository.py that have no effect on the SQLite backend."
+  ],
+  "security_safety_notes": [
+    "security.py:11 hardcodes a fallback API key 'dev-key-not-for-production'; if API_KEY is unset in production, auth effectively accepts a known constant.",
+    "All mutating endpoints correctly require APIKeyDependency (app.py:48,58,69,81,94) and reads on orders are also protected.",
+    "Inputs validated via Pydantic field constraints and DB access uses parameterized ORM queries; no shell/file/network side effects."
+  ],
+  "file_evidence": [
+    {"path": "src/commerce_service/service.py", "note": "confirm_reservation (lines 92-94) deducts stock, confirms, and creates the order across three separate repository transactions — not atomic; idempotent confirm correctly returns existing order (74-80)."},
+    {"path": "src/commerce_service/repository.py", "note": "Each operation opens its own committing session (24-35); with_for_update() at 71/118/128 is a no-op on SQLite."},
+    {"path": "src/commerce_service/security.py", "note": "verify_api_key compares X-API-Key header to env API_KEY with a hardcoded dev fallback (line 11); raises 401 on mismatch."},
+    {"path": "tests/test_api.py", "note": "Fixture builds a parallel app and duplicate auth (36-128) instead of importing app.py, so production wiring is untested."},
+    {"path": "pyproject.toml", "note": "Declares pydantic-settings and python-dotenv (14,16) that are never used in the codebase."},
+    {"path": "src/commerce_service/app.py", "note": "All routes registered and protected; module-level Repository() (22) binds to ./commerce.db; deprecated on_event startup (33)."}
+  ],
+  "commands_run": [
+    "find . -type f (excluding caches) to list project layout",
+    "python -c 'import fastapi, sqlalchemy, httpx, pytest' to confirm deps available",
+    "PYTHONPATH=src python -m pytest -q (42 passed, coverage: app.py 0%, security.py 0%, total 75%)",
+    "python -c 'from commerce_service.app import app' to verify import and route registration",
+    "grep for dotenv/pydantic_settings/uvicorn usage to confirm unused dependencies"
+  ],
+  "review_risk": "low — all source and test files were read and the declared test command, an import smoke check, and dependency grep were run; residual uncertainty is limited to real concurrency/transaction behavior, which single-threaded SQLite tests cannot exercise."
+}
+```

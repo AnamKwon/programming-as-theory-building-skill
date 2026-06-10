@@ -1,0 +1,157 @@
+I have thorough evidence. Here is my evaluation.
+
+```json
+{
+  "rubric_version": "benchmark-codegen-review-v1",
+  "score_scale": "0-100 per category",
+  "weights": {
+    "task_fulfillment": 0.20,
+    "functional_correctness": 0.25,
+    "executability": 0.15,
+    "test_quality": 0.15,
+    "code_quality": 0.10,
+    "minimality": 0.10,
+    "security_safety": 0.05
+  },
+  "task_fulfillment_score": 72,
+  "task_fulfillment_breakdown": {
+    "instruction_compliance": 60,
+    "required_artifacts": 90,
+    "feature_coverage": 70,
+    "constraint_adherence": 70
+  },
+  "functional_correctness_score": 64,
+  "functional_correctness_breakdown": {
+    "domain_invariants": 58,
+    "edge_case_behavior": 62,
+    "data_consistency": 70,
+    "error_semantics": 65
+  },
+  "executability_score": 45,
+  "executability_breakdown": {
+    "installability": 85,
+    "runtime_entrypoints": 10,
+    "command_result": 5,
+    "runtime_isolation": 80
+  },
+  "test_quality_score": 54,
+  "test_quality_breakdown": {
+    "required_test_coverage": 72,
+    "behavioral_assertions": 68,
+    "integration_realism": 50,
+    "repeatability": 25
+  },
+  "code_quality_score": 78,
+  "code_quality_breakdown": {
+    "readability": 85,
+    "maintainability": 75,
+    "boundary_design": 85,
+    "documentation_quality": 65
+  },
+  "minimality_score": 75,
+  "minimality_breakdown": {
+    "no_speculative_infrastructure": 80,
+    "no_dead_or_duplicate_code": 65,
+    "appropriate_abstractions": 85,
+    "dependency_minimality": 70
+  },
+  "security_safety_score": 82,
+  "security_safety_breakdown": {
+    "auth_enforcement": 78,
+    "secret_handling": 70,
+    "input_safety": 88,
+    "unsafe_operations": 90
+  },
+  "review_confidence_score": 91,
+  "review_confidence_breakdown": {
+    "inspection_depth": 95,
+    "command_evidence": 92,
+    "issue_specificity": 92,
+    "uncertainty_handling": 85
+  },
+  "weighted_components": {
+    "task_fulfillment": 14.4,
+    "functional_correctness": 16.0,
+    "executability": 6.8,
+    "test_quality": 8.1,
+    "code_quality": 7.8,
+    "minimality": 7.5,
+    "security_safety": 4.1
+  },
+  "weighted_total": 64.7,
+  "verdict": "mixed",
+  "key_findings": [
+    "FATAL: src/commerce_service/app.py uses Depends(verify_api_key) on 6 endpoints but never imports Depends from fastapi. Importing the module raises NameError at definition time, so the app cannot start (uvicorn entrypoint broken) and test_api.py crashes pytest collection with INTERNALERROR.",
+    "FATAL for service tests: tests/test_service.py constructs Repository(':memory:'), but Repository._conn() opens a NEW sqlite3 connection per call. Each ':memory:' connection is a distinct database, so the schema created in _init_db is discarded; every subsequent operation fails with 'no such table'. All 16 test_service tests fail/error.",
+    "test_service.py calls db.execute(...) and db._conn().__enter__(), but Repository exposes no execute() method — these helpers would raise AttributeError even if the in-memory DB worked.",
+    "Net effect: 0 tests pass. `pytest` aborts with an internal error; running only test_service yields 16 failed + 16 errors.",
+    "Order state machine claimed in README ('pending → confirmed → completed') is not implemented: repository.update_order_status is dead code, never called; orders remain 'pending' forever and OrderStatus.CONFIRMED/COMPLETED are unused.",
+    "Underlying domain logic (stock availability, idempotent reservation lookup, expiration sweep, stock release on cancel/expire, adjustment guard against negative available) is otherwise coherent and would mostly work once the two fatal bugs are fixed."
+  ],
+  "score_rationale": {
+    "task_fulfillment": "All requested artifacts and most of the API surface exist (SKUs, stock, reservations with idempotency/expiration, orders with pagination, API-key auth). Points lost because the README-advertised order state machine is unimplemented and the deliverable does not actually import/run, undermining the output contract.",
+    "functional_correctness": "Domain reasoning is largely sound: create_reservation checks available = quantity - reserved within one transaction, idempotency returns the existing reservation, expire_old_reservations frees stock, cancel restores reserved. However order status transitions never occur, some not-found cases return 400 instead of 404, and none of this is runtime-verifiable because the app fails to import — confirmed broken rather than confirmed working.",
+    "executability": "Dependencies and packaging are complete and installable (fastapi/pydantic/uvicorn versions plausible; pythonpath/src layout correct). But the documented uvicorn entrypoint cannot import (NameError: Depends), and the declared `pytest` command crashes at collection. Runtime isolation is fine (commerce.db in cwd, no parent reads).",
+    "test_quality": "Test intent covers the required matrix — happy path, insufficient stock, idempotent retry, expiration, auth (missing+invalid key), and pagination — with behavioral assertions (quantities, statuses, stock freed). But the suite is non-functional: test_api can't import the app, and test_service mis-uses ':memory:' plus a nonexistent db.execute, so nothing runs repeatably.",
+    "code_quality": "Clear module boundaries (models/repository/service/security/app), readable names, parameterized SQL, sensible context-managed connections with commit/rollback. Documentation quality is dragged down by a README that claims an order state machine and behavior the code does not deliver.",
+    "minimality": "No speculative queues/workers/CLIs. Deductions for dead code: update_order_status never called, unused OrderStatus members, unused StockAdjustmentRequest.reason field, unused from_attributes Config, and an unused pydantic-settings dependency.",
+    "security_safety": "Parameterized SQL throughout (no injection), Pydantic input validation with bounds, no unsafe shell/file/network use. All mutating endpoints are gated by the API-key dependency (conceptually), and only read endpoints are open. Minor: a hardcoded default key 'test-key-123' lives in source (documented test default, not a real secret).",
+    "review_confidence": "All source and test files were read; the failures were reproduced by importing the module and running pytest, and root causes were isolated to specific lines. Low residual uncertainty."
+  },
+  "instruction_failures": [
+    "app.py omits the Depends import, breaking every authenticated endpoint and the app entrypoint.",
+    "README advertises an order state machine (pending → confirmed → completed) that is not implemented anywhere in service/app."
+  ],
+  "correctness_failures": [
+    "Repository(':memory:') is unusable: per-call sqlite3.connect(':memory:') gives each operation a fresh empty database, so schema does not persist (sqlite3.OperationalError: no such table).",
+    "Order status never transitions; confirming reservations does not advance the owning order; update_order_status is never invoked.",
+    "confirm/cancel/create_reservation not-found conditions surface as HTTP 400 rather than 404 (app.py:79,95,111 map all ValueError to 400)."
+  ],
+  "execution_failures": [
+    "`import commerce_service.app` raises NameError: name 'Depends' is not defined (app.py:31).",
+    "`pytest` aborts with INTERNALERROR during test_api collection due to the import failure.",
+    "`pytest tests/test_service.py` => 16 failed, 16 errors (no such table: skus/reservations) plus AttributeError-prone db.execute usage."
+  ],
+  "test_gaps": [
+    "No test asserts an order's status changing (consistent with the missing feature, but coverage gap vs. the claimed state machine).",
+    "No test for adjust_stock guard that rejects reductions below reserved (repository.py:110 ValueError path is untested).",
+    "test_service helpers (db.execute, db._conn().__enter__()) reference an API the Repository does not provide, so expiration tests cannot validate behavior.",
+    "Idempotency test only checks returned id equality; it does not assert stock was reserved once (no double-decrement check)."
+  ],
+  "quality_notes": [
+    "Connection lifecycle is otherwise solid: _conn() context manager commits on success and rolls back on exception.",
+    "from_attributes Config blocks (models.py:33,59,76) are unused since responses are built from dicts via **kwargs.",
+    "README claims SQLite (correct) but the production-readiness framing is undercut by a module-global file DB and no concurrency control beyond SQLite defaults."
+  ],
+  "unnecessary_code_examples": [
+    "repository.py:281 update_order_status — defined but never called (dead code).",
+    "models.py OrderStatus.CONFIRMED / OrderStatus.COMPLETED — declared but never used.",
+    "models.py StockAdjustmentRequest.reason — accepted but ignored by adjust_stock.",
+    "pyproject.toml:17 pydantic-settings — declared dependency with no import anywhere in src/."
+  ],
+  "security_safety_notes": [
+    "All mutating endpoints declare Depends(verify_api_key); read-only GET /orders endpoints are intentionally open.",
+    "verify_api_key uses a hardcoded valid key set {'test-key-123'} (security.py:11) — acceptable as a documented test default, but not externalized to config/env.",
+    "All SQL is parameterized (no string interpolation), and Pydantic Field constraints validate untrusted input (quantity gt=0, expires_in_seconds bounds, pagination ge/le)."
+  ],
+  "file_evidence": [
+    {"path": "src/commerce_service/app.py", "note": "Lines 3 and 31: uses Depends(verify_api_key) but only imports FastAPI, HTTPException, Query, status — NameError at import."},
+    {"path": "src/commerce_service/repository.py", "note": "Lines 13-29: _conn() opens a fresh sqlite3.connect(self.db_path) every call; with ':memory:' each call is a separate empty DB. Lines 110-111 stock guard, 165-203 reservation create with availability check."},
+    {"path": "src/commerce_service/repository.py", "note": "Line 281 update_order_status: dead code, never invoked from service.py."},
+    {"path": "src/commerce_service/service.py", "note": "Lines 60-78 idempotent create with expire sweep; lines 80-99 confirm with expiry check. No call advances order status."},
+    {"path": "tests/test_service.py", "note": "Line 14 Repository(':memory:') (broken isolation); lines 108-112 and 153-157 call db.execute(...) and db._conn().__enter__(), neither valid on Repository."},
+    {"path": "tests/test_api.py", "note": "Line 6 imports commerce_service.app, which fails to import — crashes pytest collection."},
+    {"path": "pyproject.toml", "note": "Line 17 declares pydantic-settings; no usage in src/."}
+  ],
+  "commands_run": [
+    "find . -type f (project file listing)",
+    "python3 -c 'import fastapi, pydantic, httpx' (deps present: fastapi 0.110.0)",
+    "PYTHONPATH=src python3 -c 'import commerce_service.app' -> NameError: Depends not defined",
+    "PYTHONPATH=src python3 -m pytest -q -> INTERNALERROR at test_api collection",
+    "PYTHONPATH=src python3 -m pytest tests/test_service.py -q -> 16 failed, 16 errors",
+    "pytest single test + grep -> sqlite3.OperationalError: no such table: skus/reservations",
+    "grep for pydantic_settings/update_order_status/from_attributes/OrderStatus.* -> confirmed unused/dead code"
+  ],
+  "review_risk": "low — all source and tests were read, the import failure and test outcomes were reproduced directly, and root causes were isolated to specific lines; the only unverifiable area is happy-path runtime behavior, which cannot execute until the Depends import and ':memory:' connection-sharing bugs are fixed."
+}
+```

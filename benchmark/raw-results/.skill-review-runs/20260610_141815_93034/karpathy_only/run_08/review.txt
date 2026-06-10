@@ -1,0 +1,155 @@
+```json
+{
+  "rubric_version": "benchmark-codegen-review-v1",
+  "score_scale": "0-100 per category",
+  "weights": {
+    "task_fulfillment": 0.20,
+    "functional_correctness": 0.25,
+    "executability": 0.15,
+    "test_quality": 0.15,
+    "code_quality": 0.10,
+    "minimality": 0.10,
+    "security_safety": 0.05
+  },
+  "task_fulfillment_score": 85,
+  "task_fulfillment_breakdown": {
+    "instruction_compliance": 80,
+    "required_artifacts": 95,
+    "feature_coverage": 90,
+    "constraint_adherence": 75
+  },
+  "functional_correctness_score": 73,
+  "functional_correctness_breakdown": {
+    "domain_invariants": 80,
+    "edge_case_behavior": 82,
+    "data_consistency": 65,
+    "error_semantics": 65
+  },
+  "executability_score": 61,
+  "executability_breakdown": {
+    "installability": 90,
+    "runtime_entrypoints": 85,
+    "command_result": 30,
+    "runtime_isolation": 40
+  },
+  "test_quality_score": 66,
+  "test_quality_breakdown": {
+    "required_test_coverage": 85,
+    "behavioral_assertions": 85,
+    "integration_realism": 70,
+    "repeatability": 25
+  },
+  "code_quality_score": 84,
+  "code_quality_breakdown": {
+    "readability": 88,
+    "maintainability": 80,
+    "boundary_design": 88,
+    "documentation_quality": 78
+  },
+  "minimality_score": 79,
+  "minimality_breakdown": {
+    "no_speculative_infrastructure": 80,
+    "no_dead_or_duplicate_code": 65,
+    "appropriate_abstractions": 82,
+    "dependency_minimality": 90
+  },
+  "security_safety_score": 87,
+  "security_safety_breakdown": {
+    "auth_enforcement": 95,
+    "secret_handling": 70,
+    "input_safety": 88,
+    "unsafe_operations": 95
+  },
+  "review_confidence_score": 90,
+  "review_confidence_breakdown": {
+    "inspection_depth": 95,
+    "command_evidence": 90,
+    "issue_specificity": 90,
+    "uncertainty_handling": 85
+  },
+  "weighted_components": {
+    "task_fulfillment": 17.0,
+    "functional_correctness": 18.3,
+    "executability": 9.2,
+    "test_quality": 9.9,
+    "code_quality": 8.4,
+    "minimality": 7.9,
+    "security_safety": 4.4
+  },
+  "weighted_total": 75.0,
+  "verdict": "good",
+  "key_findings": [
+    "The declared test command (`pytest`) FAILS out of the box: 10 failed, 26 passed. Confirmed by running PYTHONPATH=src python3 -m pytest.",
+    "Root cause of most failures: app.py instantiates a module-level `Repository()` using the default on-disk DB `sqlite:///commerce.db`, and the API tests never override this dependency. Tests repeatedly create the same `SKU-001`, hitting `UNIQUE constraint failed: skus.id` (unhandled IntegrityError -> 500), and order-dependent state pollutes assertions.",
+    "Genuine logic/test bug in test_service.py::test_cleanup_expired_reservations (isolated in-memory): asserts available_stock == 90 but the cleanup correctly yields 80 (release of qty 10 back to available 70 -> 80). The shipped expected value is wrong.",
+    "Custom exception handlers in app.py (lines 40-62) return Python tuples like `({...}, 409)` instead of a Starlette/FastAPI Response. These are invalid handlers and will 500 when triggered (e.g., adjust_stock on a nonexistent SKU raises ValueError -> value_error_handler).",
+    "Core domain logic (stock tracking, idempotency, expiration check, state transitions, auth, pagination) is implemented and correct at the service layer; service-level unit tests for those behaviors pass.",
+    "reserve() performs the stock decrement and the reservation insert in two separate sessions/transactions, so a failure between them would leak reserved stock; with_for_update() is a no-op on SQLite, so the implied locking does not exist."
+  ],
+  "score_rationale": {
+    "task_fulfillment": "All requested artifacts (pyproject.toml, README.md, src/ package, tests/) and the full API surface (SKU create, stock adjust, reservation create/confirm/cancel, order list with pagination, API-key auth, health) are present and match the prompt. Constraint adherence is weaker: the app writes commerce.db into the working directory and the test harness depends on accumulated on-disk state rather than a fresh, isolated workspace.",
+    "functional_correctness": "Domain invariants and edge cases are largely implemented correctly at the service layer (insufficient stock raises, idempotent retry returns the same reservation, expiration is checked on confirm, invalid state transitions are rejected). Data consistency is hurt by non-atomic reserve (two transactions) and an ineffective with_for_update on SQLite. Error semantics are correct on the route try/except paths but the global exception handlers are broken (return tuples), so uncaught ValueError/IntegrityError paths produce 500s.",
+    "executability": "Dependencies install cleanly and the package layout/entrypoint are plausible (uvicorn commerce_service.app:app). However the headline `pytest` command fails (10/36), and runtime isolation is poor: a persistent cwd-local commerce.db and no per-test DB override make the API suite order-dependent and non-repeatable.",
+    "test_quality": "Coverage of required scenarios is good (happy paths, insufficient stock, idempotency, expiration, auth, pagination) with behavioral assertions on stock counts and states, and integration tests exercise the real app via TestClient. But repeatability is the dominant weakness: shared on-disk DB, no isolation/override, and one incorrect expected value cause the suite to fail.",
+    "code_quality": "Clean module boundaries (app/models/repository/service/security), readable names, and consistent control flow. README is clear though it overstates 'production-ready error handling' given the broken exception handlers. Some duplication (OrderResponse mirrors ReservationResponse).",
+    "minimality": "Dependencies are all used and there is no speculative queue/worker/migration/CLI scaffolding. Points lost for dead/unused code: unused imports (timedelta and create_engine in models.py), an unused ErrorResponse model, get_reservations_by_sku is never called, and cleanup_expired_reservations is implemented but not wired to any endpoint or scheduler (only invoked by tests).",
+    "security_safety": "All mutating endpoints and the orders listing require the verify_api_key dependency; health is intentionally open. Inputs are validated via Pydantic and pagination bounds; ORM use avoids injection. Minor deduction: the valid API key 'test-key' is hardcoded in security.py with no environment/config source.",
+    "review_confidence": "All source and test files were read and the declared test command plus targeted single-test runs were executed, capturing concrete failure causes (UNIQUE constraint, assertion 80 vs 90). Remaining uncertainty is limited to untested runtime paths (e.g., the broken exception handlers), inferred rather than executed."
+  },
+  "instruction_failures": [
+    "README instructs `pytest` to run the suite, but it fails (10 failures) in a fresh checkout.",
+    "Default app uses an on-disk commerce.db in the working directory rather than a configurable/ephemeral store, weakening the fresh-workspace / production-minded expectation."
+  ],
+  "correctness_failures": [
+    "Global exception handlers (app.py:40-62) return tuples instead of Response objects; invalid for FastAPI/Starlette and will error when invoked.",
+    "adjust_stock on a nonexistent SKU raises ValueError that is not caught in the route and is routed to the broken value_error_handler (would 500 instead of a clean 400).",
+    "create_sku has no duplicate-key handling: a repeated SKU id raises an unhandled IntegrityError (500).",
+    "reserve() is non-atomic across two transactions; with_for_update() is a no-op under SQLite, so concurrent reservations could oversell stock."
+  ],
+  "execution_failures": [
+    "`PYTHONPATH=src python3 -m pytest -q` => 10 failed, 26 passed.",
+    "API tests fail with `sqlite3.IntegrityError: UNIQUE constraint failed: skus.id` due to shared on-disk DB and repeated SKU-001 creation.",
+    "Single API test in a clean directory passes (e.g., test_adjust_stock_success), confirming failures are isolation/order related rather than per-test logic."
+  ],
+  "test_gaps": [
+    "No per-test database isolation for API tests: module-level Repository() is never overridden via app.dependency_overrides, so tests are order-dependent and leave commerce.db on disk.",
+    "test_cleanup_expired_reservations asserts an incorrect expected value (90 vs actual 80).",
+    "No API-level test for expired-reservation confirm (410), unauthorized confirm/cancel/reservations specifically, or adjust_stock on a missing SKU (which would expose the broken handler)."
+  ],
+  "quality_notes": [
+    "OrderResponse duplicates every field of ReservationResponse with no added behavior.",
+    "Unused imports: timedelta and create_engine in models.py.",
+    "ErrorResponse Pydantic model is defined but never used (handlers emit raw dicts).",
+    "repository.get_reservations_by_sku is defined but never called.",
+    "README claims 'Production-ready error handling' which is contradicted by the broken global exception handlers and lack of duplicate/IntegrityError handling."
+  ],
+  "unnecessary_code_examples": [
+    "service.cleanup_expired_reservations is implemented but not exposed via any endpoint or background scheduler (only exercised by a test).",
+    "models.py imports timedelta and create_engine that are unused in that module.",
+    "ErrorResponse model is dead code."
+  ],
+  "security_safety_notes": [
+    "Mutating endpoints (/skus, /stock/adjust, /reservations*, /orders) all enforce X-API-Key via Depends(verify_api_key); /health is open by design.",
+    "Valid API key 'test-key' is hardcoded in security.py with no environment/config override; acceptable as a placeholder but should be externalized for production.",
+    "Inputs validated via Pydantic (length, ge/gt bounds) and pagination is clamped (page>=1, page_size 1-100); SQLAlchemy ORM avoids raw SQL injection.",
+    "No shell, network, or destructive operations beyond writing the local SQLite file."
+  ],
+  "file_evidence": [
+    {"path": "src/commerce_service/app.py", "note": "Module-level `repository = Repository()` (line 31) uses default on-disk DB; exception handlers (lines 40-62) return tuples instead of Response objects."},
+    {"path": "src/commerce_service/repository.py", "note": "Default db_url 'sqlite:///commerce.db' (line 11); with_for_update() (lines 44, 91) is a no-op under SQLite."},
+    {"path": "src/commerce_service/service.py", "note": "reserve() updates stock then inserts reservation in two separate transactions (lines 74-81); correct idempotency/expiration/state logic otherwise."},
+    {"path": "src/commerce_service/models.py", "note": "Unused imports timedelta and create_engine (lines 1, 6); OrderResponse duplicates ReservationResponse; ErrorResponse unused."},
+    {"path": "tests/test_api.py", "note": "Fixture builds TestClient(app) without overriding the repository dependency; multiple tests recreate SKU-001 against a shared on-disk DB."},
+    {"path": "tests/test_service.py", "note": "test_cleanup_expired_reservations asserts available_stock == 90 but actual computed value is 80 (line 169)."},
+    {"path": "src/commerce_service/security.py", "note": "verify_api_key enforces X-API-Key on mutations; valid key 'test-key' hardcoded (line 5)."}
+  ],
+  "commands_run": [
+    "find . -type f (project listing)",
+    "cat pytest.ini and __init__.py files; python3 --version (3.12.4); import check for fastapi/sqlalchemy/httpx/pytest (deps present)",
+    "rm -f commerce.db && PYTHONPATH=src python3 -m pytest -q  => 10 failed, 26 passed",
+    "PYTHONPATH=src python3 -m pytest tests/test_service.py::...::test_cleanup_expired_reservations  => assert 80 == 90",
+    "rm -f commerce.db && PYTHONPATH=src python3 -m pytest tests/test_api.py::TestSKUEndpoints::test_adjust_stock_success  => 1 passed (isolated)"
+  ],
+  "review_risk": "low — all source and test files were read and the declared test command plus targeted runs were executed with failures reproduced; the broken exception handlers were identified by inspection rather than an exercising request, so their exact HTTP behavior is inferred."
+}
+```

@@ -1,0 +1,152 @@
+All 40 tests pass. I verified two correctness bugs empirically (expired-reservation stock leak; unguarded `adjust_stock`). Here is the evaluation.
+
+```json
+{
+  "rubric_version": "benchmark-codegen-review-v1",
+  "score_scale": "0-100 per category",
+  "weights": {
+    "task_fulfillment": 0.20,
+    "functional_correctness": 0.25,
+    "executability": 0.15,
+    "test_quality": 0.15,
+    "code_quality": 0.10,
+    "minimality": 0.10,
+    "security_safety": 0.05
+  },
+  "task_fulfillment_score": 88,
+  "task_fulfillment_breakdown": {
+    "instruction_compliance": 88,
+    "required_artifacts": 92,
+    "feature_coverage": 90,
+    "constraint_adherence": 80
+  },
+  "functional_correctness_score": 72,
+  "functional_correctness_breakdown": {
+    "domain_invariants": 60,
+    "edge_case_behavior": 72,
+    "data_consistency": 65,
+    "error_semantics": 90
+  },
+  "executability_score": 91,
+  "executability_breakdown": {
+    "installability": 92,
+    "runtime_entrypoints": 92,
+    "command_result": 95,
+    "runtime_isolation": 85
+  },
+  "test_quality_score": 80,
+  "test_quality_breakdown": {
+    "required_test_coverage": 90,
+    "behavioral_assertions": 75,
+    "integration_realism": 62,
+    "repeatability": 92
+  },
+  "code_quality_score": 84,
+  "code_quality_breakdown": {
+    "readability": 88,
+    "maintainability": 78,
+    "boundary_design": 88,
+    "documentation_quality": 80
+  },
+  "minimality_score": 76,
+  "minimality_breakdown": {
+    "no_speculative_infrastructure": 85,
+    "no_dead_or_duplicate_code": 62,
+    "appropriate_abstractions": 85,
+    "dependency_minimality": 72
+  },
+  "security_safety_score": 88,
+  "security_safety_breakdown": {
+    "auth_enforcement": 95,
+    "secret_handling": 80,
+    "input_safety": 82,
+    "unsafe_operations": 95
+  },
+  "review_confidence_score": 92,
+  "review_confidence_breakdown": {
+    "inspection_depth": 95,
+    "command_evidence": 92,
+    "issue_specificity": 92,
+    "uncertainty_handling": 88
+  },
+  "weighted_components": {
+    "task_fulfillment": 17.6,
+    "functional_correctness": 18.0,
+    "executability": 13.7,
+    "test_quality": 12.0,
+    "code_quality": 8.4,
+    "minimality": 7.6,
+    "security_safety": 4.4
+  },
+  "weighted_total": 81.7,
+  "verdict": "good",
+  "key_findings": [
+    "Complete, coherent FastAPI+SQLAlchemy/SQLite project with clear layering (app/service/repository/models/security); all 40 tests pass under pytest.",
+    "Correctness bug: an expired reservation is marked cancelled in confirm_reservation (repository.py:135-138) WITHOUT decrementing sku.reserved_stock, so reserved stock leaks permanently. Verified empirically: after expiry+confirm, total=100/reserved=50/available=50 forever.",
+    "Correctness bug: adjust_stock has no guard, allowing total_stock to go negative and below reserved_stock. Verified: adjust(-200) on stock 100 with 80 reserved yields total_stock=-100, breaking the total>=reserved invariant.",
+    "tests/test_api.py re-declares the entire app inside the client fixture instead of importing the real app.py, so the production wiring (module-level Repository, route registration) is never exercised and the app code is duplicated.",
+    "Dead code / unused deps: python-dateutil declared but never imported; ErrorResponse model imported in app.py but unused; Repository.get_order unused; `select` and `event` imported in repository.py but unused.",
+    "with_for_update() is a no-op on SQLite, yet README claims 'Atomic operations prevent oversell and race conditions' — overstated; confirm+create_order also span two separate sessions/commits (non-atomic)."
+  ],
+  "score_rationale": {
+    "task_fulfillment": "All requested endpoints (SKU create/adjust, reservation create/confirm/cancel, paginated orders, health), the requested file layout, README, and tests are present and match the prompt. Deductions for committed runtime/build artifacts (commerce.db, egg-info) that work against a clean production-minded deliverable.",
+    "functional_correctness": "Idempotency (unique-key + IntegrityError fallback), insufficient-stock, state transitions, and HTTP error semantics are correct. But two real invariant bugs (expired reservations leak reserved stock; adjust_stock can drive total negative below reserved) plus non-atomic confirm/order creation and SQLite no-op locking pull this down.",
+    "executability": "Dependencies are pinned and plausible, the package imports cleanly, the uvicorn entrypoint is present, and `pytest tests/` returns 40 passed. Tests isolate via in-memory SQLite; minor deduction because the real app writes commerce.db into the cwd at import time.",
+    "test_quality": "Covers all required areas (happy path, insufficient stock, idempotency incl. no-double-reserve, expiration, auth/unauthorized, pagination, validation). Weakened by re-declaring the app in the fixture (real app.py untested) and by assertions that miss the actual stock-release-on-expiry behavior, so the expiry bug slips through.",
+    "code_quality": "Readable names, clean separation of concerns, consistent dict-mapping in the service layer. Maintainability suffers from the duplicated app definition in tests and split expiry handling; README overstates atomicity guarantees.",
+    "minimality": "No speculative queues/workers/migrations and abstractions are reasonable, but several concrete dead items: unused python-dateutil dependency, unused ErrorResponse import, unused get_order method, and unused select/event imports.",
+    "security_safety": "All mutating endpoints enforce the X-API-Key dependency (verified by unauthorized tests returning 401); ORM use avoids injection. Minor concerns: a 'dev-key' default secret fallback and lack of business-rule guarding on adjust_stock input."
+  },
+  "instruction_failures": [
+    "Committed runtime DB (commerce.db) and build metadata (src/commerce_service.egg-info/) ship in the workspace, contrary to a clean production-minded fresh-workspace deliverable.",
+    "README claims atomic oversell/race protection that the SQLite implementation does not actually provide (with_for_update is a no-op on SQLite)."
+  ],
+  "correctness_failures": [
+    "Expired reservation auto-cancel in repository.confirm_reservation (lines 135-138) does not refund sku.reserved_stock, permanently leaking reserved stock (verified empirically).",
+    "Reservations that expire and are never confirmed never release reserved stock at all (lazy expiration only triggers on confirm attempt, and even then does not refund).",
+    "adjust_stock allows arbitrary negative adjustments with no lower bound, producing negative total_stock and total_stock < reserved_stock (verified empirically).",
+    "confirm_reservation commits the reservation status change and then creates the order in a separate session/commit, so the two are not atomic."
+  ],
+  "execution_failures": [],
+  "test_gaps": [
+    "No test asserts that an expired reservation releases reserved stock (the existing expiry test only asserts the raised error), so the stock-leak bug is uncaught.",
+    "No test for adjust_stock going negative or below reserved stock.",
+    "API tests rebuild the app in-fixture and never import/exercise the real app.py wiring (module-level Repository, route registration).",
+    "No test that confirming twice avoids creating a duplicate order at the persistence level (only that the second confirm errors)."
+  ],
+  "quality_notes": [
+    "Service layer cleanly maps records to dicts and centralizes domain exceptions; app.py maps each to an appropriate HTTP status.",
+    "confirm_reservation service result includes order_id, but ReservationResponse omits it, so the order id is silently dropped from the HTTP response.",
+    "DeprecationWarnings throughout for datetime.utcnow() (104 warnings); not breaking but flagged by the runtime."
+  ],
+  "unnecessary_code_examples": [
+    "python-dateutil==2.8.2 dependency in pyproject.toml is never imported.",
+    "ErrorResponse model (models.py:68) imported into app.py but never referenced by any endpoint.",
+    "Repository.get_order (repository.py:200) is never called.",
+    "`select` and `event` imported in repository.py:2 but unused.",
+    "Committed src/commerce_service.egg-info/ build artifacts and a populated commerce.db file."
+  ],
+  "security_safety_notes": [
+    "All mutating endpoints depend on get_api_key_dependency; unauthorized requests return 401 (verified by tests). GET /orders is intentionally unauthenticated.",
+    "Default API key 'dev-key' is hardcoded as an env fallback in security.py:6 — acceptable for dev and documented, but a real default secret.",
+    "Pydantic validates request bodies and query bounds; SQLAlchemy ORM avoids SQL injection. No shell/network/file operations beyond the local SQLite file."
+  ],
+  "file_evidence": [
+    {"path": "src/commerce_service/repository.py", "note": "confirm_reservation (135-138) cancels expired reservation without decrementing reserved_stock — stock leak; with_for_update is a SQLite no-op; select/event imports unused."},
+    {"path": "src/commerce_service/service.py", "note": "adjust_stock (46-55) performs no lower-bound/invariant check; confirm_reservation (72-100) does confirm then create_order in separate repo calls/commits."},
+    {"path": "src/commerce_service/app.py", "note": "Clean route-to-exception mapping with correct status codes; imports unused ErrorResponse; module-level Repository() writes commerce.db to cwd."},
+    {"path": "tests/test_api.py", "note": "Rebuilds the full app inside the client fixture (30-106) rather than importing app.py, duplicating routes and leaving production wiring untested."},
+    {"path": "tests/test_service.py", "note": "Good coverage of idempotency/no-double-reserve and state transitions, but expiry test (98-110) only asserts the error, not stock release."},
+    {"path": "pyproject.toml", "note": "Pinned deps and src-layout packaging; declares python-dateutil which is never used."}
+  ],
+  "commands_run": [
+    "ls -la; find . -type f (excluding caches)",
+    "python3 --version; python3 -c import fastapi,sqlalchemy,httpx,pytest (deps present)",
+    "PYTHONPATH=src python3 -m pytest tests/ -q  → 40 passed, 104 warnings",
+    "PYTHONPATH=src python3 -c <repro> for expired-reservation stock leak (reserved stayed 50)",
+    "PYTHONPATH=src python3 -c <repro> for adjust_stock(-200) → total_stock=-100",
+    "grep for dateutil / ErrorResponse / get_order / event usage"
+  ],
+  "review_risk": "low — all source and tests were read, the full suite was run (40 passed), and the two main correctness bugs were reproduced directly; only multi-process concurrency behavior (claimed but SQLite-limited) was not load-tested."
+}
+```

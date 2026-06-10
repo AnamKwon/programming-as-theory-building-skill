@@ -1,0 +1,160 @@
+I've completed a thorough review: read all source and test files, ran the declared test command, and confirmed dead code/unused dependencies. Key finding — 12 of 33 tests fail, with the entire API integration test module broken due to an in-memory SQLite misconfiguration (no `StaticPool`/shared connection), plus one test containing broken query code. The order "orchestration" feature is a stub.
+
+```json
+{
+  "rubric_version": "benchmark-codegen-review-v1",
+  "score_scale": "0-100 per category",
+  "weights": {
+    "task_fulfillment": 0.20,
+    "functional_correctness": 0.25,
+    "executability": 0.15,
+    "test_quality": 0.15,
+    "code_quality": 0.10,
+    "minimality": 0.10,
+    "security_safety": 0.05
+  },
+  "task_fulfillment_score": 75,
+  "task_fulfillment_breakdown": {
+    "instruction_compliance": 72,
+    "required_artifacts": 90,
+    "feature_coverage": 65,
+    "constraint_adherence": 74
+  },
+  "functional_correctness_score": 70,
+  "functional_correctness_breakdown": {
+    "domain_invariants": 80,
+    "edge_case_behavior": 72,
+    "data_consistency": 65,
+    "error_semantics": 62
+  },
+  "executability_score": 66,
+  "executability_breakdown": {
+    "installability": 85,
+    "runtime_entrypoints": 88,
+    "command_result": 30,
+    "runtime_isolation": 60
+  },
+  "test_quality_score": 63,
+  "test_quality_breakdown": {
+    "required_test_coverage": 80,
+    "behavioral_assertions": 80,
+    "integration_realism": 45,
+    "repeatability": 45
+  },
+  "code_quality_score": 77,
+  "code_quality_breakdown": {
+    "readability": 85,
+    "maintainability": 72,
+    "boundary_design": 85,
+    "documentation_quality": 65
+  },
+  "minimality_score": 70,
+  "minimality_breakdown": {
+    "no_speculative_infrastructure": 80,
+    "no_dead_or_duplicate_code": 55,
+    "appropriate_abstractions": 80,
+    "dependency_minimality": 65
+  },
+  "security_safety_score": 84,
+  "security_safety_breakdown": {
+    "auth_enforcement": 90,
+    "secret_handling": 65,
+    "input_safety": 85,
+    "unsafe_operations": 95
+  },
+  "review_confidence_score": 90,
+  "review_confidence_breakdown": {
+    "inspection_depth": 92,
+    "command_evidence": 92,
+    "issue_specificity": 90,
+    "uncertainty_handling": 85
+  },
+  "weighted_components": {
+    "task_fulfillment": 15.0,
+    "functional_correctness": 17.5,
+    "executability": 9.9,
+    "test_quality": 9.5,
+    "code_quality": 7.7,
+    "minimality": 7.0,
+    "security_safety": 4.2
+  },
+  "weighted_total": 70.8,
+  "verdict": "mixed",
+  "score_rationale": {
+    "task_fulfillment": "All requested artifacts and a clean layered structure are present (pyproject.toml, README.md, src/commerce_service/*, tests/*). SKU/stock/reservation/auth/pagination features are implemented. However the headline 'order orchestration' feature (README.md:10, README.md:3) is a stub: orders carry no line items, no link to reservations, and no exposed state transitions, so feature_coverage and instruction_compliance are reduced. A stale commerce.db is left in the tree.",
+    "functional_correctness": "Service-layer invariants are sound and verified by passing tests: available/reserved stock tracking (repository.py:82-117), reservation state machine, expiry handling on confirm (service.py:88-93), and idempotent retry (service.py:40-44). Weaknesses: not-found errors return HTTP 400 for SKUs/reservations while only get_order returns 404 (app.py:55,83,137); reservation creation and stock reservation occur in two separate commits making the operation non-atomic (service.py:60-73); idempotent retry returns the original reservation without validating that sku_id/quantity match the new request; an undocumented 'failed' status is set at service.py:72 (model comment lists only pending/confirmed/cancelled/expired, models.py:40).",
+    "executability": "Dependencies are pinned and packaging is plausible; app:app entrypoint and DATABASE_URL default are usable. But the declared command `pytest tests/` fails: 12 of 33 tests fail. The whole tests/test_api.py module errors with 'no such table' / cross-thread errors because the in-memory SQLite engine (test_api.py:9) lacks StaticPool/shared-connection config, so the TestClient request thread sees a different empty DB. App import also writes commerce.db into CWD.",
+    "test_quality": "Intended coverage spans all required areas (insufficient stock, idempotency, expiration, auth, pagination) and assertions check real domain state (stock quantities, statuses, counts) rather than only status codes. However the entire API integration layer does not actually run (11 failures), undermining integration realism and repeatability, and test_service.py:40-42 contains broken throwaway query code that raises ArgumentError.",
+    "code_quality": "Readable, well-named, with clean repository/service/schema/security/app boundaries. Deductions: incomplete order orchestration with dead repo methods, and the README overclaims ('Production Ready', 'Orchestrate multi-item orders') relative to what is implemented.",
+    "minimality": "No speculative queues/workers/CLIs. But repository.get_active_reservations (repository.py:145) and repository.update_order_status (repository.py:134) are never called (dead code, the latter meaning order state transitions are never wired), and the python-dateutil dependency (pyproject.toml:15) is never imported.",
+    "security_safety": "All mutating endpoints depend on get_api_key (app.py:49,61,73,89,101,112) and read endpoints are appropriately open. ORM use avoids SQL injection and Pydantic validates inputs (price gt 0, quantity gt 0, pagination bounds at app.py:124). The API key set is hardcoded in source (security.py:4) rather than read from config/env, lowering secret_handling; it is a placeholder, not a real secret.",
+    "review_confidence": "All six source modules and both test files were read, the test command was installed and executed, failures were reproduced and root-caused, and dead code / unused deps were confirmed via grep. Findings cite concrete file:line references."
+  },
+  "key_findings": [
+    "12/33 tests fail under `pytest tests/`: all of tests/test_api.py errors with 'no such table: skus' because the module-level in-memory SQLite engine (test_api.py:9) has no StaticPool/shared connection, so request threads get a separate empty DB.",
+    "tests/test_service.py:40-42 (test_adjust_stock_increase) contains broken query code that raises sqlalchemy ArgumentError; the test fails even though the underlying behavior works.",
+    "Order 'orchestration' is a stub: OrderModel has no line items, no reservation linkage, and no exposed state transitions; repository.update_order_status is never called — contradicting README claims of multi-item order orchestration.",
+    "Inconsistent error semantics: SKU-not-found and reservation-not-found return HTTP 400, while only order-not-found returns 404 (app.py:55,83,137).",
+    "Dead code and an unused dependency: repository.get_active_reservations, repository.update_order_status, and the python-dateutil dependency are unused.",
+    "Reservation creation is non-atomic across two commits (service.py:60-73) and sets an undocumented 'failed' status (service.py:72)."
+  ],
+  "instruction_failures": [
+    "README advertises multi-item order orchestration and state transitions (README.md:3,10) but orders are empty shells with only a 'pending' status and no items or transitions.",
+    "Declared test command `pytest tests/` does not pass (12 failures).",
+    "Stale commerce.db artifact left committed in the workspace."
+  ],
+  "correctness_failures": [
+    "Not-found responses use HTTP 400 for SKU and reservation lookups instead of 404 (app.py:55,83 vs app.py:137).",
+    "create_reservation returns the original reservation on idempotency-key reuse without validating sku_id/quantity match the new request (service.py:40-44).",
+    "Reservation persisted and stock reserved in separate commits; a failure between them leaves a reservation in undocumented 'failed' state (service.py:60-73).",
+    "Idempotency key whose reservation has expired raises 'Reservation has expired' forever, so that key can never be reused (service.py:42-43)."
+  ],
+  "execution_failures": [
+    "tests/test_api.py: 11 tests fail with sqlalchemy OperationalError 'no such table' and cross-thread ProgrammingError due to in-memory SQLite engine without StaticPool/check_same_thread.",
+    "tests/test_service.py::test_adjust_stock_increase fails with ArgumentError from malformed query code (lines 40-42).",
+    "App import executes Base.metadata.create_all and creates commerce.db in the current working directory (app.py:18-23)."
+  ],
+  "test_gaps": [
+    "No passing API-level test for unauthorized mutation actually exercises a protected DB path because the API suite cannot run.",
+    "No test covers order state transitions (the feature is absent).",
+    "No test for idempotency-key reuse with a mismatched payload.",
+    "No test asserts the HTTP status code for reservation/SKU not-found (only get_order 404 is tested)."
+  ],
+  "quality_notes": [
+    "Clean separation across models/repository/service/security/app modules.",
+    "README claims 'Production Ready' and multi-item orchestration that the code does not back up.",
+    "Service-layer logic is readable and the reservation state machine is easy to follow."
+  ],
+  "unnecessary_code_examples": [
+    "repository.py:145 get_active_reservations — defined but never called.",
+    "repository.py:134 update_order_status — defined but never called; order transitions never wired.",
+    "pyproject.toml:15 python-dateutil — declared dependency never imported.",
+    "tests/test_service.py:40-42 — broken, unused query expressions that raise at runtime."
+  ],
+  "security_safety_notes": [
+    "All mutating endpoints enforce the X-API-Key dependency (app.py:49,61,73,89,101,112); read endpoints are intentionally open.",
+    "API key set hardcoded in security.py:4 rather than sourced from env/config; placeholder value, no real secret leaked.",
+    "Inputs validated via Pydantic (price>0, quantity>0) and pagination bounds checked (app.py:124); ORM avoids SQL injection.",
+    "No shell, network, or destructive operations."
+  ],
+  "file_evidence": [
+    {"path": "tests/test_api.py", "note": "Line 9 creates a single in-memory SQLite engine without StaticPool/check_same_thread; all 11 endpoint tests fail with 'no such table'/cross-thread errors."},
+    {"path": "tests/test_service.py", "note": "Lines 40-42 contain malformed queries (Base.metadata.tables, Base.registry.mapped_class) that raise ArgumentError; test fails."},
+    {"path": "src/commerce_service/service.py", "note": "create_order (121-124) produces an empty order with no items/transitions; non-atomic reservation+reserve at 60-73; 'failed' status at 72 not in documented enum."},
+    {"path": "src/commerce_service/repository.py", "note": "update_order_status (134) and get_active_reservations (145) are dead code; order state transitions never invoked."},
+    {"path": "src/commerce_service/app.py", "note": "Not-found returns 400 at 55/83 but 404 at 137 (inconsistent); create_all + commerce.db written at import (18-23)."},
+    {"path": "src/commerce_service/security.py", "note": "VALID_API_KEYS hardcoded {'test-key-123'} in source rather than from env."},
+    {"path": "pyproject.toml", "note": "python-dateutil==2.8.2 declared (line 15) but never imported anywhere."},
+    {"path": "commerce.db", "note": "Empty SQLite file committed into the workspace; ambient runtime artifact."}
+  ],
+  "commands_run": [
+    "find . -type f (project file listing)",
+    "python3 -c 'import fastapi, sqlalchemy, pydantic, httpx, pytest' (deps available)",
+    "sqlite3 inspection of commerce.db (4 tables, 0 rows)",
+    "pip install -e . && PYTHONPATH=src python3 -m pytest tests/ -q (result: 12 failed, 21 passed)",
+    "targeted pytest on failing tests to capture error types (no such table, cross-thread, ArgumentError)",
+    "grep for dateutil / get_active_reservations / update_order_status usage"
+  ],
+  "review_risk": "Low: all source and test files were read, dependencies were available, the declared test command was run and failures reproduced and root-caused, and dead code/unused deps were confirmed by grep; concurrency/race behavior was reasoned about rather than load-tested."
+}
+```

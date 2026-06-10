@@ -1,0 +1,164 @@
+I have thorough evidence now. Tests: 30/32 pass, 2 fail. Confirmed bugs: `ne=0` ignored (delta=0 accepted), duplicate SKU → 500, negative stock allowed, unused `pydantic-settings` dep, unused `ErrorResponse` import. Here is my evaluation.
+
+```json
+{
+  "rubric_version": "benchmark-codegen-review-v1",
+  "score_scale": "0-100 per category",
+  "weights": {
+    "task_fulfillment": 0.20,
+    "functional_correctness": 0.25,
+    "executability": 0.15,
+    "test_quality": 0.15,
+    "code_quality": 0.10,
+    "minimality": 0.10,
+    "security_safety": 0.05
+  },
+  "task_fulfillment_score": 84,
+  "task_fulfillment_breakdown": {
+    "instruction_compliance": 82,
+    "required_artifacts": 95,
+    "feature_coverage": 88,
+    "constraint_adherence": 72
+  },
+  "functional_correctness_score": 67,
+  "functional_correctness_breakdown": {
+    "domain_invariants": 70,
+    "edge_case_behavior": 68,
+    "data_consistency": 68,
+    "error_semantics": 62
+  },
+  "executability_score": 82,
+  "executability_breakdown": {
+    "installability": 90,
+    "runtime_entrypoints": 88,
+    "command_result": 62,
+    "runtime_isolation": 86
+  },
+  "test_quality_score": 79,
+  "test_quality_breakdown": {
+    "required_test_coverage": 80,
+    "behavioral_assertions": 84,
+    "integration_realism": 86,
+    "repeatability": 66
+  },
+  "code_quality_score": 85,
+  "code_quality_breakdown": {
+    "readability": 88,
+    "maintainability": 80,
+    "boundary_design": 88,
+    "documentation_quality": 85
+  },
+  "minimality_score": 79,
+  "minimality_breakdown": {
+    "no_speculative_infrastructure": 90,
+    "no_dead_or_duplicate_code": 70,
+    "appropriate_abstractions": 85,
+    "dependency_minimality": 72
+  },
+  "security_safety_score": 84,
+  "security_safety_breakdown": {
+    "auth_enforcement": 84,
+    "secret_handling": 80,
+    "input_safety": 76,
+    "unsafe_operations": 95
+  },
+  "review_confidence_score": 90,
+  "review_confidence_breakdown": {
+    "inspection_depth": 92,
+    "command_evidence": 92,
+    "issue_specificity": 90,
+    "uncertainty_handling": 85
+  },
+  "weighted_components": {
+    "task_fulfillment": 16.8,
+    "functional_correctness": 16.8,
+    "executability": 12.3,
+    "test_quality": 11.9,
+    "code_quality": 8.5,
+    "minimality": 7.9,
+    "security_safety": 4.2
+  },
+  "weighted_total": 78.3,
+  "verdict": "good",
+  "key_findings": [
+    "Clean layered architecture (app/service/repository/security/models) with all requested endpoints implemented: SKU create/adjust, reservation create/confirm/cancel, paginated orders, idempotency, and 5-minute expiration.",
+    "2 of 32 tests fail: test_create_sku_missing_api_key and test_unauthorized_mutation assert 403, but a missing required Header yields FastAPI 422 (verified via pytest run).",
+    "Auth semantics are off: missing X-API-Key returns 422 (validation) rather than the 401 the code's own HTTPException intends; the key is still required so requests are rejected.",
+    "StockAdjustmentRequest uses Field(..., ne=0), which is not a Pydantic v2 constraint and is silently ignored (deprecation warning); delta=0 is accepted (verified: POST adjust-stock delta=0 -> 200).",
+    "Duplicate SKU creation raises an uncaught sqlite3.IntegrityError and returns 500 with an empty body (verified: second POST /skus same id -> 500).",
+    "No lower bound on stock: adjust-stock with a large negative delta drives stock negative (verified: stock=-994).",
+    "Generic Exception handler returns a plain dict instead of a Response, so unhandled errors surface as broken 500s rather than the intended JSON error body.",
+    "Reservation/decrement is non-atomic across separate connections (check-then-write), and expired reservations never reclaim stock."
+  ],
+  "score_rationale": {
+    "task_fulfillment": "All requested artifacts and the full API surface are present and documented (README.md, src/commerce_service/*, tests/*). Idempotency, expiration, pagination, and API-key gating are all implemented. Production-mindedness is dented by the duplicate-SKU 500, negative-stock allowance, and a broken global exception handler.",
+    "functional_correctness": "Core invariants hold for the happy paths: stock is checked before reserving (service.py:68), idempotency returns the existing reservation (service.py:61-65), expiration is enforced (service.py:101-106), and status transitions are guarded (service.py:95-98,136-144). But delta=0 passes (models.py:27 ne is ignored), adjust-stock has no floor so stock goes negative (repository.py:108), duplicate SKU create is uncaught (repository.py:76-79), error codes are inconsistent (missing key -> 422 not 401), and reserve is non-atomic. Expired reservations also leak stock.",
+    "executability": "pyproject.toml pins complete deps with a dev extra; the app imports and is runnable via uvicorn, and get_service has a usable default. Tests are isolated with temp SQLite DBs and no parent/ambient reads. Command result is the main drag: 2/32 tests fail on the auth status-code mismatch.",
+    "test_quality": "Coverage spans happy paths, insufficient stock, idempotency, expiration (service-level, via manual expiry at test_service.py:145-166), cancel/confirm transitions, and pagination, with genuine behavioral assertions (stock returned, idempotent quantity preserved, statuses). Realistic SQLite + TestClient integration. Repeatability suffers because the two auth tests assert the wrong status (403) and fail on every run, indicating the tests were not run/validated.",
+    "code_quality": "Readable, well-named, docstringed modules with coherent boundaries between data access, business logic, schemas, and security. Minor issues: redundant create_order(status=completed) followed by update_order_status(completed) (service.py:113-123), and a module-level mutable singleton (_service).",
+    "minimality": "No speculative queues/workers/migrations. However pydantic-settings is declared but never imported/used (pyproject.toml:14), ErrorResponse is imported in app.py:6 but unused, service.get_order is exercised only by tests with no API route, and the create-then-update order write is duplicative.",
+    "security_safety": "All mutating endpoints depend on verify_api_key, SQL is fully parameterized (no injection), and there are no shell/file/network side effects or hardcoded secrets (accept-any-non-empty-key is documented as demo behavior). Input validation is mostly via Pydantic, but the ignored ne=0 and the missing negative-stock guard are input-safety/data-integrity gaps.",
+    "review_confidence": "All 6 source files and both test files were read; the declared test command was run (2 failed, 30 passed), and the ne=0, duplicate-SKU 500, and negative-stock bugs were each reproduced with targeted probes. Findings cite concrete files/lines."
+  },
+  "instruction_failures": [
+    "Missing-API-key responses return HTTP 422 (FastAPI required-header validation) rather than the 401 the security module's HTTPException intends, an inconsistent auth contract.",
+    "StockAdjustmentRequest's intended 'delta must be non-zero' rule is not enforced because Field(ne=0) is not valid in Pydantic v2 (models.py:27)."
+  ],
+  "correctness_failures": [
+    "POST /skus with an existing sku_id raises an uncaught sqlite3.IntegrityError -> HTTP 500 with empty body (repository.py:76-79, only ValueError is caught in app.py:62).",
+    "adjust_stock applies stock = stock + delta with no lower bound, allowing negative stock (verified stock=-994; repository.py:108, service.py:42-46).",
+    "POST /skus/{id}/adjust-stock with delta=0 returns 200 instead of rejecting (ne=0 ignored; models.py:27).",
+    "The global @app.exception_handler(Exception) returns a dict rather than a Response, so any unhandled error produces a malformed 500.",
+    "Reservation creation is non-atomic: get_sku then adjust_stock then create_reservation run on separate connections, so concurrent requests can oversell stock (service.py:56-81).",
+    "Expired reservations never return their held stock; confirm raises 410 but the decremented stock is not reclaimed and there is no expiry sweep."
+  ],
+  "execution_failures": [
+    "pytest: 2 failed, 30 passed — tests/test_api.py::TestSKUEndpoints::test_create_sku_missing_api_key and tests/test_api.py::TestOrderEndpoints::test_unauthorized_mutation (assert 403, actual 422).",
+    "PydanticDeprecatedSince20 warning emitted for the unsupported 'ne' Field kwarg in models.py."
+  ],
+  "test_gaps": [
+    "No API-level test for the expiration path; expiration is only covered at the service layer (test_service.py:145).",
+    "The auth tests assert an incorrect status code (403) and were evidently never run, so they do not actually validate auth rejection.",
+    "No test for duplicate SKU creation, negative-stock adjustment, delta=0 rejection, or confirming after cancel.",
+    "No test asserting that an expired reservation's stock is (or is not) reclaimed.",
+    "No concurrency/atomicity test for the reserve check-then-decrement race."
+  ],
+  "quality_notes": [
+    "service.confirm_reservation creates an order already marked 'completed' then immediately calls update_order_status to set completed_at — the two-step write is redundant (service.py:113-123).",
+    "Module-level mutable singleton _service with a global statement (app.py:30-39) is functional but harder to reason about than an app-state/lifespan approach.",
+    "README claims align with behavior, but it omits that any non-empty API key is accepted and that missing keys yield 422.",
+    "list_orders clamps limit in the service (service.py:165) while the route also enforces ge/le via Query — duplicated validation, and the service clamp is unreachable from the API."
+  ],
+  "unnecessary_code_examples": [
+    "pydantic-settings declared in pyproject.toml:14 but never imported or used.",
+    "ErrorResponse model imported in app.py:6 (and defined in models.py:69) but never referenced.",
+    "CommerceService.get_order / Repository.get_order have no API route; used only by tests.",
+    "Redundant create_order(initial_status='completed') + update_order_status(order_id,'completed') in service.confirm_reservation."
+  ],
+  "security_safety_notes": [
+    "All mutating endpoints enforce Depends(verify_api_key) (app.py:51,74,97,127,167); GET /orders is intentionally unauthenticated.",
+    "No hardcoded secrets; verify_api_key accepts any non-empty key, explicitly documented as demo behavior (security.py:9-11).",
+    "SQL queries are fully parameterized — no injection vector observed.",
+    "Input-safety gaps: ignored ne=0 constraint and missing negative-stock floor can corrupt inventory state.",
+    "No unsafe shell/file/network/destructive operations."
+  ],
+  "file_evidence": [
+    {"path": "tests/test_api.py", "note": "Lines 62-68 and 273-279 assert 403 for missing API key; actual response is 422, causing the only 2 test failures."},
+    {"path": "src/commerce_service/models.py", "note": "Line 27 StockAdjustmentRequest uses Field(..., ne=0) — not a Pydantic v2 constraint; silently ignored so delta=0 is accepted."},
+    {"path": "src/commerce_service/repository.py", "note": "create_sku (76-79) does a bare INSERT with no duplicate handling -> IntegrityError; adjust_stock (108) has no lower bound, allowing negative stock."},
+    {"path": "src/commerce_service/app.py", "note": "exception_handler (213-219) returns a dict not a Response; ErrorResponse imported (6) but unused; only ValueError caught around create_sku (62)."},
+    {"path": "src/commerce_service/service.py", "note": "Reserve path (56-81) is non-atomic across connections; confirm (113-123) double-writes order status; expired confirm (101-106) does not reclaim stock."},
+    {"path": "src/commerce_service/security.py", "note": "verify_api_key intends 401 for empty key, but missing required Header is rejected by FastAPI validation as 422 before this runs."},
+    {"path": "pyproject.toml", "note": "Line 14 declares pydantic-settings which is never used anywhere in src or tests."},
+    {"path": "tests/test_service.py", "note": "Strong service-level coverage incl. expiration via manual expiry (145-166), idempotency quantity assertion (95), and cancel returns-stock (104-112)."}
+  ],
+  "commands_run": [
+    "find . -type f (project file listing)",
+    "python3 --version; import fastapi/pydantic/httpx/pytest version checks (fastapi 0.109.0, pydantic 2.5.3, httpx 0.25.2, pytest 7.4.3)",
+    "PYTHONPATH=src python3 -m pytest tests/ -q  => 2 failed, 30 passed, 1 warning",
+    "Inline TestClient probe: delta=0 -> 200; duplicate SKU -> 500 empty body; adjust -999 -> stock -994",
+    "grep -rn for pydantic_settings/BaseSettings/ErrorResponse/get_order usages"
+  ],
+  "review_risk": "Low: all source and test files were read, the declared pytest command was run, and the three key bugs were reproduced; dependency versions installed differ slightly from the pinned ones (fastapi 0.109.0 vs 0.104.1, pytest 7.4.3 matched), but the auth 422 behavior and other findings are version-stable in FastAPI/Pydantic v2."
+}
+```

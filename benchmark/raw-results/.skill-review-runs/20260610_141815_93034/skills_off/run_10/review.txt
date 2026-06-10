@@ -1,0 +1,158 @@
+Code review complete. I inspected all source and test files, installed dependencies in a fresh venv, ran the declared test command (`pytest tests/`), and smoke-tested the live API. Key finding: the **application code works end-to-end**, but the **test suite is largely broken** (15 failed, 16 passed, 4 errors) due to a threading bug in the API test fixture, and there are real domain gaps (time-based expiration is never enforced on confirm; negative quantities corrupt stock).
+
+```json
+{
+  "rubric_version": "benchmark-codegen-review-v1",
+  "score_scale": "0-100 per category",
+  "weights": {
+    "task_fulfillment": 0.20,
+    "functional_correctness": 0.25,
+    "executability": 0.15,
+    "test_quality": 0.15,
+    "code_quality": 0.10,
+    "minimality": 0.10,
+    "security_safety": 0.05
+  },
+  "task_fulfillment_score": 79,
+  "task_fulfillment_breakdown": {
+    "instruction_compliance": 78,
+    "required_artifacts": 90,
+    "feature_coverage": 75,
+    "constraint_adherence": 72
+  },
+  "functional_correctness_score": 72,
+  "functional_correctness_breakdown": {
+    "domain_invariants": 62,
+    "edge_case_behavior": 65,
+    "data_consistency": 78,
+    "error_semantics": 82
+  },
+  "executability_score": 65,
+  "executability_breakdown": {
+    "installability": 90,
+    "runtime_entrypoints": 70,
+    "command_result": 20,
+    "runtime_isolation": 80
+  },
+  "test_quality_score": 43,
+  "test_quality_breakdown": {
+    "required_test_coverage": 45,
+    "behavioral_assertions": 50,
+    "integration_realism": 30,
+    "repeatability": 45
+  },
+  "code_quality_score": 81,
+  "code_quality_breakdown": {
+    "readability": 85,
+    "maintainability": 80,
+    "boundary_design": 85,
+    "documentation_quality": 72
+  },
+  "minimality_score": 78,
+  "minimality_breakdown": {
+    "no_speculative_infrastructure": 88,
+    "no_dead_or_duplicate_code": 62,
+    "appropriate_abstractions": 82,
+    "dependency_minimality": 80
+  },
+  "security_safety_score": 74,
+  "security_safety_breakdown": {
+    "auth_enforcement": 90,
+    "secret_handling": 62,
+    "input_safety": 55,
+    "unsafe_operations": 90
+  },
+  "review_confidence_score": 91,
+  "review_confidence_breakdown": {
+    "inspection_depth": 95,
+    "command_evidence": 92,
+    "issue_specificity": 90,
+    "uncertainty_handling": 88
+  },
+  "weighted_components": {
+    "task_fulfillment": 15.8,
+    "functional_correctness": 18.0,
+    "executability": 9.8,
+    "test_quality": 6.5,
+    "code_quality": 8.1,
+    "minimality": 7.8,
+    "security_safety": 3.7
+  },
+  "weighted_total": 69.6,
+  "verdict": "mixed",
+  "key_findings": [
+    "Application code is correct end-to-end: a manual TestClient smoke run against the default file DB produced sku=200, confirm='confirmed', orders.total=1, insufficient=409, noauth=403, confirm-missing=404.",
+    "The declared test command `pytest tests/` FAILS: 15 failed, 16 passed, 4 errors. The API test suite is fundamentally broken.",
+    "Root cause of API test failures: the `db_session` fixture (tests/test_api.py:11-17) creates an in-memory SQLite engine with no `check_same_thread=False` / shared pool; TestClient runs sync endpoints on a worker thread, raising `sqlite3.ProgrammingError: SQLite objects created in a thread can only be used in that same thread`.",
+    "Two service tests fail on regex: `match=\"SKU not found\"` (tests/test_service.py:47,70) cannot match the actual message \"SKU SKU-MISSING not found\" produced in service.py:39,61.",
+    "Time-based expiration is not enforced on the confirm path: confirm_reservation (service.py:82-106) only checks `state == EXPIRED`, never `expires_at <= now`, and nothing ever calls `expire_pending_reservations`, so a reservation past TTL still confirms successfully.",
+    "Negative/zero quantities are unvalidated: `create_reservation` with quantity<=0 passes the stock check and calls `update_sku_stock(-quantity)`, which INCREASES stock (service.py:62-69) — a stock-invariant violation."
+  ],
+  "score_rationale": {
+    "task_fulfillment": "All requested files, layering, and endpoints exist with clean structure. Deductions: README run command is wrong, expiration is only partially implemented, and 'production-minded' constraints are weakly met (default secret, non-atomic writes, missing input bounds).",
+    "functional_correctness": "Core flows (reserve→confirm→order, cancel, idempotency, insufficient-stock, auth, pagination) are correct as verified by the smoke run. Subtracted for the unenforced time-based expiration on confirm and the negative-quantity stock corruption; error-status mapping is otherwise good.",
+    "executability": "Installs cleanly and the app runs; but the declared `pytest tests/` command fails massively (command_result=20), and the README's `uvicorn src.commerce_service.app:app` path is wrong for the installed `commerce_service` package (src layout, no src/__init__.py).",
+    "test_quality": "Test intent covers the required categories, but the entire API integration layer is non-functional due to the threading fixture bug, two service tests fail on sloppy regex, and `expire_pending_reservations` is never actually invoked by any test (test_expire_pending_reservations manually mutates state instead).",
+    "code_quality": "Readable, well-separated modules (models/repository/service/security/app) with invariants localized in the service. Minor: README run command bug, and `create_sku` accepts an untyped `dict` while a `SKUCreate` schema sits unused.",
+    "minimality": "No speculative queues/workers/CLIs. Deductions for dead code: unused `SKUCreate` model, unused `get_order` service+repo methods (no endpoint), unused `create_engine`/`Session` imports in models.py, and `pytest-asyncio` declared but unused.",
+    "security_safety": "All mutating endpoints require the API-key dependency. Deductions: a hardcoded fallback key 'test-key-change-in-production' lets auth pass when the env var is unset, and untrusted inputs (negative stock/quantity, untyped sku dict) are not bounded.",
+    "review_confidence": "All 11 files read; dependencies installed; full test suite executed with captured failures; live API smoke-tested. Remaining uncertainty is low and limited to concurrency behavior under a real WSGI/ASGI server."
+  },
+  "instruction_failures": [
+    "README documents `uvicorn src.commerce_service.app:app` but the installed package is `commerce_service` (src layout); the documented entrypoint will not import as written.",
+    "Expiration is requested but only half-implemented: no endpoint or scheduler invokes expiry, and the confirm path ignores `expires_at`."
+  ],
+  "correctness_failures": [
+    "confirm_reservation (service.py:82-106) does not reject reservations whose `expires_at` has passed; it only checks the `state` field, which is never auto-set to EXPIRED.",
+    "create_reservation with quantity <= 0 bypasses the stock check and increases stock via update_sku_stock(-quantity) (service.py:62-69); ReservationCreate.quantity has no ge=1 constraint (models.py:64-67).",
+    "adjust_stock and create_sku allow negative stock with no floor guard (repository.py:22-29; models.py:49-51).",
+    "Idempotent replay returns the existing reservation even if the new request's sku_id/quantity differ, with no conflict signal (service.py:49-56)."
+  ],
+  "execution_failures": [
+    "`pytest tests/` => 15 failed, 16 passed, 4 errors.",
+    "tests/test_api.py:11-17 — in-memory SQLite session shared across threads raises sqlite3.ProgrammingError under TestClient; nearly all API tests fail or error.",
+    "tests/test_service.py:47 and :70 — pytest.raises match='SKU not found' does not match actual message 'SKU <id> not found'."
+  ],
+  "test_gaps": [
+    "No working API-level integration tests (the entire test_api.py suite is broken by the fixture threading bug).",
+    "`expire_pending_reservations` is never exercised; test_expire_pending_reservations (test_service.py:131-143) hand-mutates state and stock instead of calling the function.",
+    "No test for confirming a time-expired (but still PENDING-state) reservation — the actual expiration invariant gap.",
+    "No test for negative/zero quantity reservations or negative stock adjustments.",
+    "No test for canceling an already-cancelled reservation or confirming a cancelled one (state-transition edges)."
+  ],
+  "quality_notes": [
+    "create_sku endpoint (app.py:40-63) takes an untyped `dict` and does manual validation while the rest of the API uses Pydantic models; the existing SKUCreate schema is the natural fit and is unused.",
+    "Broad `except Exception -> 400` blocks in every endpoint can mask unexpected server errors (e.g. DB IntegrityError) as client 400s.",
+    "OrderModel.state reuses the ReservationState enum (models.py:44, repository.py:93), conflating two state machines."
+  ],
+  "unnecessary_code_examples": [
+    "models.py:3-4 import `create_engine` and `Session` but neither is used in models.py.",
+    "models.py:49-51 `SKUCreate` Pydantic model is defined but never used (create_sku takes a raw dict instead).",
+    "service.py:130-134 `get_order` and repository.py:100-103 `get_order` are unused — there is no GET /orders/{id} endpoint.",
+    "pyproject.toml:20 declares `pytest-asyncio` but there are no async tests."
+  ],
+  "security_safety_notes": [
+    "security.py:14 falls back to a hardcoded default key 'test-key-change-in-production', so auth silently passes with a publicly-known key when COMMERCE_API_KEY is unset.",
+    "Untyped/unbounded inputs: SKUCreate.stock_available and ReservationCreate.quantity have no non-negative constraints, enabling stock-integrity corruption.",
+    "GET /orders is unauthenticated (acceptable for a read endpoint, but worth noting).",
+    "No unsafe shell/network/file operations; only writes ./commerce.db in CWD by default."
+  ],
+  "file_evidence": [
+    {"path": "tests/test_api.py", "note": "Lines 11-17: in-memory SQLite fixture lacks check_same_thread/shared pool; causes thread-mismatch ProgrammingError under TestClient -> 13 failed + 4 errored API tests."},
+    {"path": "tests/test_service.py", "note": "Lines 47 & 70: match='SKU not found' fails against actual message 'SKU <id> not found' -> 2 failing tests; lines 131-143 never call expire_pending_reservations."},
+    {"path": "src/commerce_service/service.py", "note": "Lines 82-106: confirm ignores expires_at; lines 62-69: negative quantity inflates stock; lines 139-149: expire function exists but is never invoked by app or tests."},
+    {"path": "src/commerce_service/app.py", "note": "Lines 40-63: create_sku uses raw dict + manual validation while SKUCreate schema goes unused; broad except->400 across endpoints."},
+    {"path": "src/commerce_service/security.py", "note": "Line 14: hardcoded default API key fallback 'test-key-change-in-production'."},
+    {"path": "src/commerce_service/models.py", "note": "Lines 3-4 dead imports (create_engine, Session); lines 49-51 unused SKUCreate model."},
+    {"path": "README.md", "note": "Line 24: uvicorn src.commerce_service.app:app is the wrong entrypoint for the installed commerce_service package."}
+  ],
+  "commands_run": [
+    "find . -type f (project file listing)",
+    "python3 -m venv .venv && .venv/bin/pip install -e '.[dev]' (clean install succeeded)",
+    ".venv/bin/python -m pytest tests/ -q => 15 failed, 16 passed, 4 errors",
+    ".venv/bin/python -m pytest tests/test_api.py::test_create_sku_success (isolated debug: sqlite3.ProgrammingError thread mismatch)",
+    "COMMERCE_API_KEY=k .venv/bin/python -c '<TestClient smoke test against default file DB>' => sku=200, confirm=confirmed, orders.total=1, insufficient=409, noauth=403, confirm-missing=404"
+  ],
+  "review_risk": "low — all files were read, the full suite was executed with captured failures, and the live API was smoke-tested; residual uncertainty is limited to concurrency behavior under a production ASGI server (not exercised)."
+}
+```

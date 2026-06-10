@@ -1,0 +1,158 @@
+I have enough evidence. Both suspected bugs are confirmed, and the API test suite is broken. Here is the evaluation.
+
+```json
+{
+  "rubric_version": "benchmark-codegen-review-v1",
+  "score_scale": "0-100 per category",
+  "weights": {
+    "task_fulfillment": 0.20,
+    "functional_correctness": 0.25,
+    "executability": 0.15,
+    "test_quality": 0.15,
+    "code_quality": 0.10,
+    "minimality": 0.10,
+    "security_safety": 0.05
+  },
+  "task_fulfillment_score": 82,
+  "task_fulfillment_breakdown": {
+    "instruction_compliance": 78,
+    "required_artifacts": 90,
+    "feature_coverage": 88,
+    "constraint_adherence": 72
+  },
+  "functional_correctness_score": 63,
+  "functional_correctness_breakdown": {
+    "domain_invariants": 58,
+    "edge_case_behavior": 68,
+    "data_consistency": 52,
+    "error_semantics": 72
+  },
+  "executability_score": 70,
+  "executability_breakdown": {
+    "installability": 85,
+    "runtime_entrypoints": 88,
+    "command_result": 35,
+    "runtime_isolation": 72
+  },
+  "test_quality_score": 65,
+  "test_quality_breakdown": {
+    "required_test_coverage": 88,
+    "behavioral_assertions": 78,
+    "integration_realism": 50,
+    "repeatability": 45
+  },
+  "code_quality_score": 82,
+  "code_quality_breakdown": {
+    "readability": 88,
+    "maintainability": 78,
+    "boundary_design": 88,
+    "documentation_quality": 74
+  },
+  "minimality_score": 82,
+  "minimality_breakdown": {
+    "no_speculative_infrastructure": 90,
+    "no_dead_or_duplicate_code": 80,
+    "appropriate_abstractions": 85,
+    "dependency_minimality": 72
+  },
+  "security_safety_score": 83,
+  "security_safety_breakdown": {
+    "auth_enforcement": 88,
+    "secret_handling": 65,
+    "input_safety": 85,
+    "unsafe_operations": 95
+  },
+  "review_confidence_score": 91,
+  "review_confidence_breakdown": {
+    "inspection_depth": 92,
+    "command_evidence": 92,
+    "issue_specificity": 90,
+    "uncertainty_handling": 88
+  },
+  "weighted_components": {
+    "task_fulfillment": 16.4,
+    "functional_correctness": 15.8,
+    "executability": 10.5,
+    "test_quality": 9.8,
+    "code_quality": 8.2,
+    "minimality": 8.2,
+    "security_safety": 4.2
+  },
+  "weighted_total": 73.0,
+  "verdict": "mixed",
+  "key_findings": [
+    "Coherent FastAPI project with clean repository/service/schema/security/app separation and full requested API surface (SKU, stock, reservations, confirm/cancel, orders, pagination, idempotency, API-key auth).",
+    "Declared test command fails: `pytest` yields 13 failed / 21 passed. All of tests/test_api.py fails because the in-memory SQLite fixture (sqlite:///:memory:, SingletonThreadPool, no check_same_thread) is not shared with the thread TestClient runs the app in — 'no such table: skus'.",
+    "Correctness bug: rejected negative stock adjustment is persisted. repository.adjust_stock commits the new quantity before service.adjust_stock validates `quantity < 0`, so a rejected -10 leaves the DB at -5 (verified by repro).",
+    "Correctness/consistency gap: expired reservations leak stock. confirm_reservation marks status EXPIRED but never restores the decremented quantity; stock stays at 70 of 100 with no background sweep (verified by repro).",
+    "Non-atomic operations: create_reservation (reservation insert, then stock decrement) and confirm_reservation (order insert, then status update) commit in separate transactions; a partial failure leaves inconsistent state. No row locking, so concurrent reservations can oversell.",
+    "Auth is enforced (wrong key -> 403) but a missing X-API-Key header returns 422 (validation) rather than 401/403, so test_create_sku_requires_auth fails its 403 assertion."
+  ],
+  "score_rationale": {
+    "task_fulfillment": "All requested artifacts and endpoints are present and match the README contract; loses points on production-minded constraints (non-atomic writes, stock leak, hardcoded key, unused dependency).",
+    "functional_correctness": "Happy paths and idempotency/expiration/auth flows are modeled, but two real invariant bugs (persisted negative stock, leaked expired-reservation stock) plus non-atomic multi-commit writes undermine data consistency.",
+    "executability": "Installs and the uvicorn entrypoint/imports/db bootstrap are usable, but the declared `pytest` command fails for the entire API suite due to a broken in-memory DB fixture — a severe command_result miss.",
+    "test_quality": "Coverage of required scenarios is broad and the service-layer assertions check real behavior, but the API integration suite does not actually run/pass and no test asserts stock is left unchanged after a rejected negative adjustment, so the persistence bug slipped through.",
+    "code_quality": "Readable, well-named, cleanly layered; main maintainability smell is validating stock after the repo already committed it, and the README overstates 'production-ready error handling' and a working test command.",
+    "minimality": "No speculative infrastructure; small dings for the unused pydantic-settings dependency, the near-empty Confirm/Cancel request models used via Depends(), and the single-value OrderStatus enum.",
+    "security_safety": "Auth dependency is applied to all mutating and read endpoints and ORM access is parameterized; the API key is a hardcoded literal with no env override (test placeholder, not a real secret).",
+    "review_confidence": "Read every source and test file, ran the full suite, and reproduced both stock bugs with a standalone script; main unverified area is concurrent/oversell behavior, which was reasoned about but not load-tested."
+  },
+  "instruction_failures": [
+    "README claims `pytest` works, but 13/34 tests fail out of the box (tests/test_api.py:11-27 fixture).",
+    "README implies a configurable 'Default test key', but the key is hardcoded in src/commerce_service/security.py:5 with no settings override despite pydantic-settings being a declared dependency."
+  ],
+  "correctness_failures": [
+    "src/commerce_service/repository.py:35-42 + service.py:44-53: negative stock adjustment is committed before validation, leaving the DB in a negative/rejected state (repro: stock = -5 after a rejected -10).",
+    "src/commerce_service/service.py:85-111: expired reservations are marked EXPIRED but their reserved stock is never reclaimed; no automatic restore or sweep (repro: stock stays 70/100).",
+    "src/commerce_service/service.py:77-81 and 103-109: logically-single operations span two separate commits, so a mid-operation failure leaves reservation-without-decrement or order-without-status-update.",
+    "No locking/atomic decrement in create_reservation; concurrent requests can pass the availability check and oversell.",
+    "src/commerce_service/security.py:4 + app.py:55-67: missing API key returns 422 instead of 401/403 because Header(...) validation runs as request validation."
+  ],
+  "execution_failures": [
+    "tests/test_api.py: 13 failures with sqlite3.OperationalError 'no such table: skus' and 'SQLite objects created in a thread can only be used in that same thread' — in-memory engine in tests/test_api.py:12 lacks connect_args/StaticPool and is not shared across the TestClient request thread.",
+    "tests/test_api.py::test_create_sku_requires_auth fails assert 422 == 403."
+  ],
+  "test_gaps": [
+    "No test asserts stock is unchanged after a rejected negative adjustment (would have caught the persisted -5 bug).",
+    "No test asserts stock is reclaimed (or intentionally not) after a reservation expires — the leak is untested.",
+    "No concurrency/oversell test despite reservation being the core invariant.",
+    "API tests, as written, never actually exercise the endpoints because the fixture fails before reaching app logic.",
+    "Idempotent retry test only checks matching IDs, not that stock was decremented exactly once."
+  ],
+  "quality_notes": [
+    "Service validates `stock.quantity < 0` only after repository.adjust_stock has committed — validation should precede persistence.",
+    "ConfirmReservationRequest/CancelReservationRequest are empty models and the confirm/cancel endpoints inject CancelReservationRequest via Depends() (app.py:113,137), which silently does nothing — confusing.",
+    "OrderStatus enum (models.py:60-61) has a single value and is effectively unused as a type.",
+    "README states 'Production-ready error handling' which overstates the non-atomic, stock-leaking implementation."
+  ],
+  "unnecessary_code_examples": [
+    "pydantic-settings declared in pyproject.toml:19 but never imported or used.",
+    "Empty Pydantic request models ConfirmReservationRequest/CancelReservationRequest (models.py:95-96,107-108) add no validation and are wired confusingly via Depends().",
+    "OrderStatus enum with one member (models.py:60-61)."
+  ],
+  "security_safety_notes": [
+    "All mutating and read endpoints attach Depends(verify_api_key) (app.py) — auth is consistently enforced; wrong key correctly returns 403.",
+    "API key hardcoded as 'test-key-123' (security.py:5) with no environment/config override; acceptable as a placeholder but not production-grade.",
+    "Inputs validated via Pydantic (quantity gt=0, min_length on code/description) and DB access is ORM-parameterized — no injection risk.",
+    "No shell/network/destructive operations; SQLite file written to local ./commerce.db only."
+  ],
+  "file_evidence": [
+    {"path": "src/commerce_service/repository.py", "note": "adjust_stock (35-42) commits new quantity before any non-negative validation; create/confirm use independent commits (per-method commit())."},
+    {"path": "src/commerce_service/service.py", "note": "adjust_stock validates negative after repo commit (44-53); confirm_reservation marks EXPIRED without restoring stock (85-111); reservation create is two-commit non-atomic (77-81)."},
+    {"path": "src/commerce_service/security.py", "note": "Hardcoded key 'test-key-123'; required Header(...) makes a missing key a 422 rather than 401/403."},
+    {"path": "src/commerce_service/app.py", "note": "All endpoints depend on verify_api_key; confirm/cancel inject an empty CancelReservationRequest via Depends() that does nothing (113,137)."},
+    {"path": "tests/test_api.py", "note": "Fixture (11-27) uses sqlite:///:memory: without StaticPool/check_same_thread; all 13 endpoint tests fail with 'no such table' / cross-thread errors."},
+    {"path": "tests/test_service.py", "note": "21 service-layer tests pass and assert real behavior, but none check stock after a rejected negative adjust or after expiry."},
+    {"path": "pyproject.toml", "note": "Declares pydantic-settings (19) which is never used; otherwise dependencies are appropriate."}
+  ],
+  "commands_run": [
+    "find . -type f (project listing)",
+    "python3 -c 'import fastapi, sqlalchemy, httpx, pytest' (deps available)",
+    "PYTHONPATH=src python3 -m pytest -q  ->  13 failed, 21 passed",
+    "PYTHONPATH=src python3 -m pytest tests/test_api.py::... (captured OperationalError / cross-thread error)",
+    "PYTHONPATH=src python3 -c '<repro>'  ->  stock -5 after rejected negative adjust; stock 70 retained after expiry"
+  ],
+  "review_risk": "low — all source and tests were read, the full suite was run, and both stock bugs were reproduced; concurrency/oversell behavior was reasoned about but not load-tested."
+}
+```

@@ -1,0 +1,153 @@
+I have enough evidence. I read all source and test files, ran the full suite, and confirmed runtime side-effects. Key results: **43 passed, 1 failed** (`test_confirm_expired_reservation`), and importing the app creates a stray `./commerce.db`.
+
+```json
+{
+  "rubric_version": "benchmark-codegen-review-v1",
+  "score_scale": "0-100 per category",
+  "weights": {
+    "task_fulfillment": 0.20,
+    "functional_correctness": 0.25,
+    "executability": 0.15,
+    "test_quality": 0.15,
+    "code_quality": 0.10,
+    "minimality": 0.10,
+    "security_safety": 0.05
+  },
+  "task_fulfillment_score": 88,
+  "task_fulfillment_breakdown": {
+    "instruction_compliance": 85,
+    "required_artifacts": 95,
+    "feature_coverage": 92,
+    "constraint_adherence": 82
+  },
+  "functional_correctness_score": 73,
+  "functional_correctness_breakdown": {
+    "domain_invariants": 68,
+    "edge_case_behavior": 72,
+    "data_consistency": 62,
+    "error_semantics": 90
+  },
+  "executability_score": 76,
+  "executability_breakdown": {
+    "installability": 90,
+    "runtime_entrypoints": 75,
+    "command_result": 65,
+    "runtime_isolation": 74
+  },
+  "test_quality_score": 80,
+  "test_quality_breakdown": {
+    "required_test_coverage": 72,
+    "behavioral_assertions": 85,
+    "integration_realism": 85,
+    "repeatability": 78
+  },
+  "code_quality_score": 84,
+  "code_quality_breakdown": {
+    "readability": 88,
+    "maintainability": 80,
+    "boundary_design": 88,
+    "documentation_quality": 80
+  },
+  "minimality_score": 79,
+  "minimality_breakdown": {
+    "no_speculative_infrastructure": 90,
+    "no_dead_or_duplicate_code": 70,
+    "appropriate_abstractions": 85,
+    "dependency_minimality": 72
+  },
+  "security_safety_score": 90,
+  "security_safety_breakdown": {
+    "auth_enforcement": 95,
+    "secret_handling": 80,
+    "input_safety": 88,
+    "unsafe_operations": 95
+  },
+  "review_confidence_score": 92,
+  "review_confidence_breakdown": {
+    "inspection_depth": 95,
+    "command_evidence": 92,
+    "issue_specificity": 92,
+    "uncertainty_handling": 88
+  },
+  "weighted_components": {
+    "task_fulfillment": 17.6,
+    "functional_correctness": 18.3,
+    "executability": 11.4,
+    "test_quality": 12.0,
+    "code_quality": 8.4,
+    "minimality": 7.9,
+    "security_safety": 4.5
+  },
+  "weighted_total": 80.1,
+  "verdict": "good",
+  "key_findings": [
+    "Clean, well-layered FastAPI project (models/repository/service/app/security); 43 of 44 tests pass on first run.",
+    "One test fails: tests/test_service.py::test_confirm_expired_reservation raises TypeError because the datetime monkeypatch installs an instance whose 0-arg mock_utcnow receives self — so the expiration path is effectively unverified.",
+    "Expiration leaks stock: service.confirm_reservation marks an expired reservation CANCELLED but does NOT restore stock (unlike cancel_reservation), so reserved units are lost permanently; expiration is also only evaluated lazily at confirm time.",
+    "Reservation is non-atomic: create_reservation writes the reservation row and decrements stock in two separate sessions/transactions, allowing oversell under concurrency and orphaned rows on partial failure; adjust_stock has no zero floor so stock can go negative.",
+    "Importing the app has a filesystem side-effect: app.py line 30 `repository = Repository()` creates ./commerce.db in the working directory at import time (confirmed present after the run).",
+    "Auth is correctly enforced on all mutating endpoints; error semantics are clear (401/404/409/410)."
+  ],
+  "score_rationale": {
+    "task_fulfillment": "All requested artifacts and the full API surface (SKUs, stock, reservations, confirm/cancel, orders, pagination, idempotency, auth, health) are present and production-minded. Minor deduction for the import-time DB side-effect slightly bending the fresh-workspace constraint.",
+    "functional_correctness": "Core flows (availability check, idempotent retry returning the same reservation, single stock deduction, order creation, cancel restoring stock) are correct and confirmed by passing tests. Lowered for the expiration-leaks-stock invariant gap, non-atomic two-transaction reservation with oversell/negative-stock risk; error status codes are strong.",
+    "executability": "Dependencies are pinned and plausible and the suite installs/imports fine, but the declared `pytest` command fails one test, and importing creates a stray commerce.db. README's `uvicorn src.commerce_service.app:app` is inconsistent with the editable-install package name `commerce_service`.",
+    "test_quality": "Good behavioral assertions (stock deducted once on idempotent retry, restored on cancel, not restored on confirm) at both service and API layers with temp-DB isolation. Lowered because the expiration test is broken and therefore does not exercise the expiry branch it claims to.",
+    "code_quality": "Readable, coherent module boundaries and docstrings. Minor: redundant module-level `repository` global, unused `Optional` import in app.py, and README mislabels offset pagination as 'cursor-based'.",
+    "minimality": "No speculative queues/workers/migrations. Deductions for unused python-dateutil dependency (only stdlib datetime is used), unused repo method update_order_status, unused OrderStatus.FULFILLED/PENDING members, and the dead `repository` global.",
+    "security_safety": "API-key dependency guards every mutating route; reads are open as intended. Pydantic validation and SQLAlchemy parameterization mitigate injection. verify_api_key accepts any non-empty key but is explicitly documented as a demo stub.",
+    "review_confidence": "All source and test files were read and the full suite plus a side-effect check were executed; findings cite concrete files/lines. Concurrency/atomicity risks are reasoned about rather than reproduced under load."
+  },
+  "instruction_failures": [
+    "README run command `uvicorn src.commerce_service.app:app --reload` does not match the installed package import path `commerce_service.app:app` after `pip install -e`.",
+    "Importing the app eagerly instantiates Repository() and writes ./commerce.db, a workspace side-effect not aligned with a clean fresh-workspace expectation."
+  ],
+  "correctness_failures": [
+    "service.confirm_reservation (service.py:141-143): expired reservation is cancelled but stock is never restored, permanently leaking reserved inventory.",
+    "create_reservation (service.py:109-113): reservation insert and stock decrement run in two separate sessions/transactions — not atomic; concurrent callers can oversell, and there is no commit barrier or stock floor (stock can go negative via repository.adjust_stock).",
+    "Expiration is only evaluated lazily on confirm; there is no sweep, so expired-but-unconfirmed reservations hold stock indefinitely until someone confirms them."
+  ],
+  "execution_failures": [
+    "tests/test_service.py::TestOrderConfirmation::test_confirm_expired_reservation fails: TypeError 'mock_utcnow() takes 0 positional arguments but 1 was given' — the monkeypatch assigns an instance of a dynamically-built type, so datetime.utcnow() binds self into the patched function (service.py:141).",
+    "Running `pytest` (the documented command) exits non-zero: 1 failed, 43 passed."
+  ],
+  "test_gaps": [
+    "The expiration scenario is not actually verified because its only test errors out before reaching the assertion.",
+    "No test asserts what happens to stock after expiry (would have caught the stock-leak bug).",
+    "No test for negative/oversell stock or concurrent reservations against the same SKU.",
+    "No test for the 410 GONE expired-confirm path at the API layer (app.py:92-93)."
+  ],
+  "quality_notes": [
+    "app.py:3 imports Optional but never uses it.",
+    "app.py:30 module-level `repository` is redundant — routes only use `service`, which holds its own repo.",
+    "README labels pagination 'cursor-based' but app.py:111-121 implements offset/limit pagination.",
+    "Python 3.12 emits many datetime.utcnow() deprecation warnings (service.py:107,141; repository.py:90,152)."
+  ],
+  "unnecessary_code_examples": [
+    "repository.update_order_status (repository.py:185-196) is never called.",
+    "OrderStatus.FULFILLED and OrderStatus.PENDING (models.py:50-52) are defined but only CONFIRMED is ever assigned.",
+    "python-dateutil is declared in pyproject.toml dependencies but the code only uses stdlib datetime/timedelta.",
+    "SQLAlchemy relationships (SKUModel.reservations, ReservationModel.orders/sku, OrderModel.reservation) are declared but never navigated."
+  ],
+  "security_safety_notes": [
+    "verify_api_key (security.py) accepts any non-empty X-API-Key — acceptable as an explicitly documented demo stub but not a real check.",
+    "All mutating endpoints (create_sku, adjust_stock, create/confirm/cancel reservation) require the API-key dependency; reads are intentionally public.",
+    "No hardcoded real secrets; inputs validated via Pydantic and queries are parameterized through the ORM."
+  ],
+  "file_evidence": [
+    {"path": "src/commerce_service/service.py", "note": "Lines 141-143: expired reservation cancelled without restoring stock; lines 109-113: non-atomic reservation insert + separate adjust_stock call."},
+    {"path": "src/commerce_service/repository.py", "note": "Each method opens/closes its own session; adjust_stock (59-70) has no floor so stock can go negative; update_order_status (185-196) unused."},
+    {"path": "src/commerce_service/app.py", "note": "Line 3 unused Optional import; line 30 creates Repository() (and commerce.db) at import; correct Depends(verify_api_key) on all mutating routes."},
+    {"path": "tests/test_service.py", "note": "Lines 183-202: broken datetime monkeypatch causes TypeError; expiration behavior not actually asserted."},
+    {"path": "pyproject.toml", "note": "Declares python-dateutil==2.8.2 which is never imported by the source."},
+    {"path": "commerce.db", "note": "32KB SQLite file created in the workspace as a side-effect of importing the app during the test run."}
+  ],
+  "commands_run": [
+    "find . -type f (excluding caches) — listed 11 project files",
+    "python3 --version && python3 -c 'import fastapi, sqlalchemy, pydantic, httpx, pytest' — Python 3.12.4, deps OK",
+    "PYTHONPATH=src python3 -m pytest -q — 1 failed, 43 passed, 106 warnings",
+    "ls -la *.db — confirmed commerce.db created at import time"
+  ],
+  "review_risk": "Low: all source and tests were read and the full suite plus a filesystem side-effect check were executed; concurrency/atomicity and negative-stock risks are reasoned from the code rather than reproduced under real load."
+}
+```

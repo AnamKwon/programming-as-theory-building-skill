@@ -1,0 +1,157 @@
+Review complete. Here is the benchmark evaluation.
+
+```json
+{
+  "rubric_version": "benchmark-codegen-review-v1",
+  "score_scale": "0-100 per category",
+  "weights": {
+    "task_fulfillment": 0.20,
+    "functional_correctness": 0.25,
+    "executability": 0.15,
+    "test_quality": 0.15,
+    "code_quality": 0.10,
+    "minimality": 0.10,
+    "security_safety": 0.05
+  },
+  "task_fulfillment_score": 86,
+  "task_fulfillment_breakdown": {
+    "instruction_compliance": 82,
+    "required_artifacts": 95,
+    "feature_coverage": 88,
+    "constraint_adherence": 80
+  },
+  "functional_correctness_score": 65,
+  "functional_correctness_breakdown": {
+    "domain_invariants": 60,
+    "edge_case_behavior": 62,
+    "data_consistency": 60,
+    "error_semantics": 78
+  },
+  "executability_score": 62,
+  "executability_breakdown": {
+    "installability": 78,
+    "runtime_entrypoints": 90,
+    "command_result": 45,
+    "runtime_isolation": 35
+  },
+  "test_quality_score": 58,
+  "test_quality_breakdown": {
+    "required_test_coverage": 70,
+    "behavioral_assertions": 75,
+    "integration_realism": 60,
+    "repeatability": 25
+  },
+  "code_quality_score": 82,
+  "code_quality_breakdown": {
+    "readability": 85,
+    "maintainability": 78,
+    "boundary_design": 85,
+    "documentation_quality": 78
+  },
+  "minimality_score": 73,
+  "minimality_breakdown": {
+    "no_speculative_infrastructure": 80,
+    "no_dead_or_duplicate_code": 70,
+    "appropriate_abstractions": 85,
+    "dependency_minimality": 55
+  },
+  "security_safety_score": 86,
+  "security_safety_breakdown": {
+    "auth_enforcement": 90,
+    "secret_handling": 70,
+    "input_safety": 88,
+    "unsafe_operations": 95
+  },
+  "review_confidence_score": 89,
+  "review_confidence_breakdown": {
+    "inspection_depth": 92,
+    "command_evidence": 90,
+    "issue_specificity": 90,
+    "uncertainty_handling": 85
+  },
+  "weighted_components": {
+    "task_fulfillment": 17.2,
+    "functional_correctness": 16.3,
+    "executability": 9.3,
+    "test_quality": 8.7,
+    "code_quality": 8.2,
+    "minimality": 7.3,
+    "security_safety": 4.3
+  },
+  "weighted_total": 71.3,
+  "verdict": "mixed",
+  "key_findings": [
+    "Clean, well-layered FastAPI project (models/repository/service/security/app) with the full requested API surface and pinned dependencies; the project imports and serves all expected routes.",
+    "test_api.py is fundamentally broken: the autouse setup_test_db fixture builds a temp-DB Repository but never injects it into the app (app uses a module-level repo bound to commerce.db). 5-6 of 17 API tests fail on a fresh run and the failures worsen on re-run — confirmed by running pytest.",
+    "Stock-leak domain bug: an expired reservation is marked EXPIRED on confirm but the reserved quantity is never released back to the SKU (service.py:84-92), so expired reservations permanently consume stock.",
+    "service.py tests pass cleanly (12/12) and assert real behavior (stock deduction/restoration, status transitions), showing the core domain logic is sound when state is isolated.",
+    "Two declared dependencies (python-dateutil, pydantic-settings) are never imported/used; API key is a hardcoded constant rather than env-driven despite pydantic-settings being available."
+  ],
+  "score_rationale": {
+    "task_fulfillment": "All required artifacts and the requested endpoint surface (SKU CRUD+adjust, reservation create/confirm/cancel, order list+pagination, health, API-key auth) are present and self-contained. Docked for idempotency being modeled as a 409 conflict rather than a safe-retry that returns the original resource, and for writing commerce.db into the CWD rather than a configurable/isolated location.",
+    "functional_correctness": "Core invariants (reserve deducts stock, cancel restores it) hold and are verified. Lowered for the expiration stock-leak (expired reservations never return stock, service.py:84-92), non-atomic check-then-deduct across separate transactions (service.py:62-72) risking oversell/inconsistency under concurrency, and the confirm endpoint locating the new order by scanning list_orders(limit=100) (app.py:123-132), which returns 500 once >100 orders exist.",
+    "executability": "Imports succeed and uvicorn entrypoint is valid; deps install plausibly. Heavily docked because the API test suite does not pass (5-6/17 fail) due to non-injected test repo, the app writes commerce.db into the working directory, and persisted state makes runs non-deterministic across invocations.",
+    "test_quality": "Service-level tests are behavior-rich and repeatable via per-test temp DBs. The API tests nominally cover the required scenarios but are not isolated (autouse fixture never overrides the app's repo), reuse idempotency_key='key-1' across tests against a shared persistent DB, and therefore fail and are not repeatable — the single largest test deficiency. No test covers the expired-reservation stock release or double-confirm.",
+    "code_quality": "Readable, idiomatic, and cleanly separated into model/repo/service/security/app boundaries with parameterized SQL. Minor deductions for deprecated Pydantic class-based Config (deprecation warnings), unused imports (JSONResponse, ErrorResponse in app.py), and an effectively unused DRAFT order status.",
+    "minimality": "Abstractions are appropriate and there is no speculative queue/worker/CLI scaffolding. Docked for two unused dependencies (python-dateutil, pydantic-settings), unused imports, and the vestigial DRAFT order state that is set then immediately overwritten to COMPLETED.",
+    "security_safety": "Mutating endpoints all enforce the APIKeyDependency (verified by passing unauthorized tests) and SQL is parameterized with Pydantic input validation. Mild deduction because the API key is a hardcoded literal ('secret-key') not sourced from configuration/env, which is not production-minded.",
+    "review_confidence": "All source and test files were read in full; both test suites were executed, and the API-test failure was reproduced and root-caused (isolation + idempotency-key collision) with a re-run demonstrating state persistence. Residual uncertainty is limited to concurrency behavior under real load, which was reasoned about but not load-tested."
+  },
+  "instruction_failures": [
+    "Idempotency implemented as a hard 409 conflict on duplicate key (service.py:50-54) rather than a safe-retry returning the original reservation, which is the conventional meaning of an idempotency key.",
+    "API key is hardcoded in security.py rather than configured via environment/settings, despite pydantic-settings being declared as a dependency."
+  ],
+  "correctness_failures": [
+    "Expired reservation stock leak: confirm_reservation marks status EXPIRED but never returns the reserved quantity to the SKU (service.py:84-92).",
+    "Non-atomic reserve: stock availability is checked, then the reservation is inserted, then stock is decremented in separate transactions (service.py:62-72) — a crash or concurrent request between steps can oversell or leave inconsistent state.",
+    "confirm_reservation endpoint finds the newly created order by scanning list_orders(skip=0, limit=100) (app.py:123-132); with more than 100 orders the new order may not be found, yielding a spurious 500.",
+    "Orders are created directly as COMPLETED; the DRAFT state is never observable, so the requested order state transition is effectively a no-op."
+  ],
+  "execution_failures": [
+    "tests/test_api.py fails 5-6 of 17 tests on a fresh database (KeyError: 'id' / assert 409 == 200) because the autouse fixture never overrides the app's module-level repo.",
+    "Importing the app and running tests creates commerce.db in the current working directory; this persisted file makes the API suite order-dependent and worse on the second run (test_create_reservation_success then also fails with 409).",
+    "No test-time database isolation: app.repo/app.service are bound at import time and never swapped, so app.dependency_overrides={} in the fixture has no effect."
+  ],
+  "test_gaps": [
+    "No test verifying stock is (or is not) released when a reservation expires — the actual stock-leak bug goes undetected.",
+    "No test for double-confirm or confirm-after-cancel beyond the service layer's cancel-confirmed case.",
+    "API-level expiration path is untested (only the service layer sleeps for expiry).",
+    "Pagination/idempotency API tests are present but never actually pass due to shared-state contamination, so they provide no real coverage."
+  ],
+  "quality_notes": [
+    "Pydantic v2 deprecated class-based Config used throughout models.py (emits DeprecationWarning); prefer ConfigDict.",
+    "Unused imports in app.py: JSONResponse and ErrorResponse.",
+    "datetime.utcnow() is deprecated on the runtime (3.12) and naive; expires_at is stored/parsed as a naive ISO string, which is fragile across timezones.",
+    "from_attributes=True is set on models but data flows as plain dicts, so the ORM-mode config is unnecessary."
+  ],
+  "unnecessary_code_examples": [
+    "Dependency 'python-dateutil' declared in pyproject.toml but never imported (service uses datetime.fromisoformat).",
+    "Dependency 'pydantic-settings' declared but never used; settings/env-based config was not implemented.",
+    "ErrorResponse model (models.py:83) and JSONResponse import (app.py:2) are defined/imported but unused.",
+    "OrderStatus.DRAFT is written then immediately replaced by COMPLETED in confirm_reservation, leaving the draft state dead."
+  ],
+  "security_safety_notes": [
+    "All mutating routes depend on verify_api_key via APIKeyDependency (app.py:30,48,66,106,136); unauthorized-mutation tests confirm 403 enforcement.",
+    "SQL is fully parameterized (repository.py), and inputs are validated by Pydantic Field constraints, so injection/data-integrity risk is low.",
+    "API key 'secret-key' is hardcoded (security.py:5) — acceptable for a demo but should be sourced from configuration; it is a placeholder, not a real leaked secret.",
+    "No shell/network/destructive operations; only a local SQLite file is written."
+  ],
+  "file_evidence": [
+    {"path": "tests/test_api.py", "note": "setup_test_db (lines 10-19) creates a temp-DB Repository but never assigns it to app.repo/app.service; app.dependency_overrides={} does nothing, so all API tests share the persistent commerce.db. Reuse of idempotency_key='key-1' across tests then triggers 409s and KeyError: 'id'."},
+    {"path": "src/commerce_service/app.py", "note": "Lines 20-21 bind repo/service at import time to commerce.db; lines 123-132 locate the confirmed order via a list_orders(limit=100) scan, returning 500 if not found."},
+    {"path": "src/commerce_service/service.py", "note": "Lines 84-92 mark an expired reservation EXPIRED without releasing reserved stock (stock leak); lines 62-72 perform check, insert, and decrement as separate non-atomic operations."},
+    {"path": "src/commerce_service/repository.py", "note": "Layer is clean with parameterized SQL and UNIQUE(idempotency_key) at line 45 — the constraint that, combined with the broken test fixture, surfaces as 409s in the API suite."},
+    {"path": "pyproject.toml", "note": "Declares python-dateutil and pydantic-settings (lines 18-19) which are never used in the source."},
+    {"path": "src/commerce_service/security.py", "note": "Hardcoded API_KEY='secret-key' (line 5); auth dependency correctly returns 403 on missing/invalid key."}
+  ],
+  "commands_run": [
+    "python3 --version; import check for fastapi/pydantic/httpx/pytest/pytest_asyncio (all present)",
+    "PYTHONPATH=src python3 -c 'import commerce_service.app' and printed app.routes (import OK, all routes present)",
+    "PYTHONPATH=src python3 -m pytest tests/test_service.py -q  -> 12 passed",
+    "rm -f commerce.db && PYTHONPATH=src python3 -m pytest tests/test_api.py -q -W ignore  -> 5 failed, 12 passed (fresh DB)",
+    "rm -f commerce.db && pytest tests/test_api.py::test_get_reservation (isolated -> 1 passed), then full file again -> 6 failed, 11 passed (state persists)",
+    "Cleaned up generated commerce.db and __pycache__ to restore the workspace"
+  ],
+  "review_risk": "Low: all source and tests were read and both suites executed, with the API-test failure reproduced and root-caused; residual uncertainty is limited to concurrency behavior under real load, which was reasoned about but not stress-tested."
+}
+```

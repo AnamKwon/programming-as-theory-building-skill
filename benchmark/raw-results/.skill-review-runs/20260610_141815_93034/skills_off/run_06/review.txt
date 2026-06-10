@@ -1,0 +1,151 @@
+All 28 tests pass. I inspected every source/test file, ran the suite, and probed the cancellation path directly. Here is the evaluation.
+
+```json
+{
+  "rubric_version": "benchmark-codegen-review-v1",
+  "score_scale": "0-100 per category",
+  "weights": {
+    "task_fulfillment": 0.20,
+    "functional_correctness": 0.25,
+    "executability": 0.15,
+    "test_quality": 0.15,
+    "code_quality": 0.10,
+    "minimality": 0.10,
+    "security_safety": 0.05
+  },
+  "task_fulfillment_score": 90,
+  "task_fulfillment_breakdown": {
+    "instruction_compliance": 90,
+    "required_artifacts": 95,
+    "feature_coverage": 90,
+    "constraint_adherence": 85
+  },
+  "functional_correctness_score": 70,
+  "functional_correctness_breakdown": {
+    "domain_invariants": 62,
+    "edge_case_behavior": 75,
+    "data_consistency": 65,
+    "error_semantics": 78
+  },
+  "executability_score": 88,
+  "executability_breakdown": {
+    "installability": 82,
+    "runtime_entrypoints": 88,
+    "command_result": 98,
+    "runtime_isolation": 85
+  },
+  "test_quality_score": 87,
+  "test_quality_breakdown": {
+    "required_test_coverage": 90,
+    "behavioral_assertions": 78,
+    "integration_realism": 88,
+    "repeatability": 90
+  },
+  "code_quality_score": 85,
+  "code_quality_breakdown": {
+    "readability": 88,
+    "maintainability": 80,
+    "boundary_design": 88,
+    "documentation_quality": 82
+  },
+  "minimality_score": 83,
+  "minimality_breakdown": {
+    "no_speculative_infrastructure": 90,
+    "no_dead_or_duplicate_code": 78,
+    "appropriate_abstractions": 85,
+    "dependency_minimality": 80
+  },
+  "security_safety_score": 91,
+  "security_safety_breakdown": {
+    "auth_enforcement": 95,
+    "secret_handling": 85,
+    "input_safety": 88,
+    "unsafe_operations": 95
+  },
+  "review_confidence_score": 92,
+  "review_confidence_breakdown": {
+    "inspection_depth": 95,
+    "command_evidence": 92,
+    "issue_specificity": 92,
+    "uncertainty_handling": 88
+  },
+  "weighted_components": {
+    "task_fulfillment": 18.0,
+    "functional_correctness": 17.5,
+    "executability": 13.2,
+    "test_quality": 13.1,
+    "code_quality": 8.5,
+    "minimality": 8.3,
+    "security_safety": 4.6
+  },
+  "weighted_total": 83.1,
+  "verdict": "good",
+  "key_findings": [
+    "Complete, runnable FastAPI project: all requested endpoints (SKUs, stock, reservations, orders), API-key auth, idempotency, pagination, and clean repository/service/schema layering. 28/28 tests pass locally.",
+    "Confirmed correctness bug: cancelling a PENDING reservation does NOT transition its order to CANCELLED. service.cancel_reservation (service.py:103-110) sets the reservation to CANCELLED first, then checks `if reservation.status == PENDING`; because update_status mutates the same identity-mapped object, the check is always False and the order stays RESERVED. Verified at runtime (order after cancel: RESERVED).",
+    "Expired reservations leak stock: confirm_reservation marks status EXPIRED (service.py:83-85) but never returns the reserved quantity to stock, and nothing else reclaims it. No lazy reclamation on read or list.",
+    "create_reservation performs several independent commits (reservation, order, then stock decrement at service.py:56-68) with no surrounding transaction, so a mid-sequence failure leaves partial state; stock check-then-decrement is also non-atomic.",
+    "Stray runtime artifact: a populated commerce.db (69KB) is committed into the workspace; not used by tests but contradicts a clean/fresh-workspace expectation."
+  ],
+  "score_rationale": {
+    "task_fulfillment": "All requested artifacts and the full endpoint surface are present and documented; minor deduction for the committed commerce.db artifact in an otherwise fresh layout.",
+    "functional_correctness": "Most invariants hold (stock decrement, idempotent retry returns same reservation, insufficient-stock rejection, lazy expiration on confirm), but the order-cancellation invariant is broken and expired stock is never reclaimed, plus multi-commit non-atomicity introduces consistency risk.",
+    "executability": "Deps pinned and importable, uvicorn entrypoint valid, full suite passes; installability slightly uncertain because hatchling has no explicit src-layout package config and tests import via `src.` rather than the installed package, so `pip install -e .` packaging was not validated.",
+    "test_quality": "Covers every required scenario at both service and API layers with realistic persistence and proper db reset/in-memory isolation; deduction because no test asserts order status after cancel — the exact gap that let the cancellation bug ship.",
+    "code_quality": "Readable, well-separated layers and an accurate README; maintainability dinged because a key state-transition invariant is not guarded and the cancel logic relies on fragile ordering of an identity-mapped object's mutation.",
+    "minimality": "No speculative infrastructure; deductions for the unused `python-dotenv` dependency and unused `order = ...` assignments in confirm/cancel (service.py:88,110).",
+    "security_safety": "All mutating endpoints enforce the verify_api_key dependency; input validated via Pydantic and queries are ORM-parameterized; only the conventional default dev key fallback, which is env-overridable.",
+    "review_confidence": "All source and test files read, the declared test command executed, and the cancellation bug reproduced directly; remaining uncertainty is limited to editable-install packaging behavior."
+  },
+  "instruction_failures": [
+    "A pre-populated commerce.db is shipped in the workspace rather than left to be created at runtime, slightly violating the fresh-workspace expectation."
+  ],
+  "correctness_failures": [
+    "cancel_reservation does not transition the order to CANCELLED for a PENDING reservation (service.py:103-110); order remains RESERVED — reproduced at runtime.",
+    "Confirming an expired reservation marks it EXPIRED but never returns its quantity to stock (service.py:83-85), permanently leaking inventory.",
+    "create_reservation uses multiple separate commits with no transaction boundary (service.py:56-68); a partial failure leaves an order/reservation without the corresponding stock decrement.",
+    "Stock availability check and decrement are not atomic, so concurrent reservations could oversell (mitigated only by SQLite single-writer in practice)."
+  ],
+  "execution_failures": [
+    "Not a failure at runtime, but `pip install -e .` was not exercised; hatchling lacks an explicit [tool.hatch.build.targets.wheel] packages entry for the src layout, and tests rely on `src.commerce_service` imports from repo root rather than the installed distribution."
+  ],
+  "test_gaps": [
+    "No assertion that an order becomes CANCELLED after its pending reservation is cancelled — the precise gap that hid the order-state bug.",
+    "No test that stock is restored (or intentionally not) when a reservation expires.",
+    "No test for confirm/cancel of a non-existent reservation (404/400 path) or get of a missing SKU/order beyond reservation flow.",
+    "No test asserting idempotent retry does not double-decrement stock at the API layer for differing payloads under the same key."
+  ],
+  "quality_notes": [
+    "Unused local `order` variables in confirm_reservation (service.py:88) and cancel_reservation (service.py:110).",
+    "Money stored as SQLAlchemy Float while the request schema uses Decimal (models.py:35, app.py:35 casts to float), risking rounding error for prices.",
+    "Uses deprecated datetime.utcnow() (service.py:54,83) — emits DeprecationWarning on 3.12.",
+    "Missing API key returns 403; 401 would be the more conventional 'unauthenticated' status (security.py:11-15)."
+  ],
+  "unnecessary_code_examples": [
+    "python-dotenv is declared as a dependency (pyproject.toml:15) but never imported or used.",
+    "`order = self.orders.update_status(...)` assignments whose result is discarded (service.py:88,110)."
+  ],
+  "security_safety_notes": [
+    "All POST endpoints depend on verify_api_key; read endpoints are intentionally open (app.py:27-110).",
+    "Default key 'test-key-123' is a fallback only and overridable via API_KEY env var (security.py:7); no real secret committed.",
+    "Inputs validated by Pydantic (min_length, PositiveInt, gt=0) and persistence uses parameterized ORM queries, so no obvious injection vector."
+  ],
+  "file_evidence": [
+    {"path": "src/commerce_service/service.py", "note": "cancel_reservation order-state bug at lines 103-110; expired-stock leak at 83-85; non-atomic multi-commit reservation at 56-68."},
+    {"path": "src/commerce_service/app.py", "note": "All mutating routes use Depends(verify_api_key); reservation/SKU not-found surfaced as 400 rather than 404 (lines 38,64,82)."},
+    {"path": "src/commerce_service/security.py", "note": "API-key dependency; missing key -> 403 (line 11-15); env-overridable default key."},
+    {"path": "src/commerce_service/models.py", "note": "Price stored as Float (line 35) though schema uses Decimal; clean ORM + Pydantic schemas."},
+    {"path": "tests/test_api.py", "note": "Strong endpoint coverage incl. auth/pagination, but cancel test (216-244) never asserts order status; reset_db gives repeatable isolation."},
+    {"path": "tests/test_service.py", "note": "Service-layer coverage with in-memory SQLite; cancel test (113-122) checks stock/reservation only, not order."},
+    {"path": "pyproject.toml", "note": "Pinned deps; python-dotenv unused; no explicit hatchling src package config."},
+    {"path": "commerce.db", "note": "69KB pre-populated SQLite file committed into the workspace; stray runtime artifact."}
+  ],
+  "commands_run": [
+    "find . -type f (list project files)",
+    "python3 --version; python3 -c 'import fastapi, sqlalchemy, httpx, pytest'",
+    "python3 -m pytest tests/ -q  (28 passed)",
+    "python3 runtime probe of create->cancel showing order remains RESERVED after cancellation"
+  ],
+  "review_risk": "low — all files read, the declared test suite was run (28 passed), and the cancellation bug was reproduced at runtime; the only unverified area is editable-install packaging since `pip install -e .` was not executed."
+}
+```

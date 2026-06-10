@@ -1,0 +1,157 @@
+All 42 tests pass. I have enough evidence to produce the evaluation.
+
+```json
+{
+  "rubric_version": "benchmark-codegen-review-v1",
+  "score_scale": "0-100 per category",
+  "weights": {
+    "task_fulfillment": 0.20,
+    "functional_correctness": 0.25,
+    "executability": 0.15,
+    "test_quality": 0.15,
+    "code_quality": 0.10,
+    "minimality": 0.10,
+    "security_safety": 0.05
+  },
+  "task_fulfillment_score": 89,
+  "task_fulfillment_breakdown": {
+    "instruction_compliance": 90,
+    "required_artifacts": 95,
+    "feature_coverage": 92,
+    "constraint_adherence": 80
+  },
+  "functional_correctness_score": 82,
+  "functional_correctness_breakdown": {
+    "domain_invariants": 85,
+    "edge_case_behavior": 85,
+    "data_consistency": 72,
+    "error_semantics": 85
+  },
+  "executability_score": 89,
+  "executability_breakdown": {
+    "installability": 85,
+    "runtime_entrypoints": 92,
+    "command_result": 95,
+    "runtime_isolation": 85
+  },
+  "test_quality_score": 83,
+  "test_quality_breakdown": {
+    "required_test_coverage": 70,
+    "behavioral_assertions": 85,
+    "integration_realism": 88,
+    "repeatability": 90
+  },
+  "code_quality_score": 84,
+  "code_quality_breakdown": {
+    "readability": 82,
+    "maintainability": 85,
+    "boundary_design": 88,
+    "documentation_quality": 80
+  },
+  "minimality_score": 72,
+  "minimality_breakdown": {
+    "no_speculative_infrastructure": 70,
+    "no_dead_or_duplicate_code": 65,
+    "appropriate_abstractions": 82,
+    "dependency_minimality": 70
+  },
+  "security_safety_score": 88,
+  "security_safety_breakdown": {
+    "auth_enforcement": 92,
+    "secret_handling": 75,
+    "input_safety": 90,
+    "unsafe_operations": 95
+  },
+  "review_confidence_score": 90,
+  "review_confidence_breakdown": {
+    "inspection_depth": 95,
+    "command_evidence": 90,
+    "issue_specificity": 90,
+    "uncertainty_handling": 85
+  },
+  "weighted_components": {
+    "task_fulfillment": 17.8,
+    "functional_correctness": 20.5,
+    "executability": 13.4,
+    "test_quality": 12.5,
+    "code_quality": 8.4,
+    "minimality": 7.2,
+    "security_safety": 4.4
+  },
+  "weighted_total": 84.1,
+  "verdict": "good",
+  "key_findings": [
+    "Coherent, layered FastAPI project (routes -> service -> repository -> models/security) that runs and passes all 42 tests with locally available dependencies.",
+    "Core domain invariants implemented correctly: availability = stock - (PENDING+CONFIRMED) reservations, idempotency keyed lookup, TTL-based expiration check, and PENDING->CONFIRMED/CANCELLED/EXPIRED transitions.",
+    "Status-code contract matches the README: 201/200/401/403/404/409/410/422 are wired through HTTPException mappings in app.py.",
+    "Notable test gap: reservation expiration / 410 'Gone' path is implemented (service.py:107, 140-142) but never exercised by any test — no test forces an expired reservation.",
+    "Concurrency/transaction risk: availability is computed in Python then a reservation is created without row locking (service.py:116-130), so concurrent reservations could oversell; acceptable for single-threaded SQLite but not flagged.",
+    "Dead/unused code and dependencies: pydantic-settings & python-dotenv declared but unused; OrderStatus.RESERVED/FAILED, OrderRepository.update_status, service.get_order, DuplicateReservationError, and several imports are never used.",
+    "Class name is misspelled 'CommercService' consistently across service.py, app.py, and README."
+  ],
+  "score_rationale": {
+    "task_fulfillment": "Implements the full requested surface — SKUs, reservations (create/confirm/cancel), idempotency, expiration, orders with pagination, API-key auth — with the documented output contract. Slight deductions for leaving a 36KB commerce.db artifact in the workspace and declaring unused production deps, both at odds with a 'fresh workspace / production-minded' constraint.",
+    "functional_correctness": "Domain rules and edge cases (insufficient stock 409, idempotent retry returning same id, expired 410, unauthorized, pagination) are handled correctly and verified for most paths. Main weaknesses are an unguarded check-then-create race (no locking) and an expired idempotent reservation that raises 410 without transitioning the row to EXPIRED (service.py:106-109).",
+    "executability": "pyproject.toml is complete (hatchling, pinned deps, pytest config), app entrypoint commerce_service.app:app and get_engine default are usable, and `pytest` yields 42 passed. Installed dep versions (fastapi 0.110, sqlalchemy 2.0.25) differ from the pins (0.104.1/2.0.23) but ran cleanly; default engine writes ./commerce.db which already exists as a residual artifact.",
+    "test_quality": "Both service-level (in-memory) and API-level (file-based SQLite + dependency_overrides) tests are realistic, isolated, and repeatable, with behavioral assertions on reserved counts, idempotent id equality, and order creation contents. The required expiration coverage is absent, which is the principal deduction.",
+    "code_quality": "Clear separation across modules, invariants centralized in the service, and a thorough README. Deductions for the persistent class-name typo, an unused custom exception, and README claims (e.g., 'run migrations') that don't match the create_all reality.",
+    "minimality": "Repository/service layering is justified for the size, but there is meaningful dead weight: unused dependencies (pydantic-settings, python-dotenv), unused enum members and repository/service methods, an unused exception, and several dead imports in models.py.",
+    "security_safety": "All mutating endpoints enforce verify_api_key and Pydantic/Query validation bounds untrusted input; ORM use avoids injection. The API key is a hardcoded documented demo default rather than env-configurable, which is the only real weakness.",
+    "review_confidence": "All source and test files were read and the full suite was executed (42 passed) with dependencies already installed. Remaining uncertainty is limited to untested concurrency behavior and the dependency-version drift from the pins."
+  },
+  "instruction_failures": [
+    "Residual commerce.db (36KB) left in the workspace, contrary to a fresh/clean-workspace expectation.",
+    "Declared dependencies pydantic-settings and python-dotenv are never used (no settings/env loading), slightly violating production-minded dependency hygiene."
+  ],
+  "correctness_failures": [
+    "Check-then-create reservation flow (service.py:116-130) has no row locking or unique guard on availability, allowing oversell under concurrent writes.",
+    "An expired reservation matched by idempotency key raises ReservationExpiredError but is not transitioned to EXPIRED (service.py:106-109), unlike the confirm path which does mark it (service.py:140-142).",
+    "service.get_order raises a bare Exception (service.py:197) rather than a typed/HTTP-mapped error (method is currently unused, so low impact)."
+  ],
+  "execution_failures": [
+    "No execution failures observed; `pytest` ran 42 passed. Installed runtime versions differ from the pinned versions in pyproject.toml, so exact pinned-environment behavior was not validated."
+  ],
+  "test_gaps": [
+    "No test exercises reservation expiration: neither the 410 on create with an expired idempotent key (service.py:107) nor the 410/EXPIRED transition on confirm (service.py:140-142).",
+    "No test for the 'no API key' 403 vs 'wrong key' 401 distinction on reservation confirm/cancel endpoints (only covered for SKU endpoints).",
+    "No test for adjust_stock driving available stock negative or its interaction with existing reservations.",
+    "No concurrency/idempotency-race test, so the un-locked check-then-create path is unverified."
+  ],
+  "quality_notes": [
+    "Class name 'CommercService' is misspelled consistently in service.py:38, app.py, and README.md:100.",
+    "README.md:183-188 references 'run migrations' though the project only uses Base.metadata.create_all; mildly misleading.",
+    "models.py mixes a second import block (Column/ForeignKey/relationship) after Pydantic schemas (models.py:88-90) instead of grouping imports at the top.",
+    "datetime.utcnow() is used throughout and emits DeprecationWarnings on Python 3.12; timezone-aware datetimes would be more future-proof."
+  ],
+  "unnecessary_code_examples": [
+    "OrderStatus.RESERVED and OrderStatus.FAILED (models.py:23-24) are never assigned; orders are only ever created CONFIRMED.",
+    "OrderRepository.update_status (repository.py:108-115) and CommercService.get_order (service.py:193-198) are never called.",
+    "DuplicateReservationError (service.py:30-31) is defined and imported into app.py but never raised or caught.",
+    "Unused imports in models.py: timedelta, Decimal, Optional, and sqlalchemy.types.BigInteger; ReservationModel.confirmed_at is written but never read/exposed.",
+    "Optional declared dependencies pydantic-settings and python-dotenv (pyproject.toml:14-15) are unused."
+  ],
+  "security_safety_notes": [
+    "verify_api_key is applied to every mutating endpoint (POST /skus, PATCH /skus/{code}/stock, POST /reservations, confirm, cancel); GET endpoints are intentionally open.",
+    "API key 'commerce-service-key' is hardcoded in security.py:9 and documented in the README; acceptable as a demo default but not environment-configurable despite settings deps being present.",
+    "Inputs are validated via Pydantic Field constraints and Query(ge/le) bounds; SQLAlchemy ORM parameterizes queries, avoiding injection.",
+    "No shell, filesystem, or network side effects beyond the intended SQLite database."
+  ],
+  "file_evidence": [
+    {"path": "src/commerce_service/service.py", "note": "Core domain logic: availability check + create (116-130), idempotency (105-109), expiration handling on confirm (140-142); get_order raises bare Exception (197)."},
+    {"path": "src/commerce_service/models.py", "note": "ORM + Pydantic schemas; available_stock counts PENDING+CONFIRMED (103-109); is_expired (129-133); unused imports (1-9) and unused OrderStatus members (21-24)."},
+    {"path": "src/commerce_service/app.py", "note": "Routes with correct status codes and verify_api_key on all mutations; module-level lazy session factory (38-54); orders pagination bounds (170-171)."},
+    {"path": "src/commerce_service/security.py", "note": "APIKeyHeader with hardcoded expected key 'commerce-service-key' (9); missing header -> 403, wrong key -> 401."},
+    {"path": "tests/test_service.py", "note": "Service-level coverage incl. stock availability and order creation; ReservationExpiredError imported (17) but no expiration test asserts it."},
+    {"path": "tests/test_api.py", "note": "API-level tests with file-based SQLite and dependency_overrides; covers auth/idempotency/pagination but no expiration/410 case."},
+    {"path": "pyproject.toml", "note": "Complete packaging with pinned deps and pytest config; pydantic-settings and python-dotenv (14-15) declared but unused."},
+    {"path": "commerce.db", "note": "36KB residual SQLite artifact present in the workspace; default engine path ./commerce.db."}
+  ],
+  "commands_run": [
+    "find . -type f ... | sort  (listed project files)",
+    "python3 --version; python3 -c 'import fastapi, sqlalchemy, pytest, httpx; print versions'  (Python 3.12.4, fastapi 0.110.0, sqlalchemy 2.0.25)",
+    "PYTHONPATH=src python3 -m pytest -q  (42 passed, 100 DeprecationWarnings)",
+    "grep for dotenv/pydantic_settings/environ usage (none found), expiration test refs (none), git status (not a repo), ls -la commerce.db (36KB present)"
+  ],
+  "review_risk": "low — all source and test files were read and the full suite ran (42 passed); residual uncertainty is limited to untested concurrency behavior and that installed dependency versions differ from the pinned versions in pyproject.toml."
+}
+```

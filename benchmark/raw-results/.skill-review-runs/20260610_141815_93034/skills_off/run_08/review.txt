@@ -1,0 +1,155 @@
+```json
+{
+  "rubric_version": "benchmark-codegen-review-v1",
+  "score_scale": "0-100 per category",
+  "weights": {
+    "task_fulfillment": 0.20,
+    "functional_correctness": 0.25,
+    "executability": 0.15,
+    "test_quality": 0.15,
+    "code_quality": 0.10,
+    "minimality": 0.10,
+    "security_safety": 0.05
+  },
+  "task_fulfillment_score": 71,
+  "task_fulfillment_breakdown": {
+    "instruction_compliance": 70,
+    "required_artifacts": 90,
+    "feature_coverage": 55,
+    "constraint_adherence": 70
+  },
+  "functional_correctness_score": 61,
+  "functional_correctness_breakdown": {
+    "domain_invariants": 45,
+    "edge_case_behavior": 70,
+    "data_consistency": 50,
+    "error_semantics": 80
+  },
+  "executability_score": 65,
+  "executability_breakdown": {
+    "installability": 85,
+    "runtime_entrypoints": 80,
+    "command_result": 35,
+    "runtime_isolation": 60
+  },
+  "test_quality_score": 54,
+  "test_quality_breakdown": {
+    "required_test_coverage": 70,
+    "behavioral_assertions": 65,
+    "integration_realism": 35,
+    "repeatability": 45
+  },
+  "code_quality_score": 73,
+  "code_quality_breakdown": {
+    "readability": 85,
+    "maintainability": 70,
+    "boundary_design": 70,
+    "documentation_quality": 65
+  },
+  "minimality_score": 63,
+  "minimality_breakdown": {
+    "no_speculative_infrastructure": 60,
+    "no_dead_or_duplicate_code": 50,
+    "appropriate_abstractions": 75,
+    "dependency_minimality": 65
+  },
+  "security_safety_score": 78,
+  "security_safety_breakdown": {
+    "auth_enforcement": 90,
+    "secret_handling": 55,
+    "input_safety": 80,
+    "unsafe_operations": 85
+  },
+  "review_confidence_score": 90,
+  "review_confidence_breakdown": {
+    "inspection_depth": 95,
+    "command_evidence": 90,
+    "issue_specificity": 90,
+    "uncertainty_handling": 85
+  },
+  "weighted_components": {
+    "task_fulfillment": 14.2,
+    "functional_correctness": 15.3,
+    "executability": 9.8,
+    "test_quality": 8.1,
+    "code_quality": 7.3,
+    "minimality": 6.3,
+    "security_safety": 3.9
+  },
+  "weighted_total": 64.8,
+  "verdict": "mixed",
+  "key_findings": [
+    "All 11 API/integration tests fail (24 service tests pass) due to a misconfigured in-memory SQLite fixture: 'sqlite:///:memory:' without StaticPool/check_same_thread gives the TestClient worker thread a fresh, empty database, so requests hit 'no such table: skus'.",
+    "There is no order-creation workflow anywhere: Repository.create_order/update_order_status/get_order, OrderModel and OrderStatus are dead code; GET /orders can only ever return an empty list and 'order state transitions' are never implemented.",
+    "Stock invariant is broken: confirming a reservation neither decrements SKU.stock_quantity nor keeps the quantity in the availability accounting (only PENDING reservations are counted), so confirmed holds release their stock and the SKU can be oversold.",
+    "list_orders (app.py:148) instantiates a module-level SessionLocal() per reservation, bypassing the get_db dependency/override and creating an N+1 + persistence-inconsistency footgun.",
+    "Service layering, error-to-HTTP mapping (404/409/410/400/401) and auth coverage are clean and the package is installable; service-level domain tests are solid."
+  ],
+  "score_rationale": {
+    "task_fulfillment": "Requested file/project structure, endpoints (health, SKU, stock, reservation lifecycle, paginated orders) and API-key security are present, but the order workflow is unimplemented and the 'production-ready' claim is undercut by a hardcoded key and import-time file DB.",
+    "functional_correctness": "Reservation creation, pending-stock accounting, idempotency, expiration and error semantics work, but confirmation does not hold/decrement stock (overselling) and orders cannot be created at all, so core domain invariants and state transitions are not actually enforced end-to-end.",
+    "executability": "Dependencies are complete and the package discovers under src-layout, and the app imports/serves, but the declared `pytest` command yields 11 failures + 4 errors, and the app writes ./commerce.db at import time (ambient state).",
+    "test_quality": "Breadth is good (happy path, insufficient stock, idempotency, expiration, auth, pagination), and service tests assert real state, but the API tests are entirely non-functional due to the cross-thread in-memory pool bug, so integration realism and repeatability are weak.",
+    "code_quality": "Readable, well-named, layered modules with invariants centralized in the service; weakened by dead order code, list_orders reaching past the DI boundary, and a README that overclaims production-readiness with no docstrings.",
+    "minimality": "Mostly lean (no queues/workers/CLIs), but OrderModel + three order repository methods + OrderStatus are unused, cleanup_expired_reservations is only exercised by tests, and pydantic-settings is a declared-but-unused dependency.",
+    "security_safety": "All mutating endpoints and GET /orders enforce verify_api_key and inputs are validated via Pydantic with pagination bounds; main deduction is the hardcoded in-source API key with no environment/config loading.",
+    "review_confidence": "All source and test files were read and the test command was executed; failure root causes (missing table across threads, oversell on confirm, dead order code, DI bypass) were verified directly with concrete file references."
+  },
+  "instruction_failures": [
+    "Order workflow / order state transitions requested but not implemented; no endpoint or service method ever creates an order.",
+    "README advertises a 'production-ready' service while shipping a hardcoded API key and an import-time SQLite file DB with no configurable settings (pydantic-settings unused)."
+  ],
+  "correctness_failures": [
+    "Confirming a reservation does not decrement SKU stock and drops the quantity from availability accounting (only PENDING counted), allowing overselling after confirmation (service.py:54-66, confirm_reservation 68-82).",
+    "GET /orders is permanently empty because no code path creates orders; order state transitions are unreachable (repository.py:84-107 dead).",
+    "list_orders opens a fresh module-level SessionLocal() per reservation (app.py:148) instead of the injected/overridden session, so order item lookups query a different database than writes in tests and risk inconsistency in production."
+  ],
+  "execution_failures": [
+    "`pytest` (declared command) → 11 failed, 24 passed, 4 errors.",
+    "Every API test fails with sqlite3.OperationalError: no such table: skus — fixture uses create_engine('sqlite:///:memory:') without StaticPool/check_same_thread, so the TestClient request thread gets a separate empty in-memory DB (test_api.py:13-19).",
+    "Teardown raises 'SQLite objects created in a thread can only be used in that same thread', same root cause."
+  ],
+  "test_gaps": [
+    "No test that confirmed reservations continue to hold stock (the actual overselling bug is untested).",
+    "No order-creation/order-listing-with-data test (only empty and pagination-shape assertions), so the missing order workflow is masked.",
+    "API tests do not actually execute behavior due to the DB fixture bug, so reported API coverage is illusory.",
+    "No test for adjust_stock driving stock negative or for reservation against a confirmed-hold scenario."
+  ],
+  "quality_notes": [
+    "Clean layer separation (models/repository/service/security/app) and clear error-to-HTTP mapping.",
+    "app.py:148 breaks the repository/DI boundary by constructing SessionLocal()+Repository inline inside the endpoint loop.",
+    "datetime.utcnow() used as SQLAlchemy default and in service logic — deprecated in 3.12 and timezone-naive; acceptable but not production-grade.",
+    "No docstrings; README overstates maturity."
+  ],
+  "unnecessary_code_examples": [
+    "repository.py:84-107 create_order/get_order/update_order_status — never called by any service method or endpoint.",
+    "models.py:19-23 OrderStatus and 48-54 OrderModel — only ever read by an always-empty path.",
+    "service.py:99-103 cleanup_expired_reservations — exercised only in tests, no endpoint/scheduler.",
+    "pyproject.toml:17 pydantic-settings dependency — never imported anywhere."
+  ],
+  "security_safety_notes": [
+    "verify_api_key dependency is applied to all mutating endpoints and to GET /orders (app.py:53-134); unauthorized/invalid-key paths return 401 (tested).",
+    "API key is hardcoded in security.py:6 (VALID_API_KEYS) with no env/config source; not a real leaked secret but unsuitable for production.",
+    "Inputs validated via Pydantic (min/max length, gt/ge) and pagination bounds enforced in app.py:135-138; no shell/network/destructive operations.",
+    "App writes ./commerce.db in the working directory at import time — minor ambient-state side effect."
+  ],
+  "file_evidence": [
+    {"path": "tests/test_api.py", "note": "Lines 13-19: in-memory engine without StaticPool/check_same_thread → all API tests fail across TestClient's worker thread with 'no such table'."},
+    {"path": "src/commerce_service/service.py", "note": "Lines 54-66 + 68-82: availability counts only PENDING reservations and confirm never decrements stock → confirmed holds release stock (oversell)."},
+    {"path": "src/commerce_service/repository.py", "note": "Lines 84-107: create_order/get_order/update_order_status are dead code; no caller creates orders."},
+    {"path": "src/commerce_service/app.py", "note": "Lines 128-162: GET /orders is the only order endpoint (read-only) and line 148 constructs module-level SessionLocal() bypassing get_db DI."},
+    {"path": "src/commerce_service/security.py", "note": "Line 6: hardcoded VALID_API_KEYS; no environment-based configuration."},
+    {"path": "pyproject.toml", "note": "Line 17 declares pydantic-settings which is never imported; tests rely on installed package (no [tool.setuptools] but src-layout auto-discovery works)."},
+    {"path": "src/commerce_service/models.py", "note": "Lines 117-118: get_engine writes ./commerce.db; app.py:29-32 creates it at import time."}
+  ],
+  "commands_run": [
+    "find . -type f (excluding caches) — enumerated project layout",
+    "python3 -c 'import fastapi, sqlalchemy, pydantic, httpx' — deps available",
+    "python3 -m pytest — 2 collection ImportErrors (package not installed)",
+    "PYTHONPATH=src python3 -m pytest -q — 11 failed, 24 passed, 4 errors",
+    "PYTHONPATH=src python3 -m pytest tests/test_api.py::test_create_sku_success — confirmed 'no such table: skus'",
+    "python3 -c 'from setuptools import find_packages; find_packages(\"src\")' — confirmed src-layout discovery of commerce_service"
+  ],
+  "review_risk": "low — all source and test files were read and the declared test command was run; tests were executed via PYTHONPATH=src rather than a full `pip install -e .`, but setuptools src-layout discovery was verified, so the API-test failures reflect a real fixture/threading bug rather than a missing install."
+}
+```

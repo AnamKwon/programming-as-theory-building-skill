@@ -1,0 +1,149 @@
+All 30 tests pass. I have enough evidence to score.
+
+```json
+{
+  "rubric_version": "benchmark-codegen-review-v1",
+  "score_scale": "0-100 per category",
+  "weights": {
+    "task_fulfillment": 0.20,
+    "functional_correctness": 0.25,
+    "executability": 0.15,
+    "test_quality": 0.15,
+    "code_quality": 0.10,
+    "minimality": 0.10,
+    "security_safety": 0.05
+  },
+  "task_fulfillment_score": 90,
+  "task_fulfillment_breakdown": {
+    "instruction_compliance": 90,
+    "required_artifacts": 92,
+    "feature_coverage": 92,
+    "constraint_adherence": 85
+  },
+  "functional_correctness_score": 83,
+  "functional_correctness_breakdown": {
+    "domain_invariants": 84,
+    "edge_case_behavior": 88,
+    "data_consistency": 68,
+    "error_semantics": 92
+  },
+  "executability_score": 89,
+  "executability_breakdown": {
+    "installability": 88,
+    "runtime_entrypoints": 92,
+    "command_result": 95,
+    "runtime_isolation": 82
+  },
+  "test_quality_score": 89,
+  "test_quality_breakdown": {
+    "required_test_coverage": 92,
+    "behavioral_assertions": 88,
+    "integration_realism": 90,
+    "repeatability": 85
+  },
+  "code_quality_score": 86,
+  "code_quality_breakdown": {
+    "readability": 90,
+    "maintainability": 80,
+    "boundary_design": 90,
+    "documentation_quality": 82
+  },
+  "minimality_score": 86,
+  "minimality_breakdown": {
+    "no_speculative_infrastructure": 95,
+    "no_dead_or_duplicate_code": 82,
+    "appropriate_abstractions": 90,
+    "dependency_minimality": 75
+  },
+  "security_safety_score": 87,
+  "security_safety_breakdown": {
+    "auth_enforcement": 95,
+    "secret_handling": 72,
+    "input_safety": 85,
+    "unsafe_operations": 95
+  },
+  "review_confidence_score": 93,
+  "review_confidence_breakdown": {
+    "inspection_depth": 95,
+    "command_evidence": 95,
+    "issue_specificity": 92,
+    "uncertainty_handling": 90
+  },
+  "weighted_components": {
+    "task_fulfillment": 18.0,
+    "functional_correctness": 20.8,
+    "executability": 13.4,
+    "test_quality": 13.4,
+    "code_quality": 8.6,
+    "minimality": 8.6,
+    "security_safety": 4.4
+  },
+  "weighted_total": 87.0,
+  "verdict": "good",
+  "key_findings": [
+    "Coherent, layered FastAPI project (models/repository/service/security/app); 30/30 tests pass locally via pytest.",
+    "Strong domain modeling: atomic conditional UPDATE in repository.reserve_stock (repository.py:231-247) guards against overselling; idempotency enforced by a UNIQUE idempotency_key column.",
+    "Excellent HTTP error semantics, including 410 Gone for expired reservations (app.py:105-106) and 409 for conflicts/already-processed.",
+    "Main weakness: confirm_reservation performs 4 separate single-connection writes (service.py:122-131) with no enclosing transaction, so a crash or concurrent confirm can leave inconsistent state (order created but reservation still pending, or duplicate orders).",
+    "Minor cleanliness issues: unused pydantic-settings dependency, unused `Optional` import in models.py, and a stray committed commerce.db artifact in the workspace."
+  ],
+  "score_rationale": {
+    "task_fulfillment": "All requested artifacts (pyproject.toml, README, src package, tests) exist and the full API surface is implemented: SKU/stock, reservation create/confirm/cancel, paginated orders, idempotency, expiration, API-key auth, health. Slight deduction because a stray commerce.db is shipped, indicating leftover ambient state.",
+    "functional_correctness": "Core invariants hold and edge cases (insufficient stock, idempotent retry, expiry double-check via clean_expired_reservations + per-request expires_at check, unauthorized, pagination) are handled with correct status codes. Deducted mainly for data_consistency: confirm is non-transactional across multiple connections and adjust_stock permits driving available_stock negative (AdjustStockRequest.quantity unbounded, models.py:28-30).",
+    "executability": "hatchling packaging is correct with packages=['src/commerce_service']; entrypoint commerce_service.app:app resolves and the documented uvicorn command is valid. pytest run produced 30 passed. Runtime isolation in tests is good (temp DB + dependency_overrides), but importing the app constructs Repository() at module load, writing commerce.db into cwd as a side effect.",
+    "test_quality": "Both unit (service) and integration (TestClient over real sqlite) layers cover every required scenario and assert real behavior (stock decremented to 90, reserved_stock 0, status EXPIRED, order status 'completed'), not just status codes. Repeatable via per-test temp DB. Minor: api_key fixture mutates os.environ without cleanup; no test for cancel-of-confirmed or negative stock adjustment.",
+    "code_quality": "Clean naming, clear layer boundaries, easy control flow. Maintainability is slightly weaker because transaction boundaries are implicit and domain invariants are split between service guards and raw SQL; no docstrings (README compensates).",
+    "minimality": "No speculative infrastructure (no queues/workers/CLIs/migrations). Loses points for an unused pydantic-settings dependency (never imported; security.py uses os.getenv) and an unused Optional import in models.py.",
+    "security_safety": "Every mutating endpoint requires get_api_key; SQL is fully parameterized; pydantic validates inputs. Deducted for a hardcoded default key 'dev-key-12345' used when API_KEY is unset (default-allow with a known key) and a non-constant-time string comparison for the key."
+  },
+  "instruction_failures": [
+    "A pre-built commerce.db (empty schema) is left in the workspace, contrary to a clean fresh-workspace expectation; it is a module-import side effect rather than required output."
+  ],
+  "correctness_failures": [
+    "confirm_reservation (service.py:122-131) is not atomic: create_order, confirm_reservation_stock, set_reservation_order, and update_reservation_status each run on separate connections/commits; an interruption or concurrent call can leave partial state or duplicate orders since there is no row lock.",
+    "adjust_stock accepts arbitrary (including large negative) quantities with no lower bound (models.py:28-30, repository.py:89-106), allowing available_stock to go negative.",
+    "clean_expired_reservations (repository.py:284-307) opens nested separate connections via release_reserved_stock while the outer connection is active, which is safe single-threaded but risks lock contention under concurrency."
+  ],
+  "execution_failures": [],
+  "test_gaps": [
+    "No test for cancelling or re-confirming a reservation in CONFIRMED state (the ValueError -> 409 path is unexercised).",
+    "No test that adjust_stock cannot drive stock negative (invariant untested).",
+    "No assertion on pagination ordering or behavior when skip exceeds total.",
+    "api_key fixture sets os.environ['API_KEY'] without restoring it, leaking state across the session (works only because the value is consistent)."
+  ],
+  "quality_notes": [
+    "Layering (models/repository/service/security/app) is clean and easy to follow.",
+    "Repository uses connection-per-call which is simple but prevents multi-statement transactions in the service layer.",
+    "No docstrings on service/repository methods; README is accurate and not padded."
+  ],
+  "unnecessary_code_examples": [
+    "src/commerce_service/models.py:3 — `from typing import Optional` is imported but never used.",
+    "pyproject.toml — pydantic-settings is declared as a dependency but never imported anywhere in src/ or tests/.",
+    "commerce.db committed in the workspace root is a leftover runtime artifact."
+  ],
+  "security_safety_notes": [
+    "security.py:10 hardcodes a default API key 'dev-key-12345' used when API_KEY env var is absent, creating a default-allow path with a publicly known credential.",
+    "API key check uses plain `!=` (security.py:11) rather than a constant-time comparison (hmac.compare_digest); low severity timing concern.",
+    "All SQL is parameterized; no injection risk observed. All mutating endpoints enforce get_api_key; GET /orders and /health are intentionally open."
+  ],
+  "file_evidence": [
+    {"path": "src/commerce_service/repository.py", "note": "reserve_stock (231-247) uses atomic conditional UPDATE WHERE available_stock >= quantity, correctly preventing oversell; clean_expired_reservations (284-307) uses nested connections."},
+    {"path": "src/commerce_service/service.py", "note": "create_reservation idempotency + stock check (37-78); confirm_reservation does non-transactional multi-step writes (122-131) and double-checks expiry (110-120)."},
+    {"path": "src/commerce_service/app.py", "note": "Correct status codes incl. 410 for expired (105-106), 409 conflicts, 403 auth; all mutations depend on get_api_key."},
+    {"path": "src/commerce_service/security.py", "note": "Hardcoded default key fallback and non-constant-time comparison (10-11)."},
+    {"path": "tests/test_api.py", "note": "Integration tests over TestClient + temp sqlite with dependency_overrides; covers auth, idempotency, expiry (293-325), pagination (228-282)."},
+    {"path": "tests/test_service.py", "note": "Unit tests assert stock/reserved levels and EXPIRED status, proving domain behavior (79-134)."},
+    {"path": "pyproject.toml", "note": "hatchling packaging correct; lists unused pydantic-settings dependency."}
+  ],
+  "commands_run": [
+    "ls -la; find src tests -type f",
+    "cat pyproject.toml; cat README.md",
+    "python3 -c 'import fastapi, pydantic, httpx, pytest' (deps ok)",
+    "PYTHONPATH=src python3 -m pytest -q (30 passed, 95 warnings)",
+    "PYTHONPATH=src python3 -c 'from commerce_service.app import app; print routes' (all endpoints resolve)",
+    "sqlite3 inspect of committed commerce.db (3 tables, 0 rows)",
+    "grep for pydantic_settings/BaseSettings/Settings, Optional usage, hmac/compare_digest"
+  ],
+  "review_risk": "low — all source and tests were read and the declared test command ran green (30/30); only single-threaded behavior was exercised, so the identified non-transactional confirm and concurrency risks are reasoned from code, not reproduced under load."
+}
+```

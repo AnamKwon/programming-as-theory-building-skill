@@ -1,0 +1,144 @@
+I've confirmed the critical bug by running the tests: 12 of 36 tests fail with `KeyError: 'idempotency_key'`. The entire confirm→order workflow is broken because `get_reservation_by_id` doesn't select `idempotency_key`, but `confirm_reservation` reads it. I also found that stock is never decremented on reservation/confirmation.
+
+```json
+{
+  "rubric_version": "benchmark-codegen-review-v1",
+  "score_scale": "0-100 per category",
+  "weights": {
+    "task_fulfillment": 0.20,
+    "functional_correctness": 0.25,
+    "executability": 0.15,
+    "test_quality": 0.15,
+    "code_quality": 0.10,
+    "minimality": 0.10,
+    "security_safety": 0.05
+  },
+  "task_fulfillment_score": 86,
+  "task_fulfillment_breakdown": {
+    "instruction_compliance": 80,
+    "required_artifacts": 95,
+    "feature_coverage": 82,
+    "constraint_adherence": 85
+  },
+  "functional_correctness_score": 35,
+  "functional_correctness_breakdown": {
+    "domain_invariants": 30,
+    "edge_case_behavior": 35,
+    "data_consistency": 35,
+    "error_semantics": 40
+  },
+  "executability_score": 70,
+  "executability_breakdown": {
+    "installability": 90,
+    "runtime_entrypoints": 85,
+    "command_result": 25,
+    "runtime_isolation": 80
+  },
+  "test_quality_score": 82,
+  "test_quality_breakdown": {
+    "required_test_coverage": 85,
+    "behavioral_assertions": 70,
+    "integration_realism": 85,
+    "repeatability": 88
+  },
+  "code_quality_score": 74,
+  "code_quality_breakdown": {
+    "readability": 85,
+    "maintainability": 70,
+    "boundary_design": 70,
+    "documentation_quality": 70
+  },
+  "minimality_score": 78,
+  "minimality_breakdown": {
+    "no_speculative_infrastructure": 88,
+    "no_dead_or_duplicate_code": 70,
+    "appropriate_abstractions": 85,
+    "dependency_minimality": 70
+  },
+  "security_safety_score": 86,
+  "security_safety_breakdown": {
+    "auth_enforcement": 95,
+    "secret_handling": 65,
+    "input_safety": 90,
+    "unsafe_operations": 95
+  },
+  "review_confidence_score": 92,
+  "review_confidence_breakdown": {
+    "inspection_depth": 95,
+    "command_evidence": 95,
+    "issue_specificity": 92,
+    "uncertainty_handling": 88
+  },
+  "weighted_components": {
+    "task_fulfillment": 17.2,
+    "functional_correctness": 8.8,
+    "executability": 10.5,
+    "test_quality": 12.3,
+    "code_quality": 7.4,
+    "minimality": 7.8,
+    "security_safety": 4.3
+  },
+  "weighted_total": 68.3,
+  "verdict": "mixed",
+  "score_rationale": {
+    "task_fulfillment": "All requested files and the full endpoint surface (SKUs, stock adjust, reservations create/confirm/cancel, orders get/list with pagination, health) are present, and README documents production considerations. Feature surface is complete but the confirm/order workflow does not actually function at runtime.",
+    "functional_correctness": "A fatal defect dominates this category: service.confirm_reservation (service.py:53) reads reservation['idempotency_key'], but repository.get_reservation_by_id (repository.py:118-130) never selects that column, raising KeyError on every confirm. This breaks order creation entirely. Separately, stock_qty is never decremented on reservation or confirmation (create_reservation only does a point-in-time check at service.py:39), so inventory and reservations diverge and overselling across multiple reservations is possible. The uncaught KeyError surfaces as HTTP 500 rather than a clean error.",
+    "executability": "Packaging and pinned dependencies are complete and the app imports/serves cleanly, but `pytest tests/` produces 12 failures of 36 (every confirm-dependent test). Test isolation via temp DB files is sound and there is no parent-directory dependence; the production DB defaults to commerce.db in the cwd.",
+    "test_quality": "Tests are genuinely good — they cover all required areas (happy paths, insufficient stock, reservation idempotency, expiration, auth 403, pagination), use a realistic FastAPI TestClient over a real temp SQLite DB, and isolate per-function. They correctly encode the intended behavior and thereby catch the implementation bug. They do not assert stock depletion (the missing invariant), and assertions lean somewhat on status/qty.",
+    "code_quality": "Clean layered separation (app/service/repository/models/security) with readable names and control flow. Weaknesses: service.py:100 _get_order_by_reservation embeds raw SQL that bypasses the repository boundary and duplicates the order SELECT, the reservation/stock invariant is not realized in code, and the README's 'production-ready' claim plus its 'Test Coverage' list overstate a project whose tests currently fail.",
+    "minimality": "Reasonably lean with no speculative queues/workers/CLIs. Minor dead/duplicate items: OrderStatus.CANCELLED is never used, `from typing import Optional` in models.py is unused, the order-select query is duplicated between repository and service, and pydantic-settings is declared as a dependency but never imported.",
+    "security_safety": "All mutating endpoints enforce the verify_api_key dependency, inputs are validated via Pydantic, and SQL is fully parameterized (no injection). Deduction for hardcoded API keys in source (security.py:6, including a 'prod-key-secret' value), though README flags replacing them.",
+    "review_confidence": "All source and test files were read in full and the declared test command was installed and executed, capturing exact failures and the root-cause line. Findings cite specific files/lines."
+  },
+  "instruction_failures": [
+    "README claims the project is 'production-ready' and lists working test coverage, but the delivered code fails 12/36 tests, so documentation overstates actual state."
+  ],
+  "correctness_failures": [
+    "confirm_reservation crashes with KeyError: 'idempotency_key' (service.py:53) because get_reservation_by_id (repository.py:118) omits idempotency_key from its SELECT — order creation is fully broken.",
+    "Stock is never decremented when a reservation is created or confirmed (service.create_reservation does only a read-time check at service.py:39; confirm_reservation at service.py:69-72 creates an order without adjusting stock), so concurrent/multiple reservations can oversell and inventory is inconsistent with outstanding reservations.",
+    "Because confirm raises an uncaught KeyError, the API returns HTTP 500 instead of a domain-appropriate status for the confirm endpoint.",
+    "Expired-reservation handling (service.py:64-67) is unreachable in practice since the KeyError fires earlier on the same code path."
+  ],
+  "execution_failures": [
+    "pytest tests/ -v => 12 failed, 24 passed: all confirm/order/pagination tests fail with KeyError: 'idempotency_key'.",
+    "datetime.utcnow() deprecation warnings emitted across repository.py and tests (non-fatal)."
+  ],
+  "test_gaps": [
+    "No test asserts stock_qty is reduced after a reservation/confirmation, so the missing stock-decrement invariant is not caught.",
+    "No test for cumulative reservations exceeding stock (oversell scenario).",
+    "Idempotent-confirm replay (already-confirmed returns existing order) is exercised but currently fails for the same KeyError reason rather than validating the intended replay behavior."
+  ],
+  "quality_notes": [
+    "service.py:100 _get_order_by_reservation contains raw SQL, violating the otherwise-clean repository boundary and duplicating repository.get_order_by_id's query.",
+    "Reservation/stock coupling is not modeled, so the core domain rule (a reservation holds inventory) is not visible anywhere in the code.",
+    "README 'Test Coverage' and 'production-ready' statements do not match the failing test suite."
+  ],
+  "unnecessary_code_examples": [
+    "OrderStatus.CANCELLED (models.py:17) is defined but never used.",
+    "`from typing import Optional` in models.py:3 is unused.",
+    "pydantic-settings dependency (pyproject.toml:14) is declared but never imported.",
+    "Duplicate order-select query between repository.get_order_by_id and service._get_order_by_reservation."
+  ],
+  "security_safety_notes": [
+    "Hardcoded API keys in security.py:6 including a 'prod-key-secret' literal; README recommends moving to env vars but they remain in source.",
+    "All mutation endpoints correctly depend on verify_api_key; GET endpoints are intentionally open.",
+    "SQL is parameterized throughout (no injection); Pydantic enforces input constraints (ge/gt/min_length)."
+  ],
+  "file_evidence": [
+    {"path": "src/commerce_service/service.py", "note": "Line 53 reads reservation['idempotency_key'], which the repository query never returns -> KeyError on confirm. Lines 39/69-72 show stock is checked but never decremented."},
+    {"path": "src/commerce_service/repository.py", "note": "get_reservation_by_id (118-130) and get_reservation_by_idempotency_key (132-144) omit idempotency_key from SELECT; create/confirm/cancel never modify skus.stock_qty."},
+    {"path": "src/commerce_service/app.py", "note": "Confirm endpoint (93-115) only catches ValidationError, so the KeyError escapes as HTTP 500; mutation endpoints correctly use Depends(verify_api_key)."},
+    {"path": "src/commerce_service/security.py", "note": "Hardcoded VALID_API_KEYS including 'prod-key-secret' (line 6)."},
+    {"path": "tests/test_service.py", "note": "test_confirm_reservation_success and 5 others fail at line 89/157 with KeyError; good temp-DB isolation but no stock-depletion assertions."},
+    {"path": "tests/test_api.py", "note": "TestClient-based integration tests with temp DB; confirm/order/pagination tests fail due to the same KeyError."},
+    {"path": "README.md", "note": "Claims 'production-ready' and lists passing test coverage that does not match the failing suite."}
+  ],
+  "commands_run": [
+    "find . -type f (excluding caches) — listed 10 project files",
+    "python3 --version — 3.12.4",
+    "pip install -e \".[dev]\" -q — installed (unrelated env conflicts only)",
+    "python3 -m pytest tests/ -v — 12 failed, 24 passed, KeyError: 'idempotency_key'"
+  ],
+  "review_risk": "low — all source and test files were read in full and the declared test command was installed and executed, with failures and root cause captured; concurrency behavior under real load was not stress-tested."
+}
+```

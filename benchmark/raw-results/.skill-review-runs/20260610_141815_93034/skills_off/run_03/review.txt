@@ -1,0 +1,156 @@
+I have enough evidence to score. Key empirical findings: the app imports and runs, but the declared `pytest tests/` command produces **16 failed + 14 errors out of 51 tests** — almost all in `test_api.py` due to a test-fixture bug (in-memory SQLite without `StaticPool`/`check_same_thread`, incompatible with `TestClient`'s threaded execution), plus a broken `test_reservation_expiration` (`session.query(Base)` — `Base` is not a mapped entity) and a `422 != 400` mismatch. The service layer's domain logic passes 17/18 of its own tests, confirming the implementation logic itself is sound.
+
+```json
+{
+  "rubric_version": "benchmark-codegen-review-v1",
+  "score_scale": "0-100 per category",
+  "weights": {
+    "task_fulfillment": 0.20,
+    "functional_correctness": 0.25,
+    "executability": 0.15,
+    "test_quality": 0.15,
+    "code_quality": 0.10,
+    "minimality": 0.10,
+    "security_safety": 0.05
+  },
+  "task_fulfillment_score": 88,
+  "task_fulfillment_breakdown": {
+    "instruction_compliance": 85,
+    "required_artifacts": 92,
+    "feature_coverage": 90,
+    "constraint_adherence": 85
+  },
+  "functional_correctness_score": 78,
+  "functional_correctness_breakdown": {
+    "domain_invariants": 82,
+    "edge_case_behavior": 80,
+    "data_consistency": 70,
+    "error_semantics": 78
+  },
+  "executability_score": 72,
+  "executability_breakdown": {
+    "installability": 88,
+    "runtime_entrypoints": 90,
+    "command_result": 30,
+    "runtime_isolation": 80
+  },
+  "test_quality_score": 61,
+  "test_quality_breakdown": {
+    "required_test_coverage": 85,
+    "behavioral_assertions": 82,
+    "integration_realism": 40,
+    "repeatability": 35
+  },
+  "code_quality_score": 84,
+  "code_quality_breakdown": {
+    "readability": 88,
+    "maintainability": 85,
+    "boundary_design": 82,
+    "documentation_quality": 80
+  },
+  "minimality_score": 77,
+  "minimality_breakdown": {
+    "no_speculative_infrastructure": 85,
+    "no_dead_or_duplicate_code": 72,
+    "appropriate_abstractions": 85,
+    "dependency_minimality": 65
+  },
+  "security_safety_score": 85,
+  "security_safety_breakdown": {
+    "auth_enforcement": 92,
+    "secret_handling": 70,
+    "input_safety": 82,
+    "unsafe_operations": 95
+  },
+  "review_confidence_score": 91,
+  "review_confidence_breakdown": {
+    "inspection_depth": 92,
+    "command_evidence": 92,
+    "issue_specificity": 90,
+    "uncertainty_handling": 88
+  },
+  "weighted_components": {
+    "task_fulfillment": 17.6,
+    "functional_correctness": 19.5,
+    "executability": 10.8,
+    "test_quality": 9.2,
+    "code_quality": 8.4,
+    "minimality": 7.7,
+    "security_safety": 4.3
+  },
+  "weighted_total": 77.4,
+  "verdict": "good",
+  "key_findings": [
+    "Complete, well-layered FastAPI service (app/service/repository/models/security) implementing every requested feature: SKU creation, stock adjustment, idempotent reservations with 10-min expiry, confirm-to-order, cancel, and paginated order listing.",
+    "Core domain logic is correct and verified: service-layer tests pass 17/18, covering availability calculation, idempotency, state transitions, insufficient stock, and expiration.",
+    "MAJOR: the declared `pytest tests/` command fails badly — 16 failed + 14 errors of 51 tests. Almost all API tests error because the in-memory SQLite fixture lacks StaticPool/check_same_thread and breaks under TestClient's threaded execution (tests/test_api.py:12-19).",
+    "tests/test_service.py:153 `session.query(Base)` is invalid (Base is the declarative base, not a mapped class) -> ArgumentError; the expiration test never actually exercises the path it claims to.",
+    "tests/test_api.py:309 expects HTTP 400 for page_size=101 but FastAPI Query(le=100) returns 422; README documents 400 for validation, so doc/behavior/test disagree.",
+    "Two declared runtime dependencies (pydantic-settings, python-dotenv) are never imported or used.",
+    "All mutating endpoints correctly enforce the X-API-Key dependency; reads (orders/health) are open by design."
+  ],
+  "score_rationale": {
+    "task_fulfillment": "All required endpoints, project structure, README, and the full reservation/order workflow are present and match the prompt's output contract. Production-minded layering and no parent/sibling reads. Minor deductions for unused deps and doc/behavior mismatch on validation status codes.",
+    "functional_correctness": "Domain invariants (available = stock - non-expired pending reservations, idempotent return of existing reservation, PENDING->CONFIRMED/CANCELLED/EXPIRED transitions, stock decrement at confirm) are implemented correctly and confirmed by passing service tests. Deducted for non-atomic confirm (three separate commits in service.py:90-98 risk partial state) and the documented-400-vs-actual-422 validation inconsistency plus dead ValueError guards in get_orders (service.py:113-118) shadowed by Query constraints.",
+    "executability": "Installable and the app imports cleanly (11 routes) with a usable uvicorn entrypoint and sane DATABASE_URL default. Heavily penalized on command_result: the declared test command fails for the majority of tests. The default DB writes ./commerce.db in cwd (acceptable), and there is no reliance on parent/sibling state.",
+    "test_quality": "Test intent is strong — coverage spans happy paths, insufficient stock, idempotency, expiration, auth, and pagination with real behavioral assertions (stock levels, statuses). But as written the suite is largely non-functional: the API fixture threading bug errors out ~all integration tests and the expiration test uses an invalid query, so repeatability and integration realism are low.",
+    "code_quality": "Readable, clearly named, cleanly separated layers with invariants concentrated in the service. README is concise and mostly accurate. Minor smells: a deferred `from sqlalchemy import func` at the bottom of repository.py (line 126) and a README claim of 400-for-validation that does not match runtime 422.",
+    "minimality": "No speculative queues/workers/migrations/CLIs; abstractions (repository + service) are justified. Deducted for two unused dependencies (pydantic-settings, python-dotenv), unreachable ValueError page guards, and an ineffective `Field(ne=0)` (unsupported in Pydantic v2, silently ignored).",
+    "security_safety": "Mutating endpoints uniformly require the API-key dependency; queries are ORM-parameterized (no injection); no shell/network/destructive operations; inputs validated via Pydantic. Deducted for a hardcoded, non-overridable API key ('secret-key') and the ignored delta!=0 constraint allowing a no-op zero adjustment.",
+    "review_confidence": "All source and test files were read; tests, an import smoke check, and a dependency-usage grep were run with captured results; findings cite concrete files/lines."
+  },
+  "instruction_failures": [
+    "README (lines 72-75) documents 400 for validation errors, but page_size>100 returns 422 from FastAPI Query validation; doc and behavior diverge."
+  ],
+  "correctness_failures": [
+    "confirm_reservation performs three independent commits (status, stock, order) with no enclosing transaction (service.py:90-98); a failure between them leaves inconsistent persisted state.",
+    "Field(ne=0) on StockAdjustmentRequest.delta (models.py:79) is not a valid Pydantic v2 constraint and is ignored, so delta=0 is accepted.",
+    "No row-level locking around availability check + reservation/confirm; concurrent requests could over-reserve (acceptable for SQLite demo but undocumented)."
+  ],
+  "execution_failures": [
+    "`pytest tests/`: 16 failed, 21 passed, 14 errors. Most test_api.py cases raise sqlite3.ProgrammingError 'SQLite objects created in a thread can only be used in that same thread' due to the in-memory fixture lacking StaticPool/check_same_thread (tests/test_api.py:12-19).",
+    "tests/test_service.py::test_reservation_expiration raises sqlalchemy ArgumentError from `session.query(Base)` (line 153).",
+    "tests/test_api.py::test_list_orders_invalid_page_size fails: asserts 400 but receives 422."
+  ],
+  "test_gaps": [
+    "No test passes that actually validates expiration end-to-end (the one expiration test is broken).",
+    "API-level pagination/auth/insufficient-stock tests exist but do not run, so the integration layer is effectively unverified by a clean run.",
+    "No test for stock-adjustment lowering availability below outstanding reservations, nor for confirming after cancellation.",
+    "No test asserting reserved-but-unexpired stock is released after expiry frees availability for a new reservation."
+  ],
+  "quality_notes": [
+    "repository.py:126 imports `func` at module bottom with a comment workaround instead of grouping it with the top imports.",
+    "Pydantic models use deprecated class-based Config (models.py:73,97,108) instead of ConfigDict; emits deprecation warnings.",
+    "datetime.utcnow() is used throughout (deprecated in newer Python) but functional here."
+  ],
+  "unnecessary_code_examples": [
+    "get_orders page/page_size guards (service.py:113-118) are unreachable from the API because Query(ge=1, le=100) validates first.",
+    "test_confirm_reservation_success creates an unused SKU002 at the end (tests/test_api.py:205-209).",
+    "pydantic-settings and python-dotenv listed as dependencies but never used in src/."
+  ],
+  "security_safety_notes": [
+    "API key is hardcoded as 'secret-key' (security.py:6) and cannot be overridden via env; fine for a demo but not production-safe.",
+    "verify_api_key uses a plain `!=` comparison (non-constant-time); negligible risk for a static demo key but worth noting.",
+    "All mutating endpoints (skus, stock/adjust, reservations, confirm, cancel) require the API key; GET /api/orders and /health are intentionally open."
+  ],
+  "file_evidence": [
+    {"path": "src/commerce_service/service.py", "note": "Correct domain logic: _calculate_available_stock excludes expired pending reservations; confirm decrements stock and creates order; but three separate commits are non-atomic."},
+    {"path": "src/commerce_service/repository.py", "note": "Clean data-access layer; deferred `from sqlalchemy import func` at line 126 is a smell."},
+    {"path": "src/commerce_service/app.py", "note": "Endpoints map ConflictError->409, NotFoundError->404, verify_api_key->401; list_orders relies on Query validation (422) while service raises ValueError->400 that is unreachable."},
+    {"path": "src/commerce_service/security.py", "note": "Hardcoded API_KEY='secret-key'; APIKeyHeader dependency enforced on mutations."},
+    {"path": "src/commerce_service/models.py", "note": "Field(ne=0) on delta is invalid in Pydantic v2 (ignored); deprecated class Config used."},
+    {"path": "tests/test_api.py", "note": "Fixture (lines 12-19) creates in-memory SQLite without StaticPool/check_same_thread -> threading errors under TestClient; line 309 asserts 400 but gets 422."},
+    {"path": "tests/test_service.py", "note": "17/18 pass, proving domain correctness; line 153 session.query(Base) is invalid and fails the only expiration test."},
+    {"path": "pyproject.toml", "note": "Sound packaging; declares pydantic-settings and python-dotenv that are never used."}
+  ],
+  "commands_run": [
+    "find . -type f (excluding caches) -> 11 project files listed",
+    "python3 -c import fastapi/sqlalchemy/pydantic/httpx/pytest -> all present (fastapi 0.104.1, sqlalchemy 2.0.23, pydantic 2.5.0, pytest 7.4.3)",
+    "PYTHONPATH=src python3 -m pytest tests/ -q -> 16 failed, 21 passed, 14 errors",
+    "PYTHONPATH=src python3 -m pytest tests/test_service.py --tb=line -> 1 failed, 17 passed",
+    "PYTHONPATH=src python3 -c 'from commerce_service.app import app' -> imported OK, 11 routes",
+    "grep -rn pydantic_settings|dotenv|Settings src/ -> no usage"
+  ],
+  "review_risk": "low — all source and tests were read and the declared test command, an import smoke check, and a dependency grep were run with captured output; the main uncertainty is whether the API test failures are purely fixture-threading artifacts (the underlying service logic verifiably passes), which I judged to be the case from the tracebacks."
+}
+```

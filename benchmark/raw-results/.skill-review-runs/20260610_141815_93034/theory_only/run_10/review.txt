@@ -1,0 +1,157 @@
+Confirmed: after a rejected negative adjustment the DB persists `available_quantity = -50.0` — `repository.adjust_inventory` commits before the service validates and never rolls back. Combined with the expiration-leak bug (a reservation marked `EXPIRED` in `confirm_reservation` never releases its `reserved_quantity`), I have enough to score.
+
+```json
+{
+  "rubric_version": "benchmark-codegen-review-v1",
+  "score_scale": "0-100 per category",
+  "weights": {
+    "task_fulfillment": 0.20,
+    "functional_correctness": 0.25,
+    "executability": 0.15,
+    "test_quality": 0.15,
+    "code_quality": 0.10,
+    "minimality": 0.10,
+    "security_safety": 0.05
+  },
+  "task_fulfillment_score": 87,
+  "task_fulfillment_breakdown": {
+    "instruction_compliance": 90,
+    "required_artifacts": 95,
+    "feature_coverage": 88,
+    "constraint_adherence": 85
+  },
+  "functional_correctness_score": 70,
+  "functional_correctness_breakdown": {
+    "domain_invariants": 66,
+    "edge_case_behavior": 70,
+    "data_consistency": 62,
+    "error_semantics": 82
+  },
+  "executability_score": 72,
+  "executability_breakdown": {
+    "installability": 90,
+    "runtime_entrypoints": 82,
+    "command_result": 32,
+    "runtime_isolation": 85
+  },
+  "test_quality_score": 68,
+  "test_quality_breakdown": {
+    "required_test_coverage": 90,
+    "behavioral_assertions": 85,
+    "integration_realism": 50,
+    "repeatability": 45
+  },
+  "code_quality_score": 83,
+  "code_quality_breakdown": {
+    "readability": 86,
+    "maintainability": 80,
+    "boundary_design": 87,
+    "documentation_quality": 80
+  },
+  "minimality_score": 86,
+  "minimality_breakdown": {
+    "no_speculative_infrastructure": 90,
+    "no_dead_or_duplicate_code": 80,
+    "appropriate_abstractions": 88,
+    "dependency_minimality": 90
+  },
+  "security_safety_score": 85,
+  "security_safety_breakdown": {
+    "auth_enforcement": 90,
+    "secret_handling": 80,
+    "input_safety": 74,
+    "unsafe_operations": 95
+  },
+  "review_confidence_score": 91,
+  "review_confidence_breakdown": {
+    "inspection_depth": 95,
+    "command_evidence": 92,
+    "issue_specificity": 92,
+    "uncertainty_handling": 85
+  },
+  "weighted_components": {
+    "task_fulfillment": 17.4,
+    "functional_correctness": 17.5,
+    "executability": 10.8,
+    "test_quality": 10.2,
+    "code_quality": 8.3,
+    "minimality": 8.6,
+    "security_safety": 4.3
+  },
+  "weighted_total": 77.1,
+  "verdict": "good",
+  "key_findings": [
+    "Clean layered architecture (models/repository/service/security/app) covering the full requested API surface: SKUs, inventory, reservations with idempotency, orders with pagination, API-key auth, and health.",
+    "All 13 service-layer tests pass; all 13 API integration tests FAIL with 'sqlite3.OperationalError: no such table: skus' — the in-memory SQLite fixture uses a default per-thread pool, so tables created on the main thread are invisible to the worker threads running sync endpoints. Needs StaticPool + a shared connection.",
+    "Data-consistency bug: repository.adjust_inventory commits the new quantity BEFORE the service validates it, then raises ValidationError without rollback — confirmed the DB is left at available_quantity = -50.0 after a rejected adjustment (repository.py:54-62, service.py:55-58).",
+    "Domain-invariant gap: confirm_reservation marks an expired reservation EXPIRED but never releases its reserved_quantity back to available, so expired reservations permanently leak reserved stock (service.py:133-135).",
+    "App itself is runnable against file-based SQLite; the failures are concentrated in the integration test harness, not the production code path."
+  ],
+  "score_rationale": {
+    "task_fulfillment": "Every requested artifact and endpoint exists with idempotency, expiration, pagination, and auth wired through a coherent service layer; constraints (fresh workspace, no parent reads, src layout) are respected. Minor: GET /orders 'optional API key for higher limits' described in README is not actually implemented.",
+    "functional_correctness": "Core happy paths and most edge cases hold (proven by passing service tests), but two real bugs subtract: the negative-adjustment commit leaves a negative balance persisted (verified), and expiration in confirm does not release reserved inventory. Idempotency returns the prior reservation without checking the new body matches. Error statuses (409/400/404/403) are otherwise clear.",
+    "executability": "Dependencies are pinned and packaging is plausible; app imports and the uvicorn entrypoint are usable. However half the declared test suite fails on execution (13/26), which is the dominant signal for command_result. Runtime isolation is good — no parent/sibling/ambient dependence.",
+    "test_quality": "Coverage of required scenarios is excellent (happy path, insufficient stock, idempotency, expiration, auth, pagination) and assertions check real domain state, not just status codes. But the entire integration layer is non-functional due to the fixture bug, so integration realism and repeatability are badly undermined — these tests cannot currently run green.",
+    "code_quality": "Readable, well-separated repository/service/schema/security boundaries with docstrings and a useful README. Maintainability is slightly hurt by the commit-before-validate pattern that spreads an invariant across layers, the class-name typo 'CommercService', and deprecated on_event/utcnow usage.",
+    "minimality": "No speculative queues/workers/migrations/CLIs; dependencies are all used (uvicorn for the documented run command). Small deductions for unused imports in tests (datetime, timedelta, os, Session) and the inefficient full-table load to compute the order count.",
+    "security_safety": "All mutating endpoints depend on verify_api_key and ORM use avoids injection. Deductions: input validation does not constrain quantity/ttl to positive values (negative reservation quantity would inflate available stock), the comparison is not constant-time, and the default dev key is shipped (documented, not a real secret).",
+    "review_confidence": "All source and test files were read, dependencies were present, the full suite was run, and the two suspected bugs were reproduced directly. Remaining uncertainty is mainly about hatchling src-layout auto-discovery during a real `pip install -e .`, which was not executed."
+  },
+  "instruction_failures": [
+    "README documents 'GET /orders - optional API key for higher limits' but list_orders has no API-key handling or limit differentiation (app.py:179-194)."
+  ],
+  "correctness_failures": [
+    "repository.adjust_inventory commits a negative available_quantity before the service rejects it, leaving the DB inconsistent (verified available_quantity=-50.0 after a failed adjust).",
+    "Expired reservation detected in confirm_reservation is marked EXPIRED but its reserved_quantity is never released to available, permanently leaking reserved stock (service.py:132-135).",
+    "Idempotent create_reservation returns the existing reservation without verifying the new request body (sku/qty/order) matches, silently ignoring divergent retries (service.py:81-84).",
+    "No positivity validation on reservation quantity or ttl_seconds; a negative quantity would pass the availability check and increase available stock on reserve."
+  ],
+  "execution_failures": [
+    "13/26 tests fail: every test in tests/test_api.py raises sqlite3.OperationalError 'no such table: skus' because the in-memory engine uses a per-thread connection (no StaticPool/shared connection), so tables created in the test thread are absent in the threadpool worker handling requests.",
+    "FastAPI startup uses deprecated @app.on_event('startup') and service uses deprecated datetime.utcnow() (warnings only, not failures)."
+  ],
+  "test_gaps": [
+    "Because all API tests fail, there is effectively no working integration coverage of auth-at-the-HTTP-boundary, pagination over HTTP, or response schemas.",
+    "No test asserts inventory state after a failed/rejected stock adjustment (would have caught the negative-commit bug).",
+    "No test verifies reserved inventory is released when a reservation expires (would have caught the expiration leak).",
+    "No test for unauthorized reservation confirm/cancel endpoints or invalid pagination params (page<1)."
+  ],
+  "quality_notes": [
+    "Class name 'CommercService' is misspelled (service.py:29) and re-used throughout.",
+    "Repository.list_orders loads all orders via select(Order).scalars().all() just to count them instead of a COUNT query (repository.py:138-143).",
+    "Repository instantiates a new Repository+CommercService per request inside every endpoint rather than via a dependency — works but repetitive.",
+    "Quantities modeled as Float; stock/units are typically integer and floats invite rounding drift."
+  ],
+  "unnecessary_code_examples": [
+    "tests/test_api.py imports os, uuid (used), datetime and timedelta (unused), and Session (unused).",
+    "tests/test_service.py imports datetime/timedelta that are unused.",
+    "security.get_api_key is fine, but no genuinely dead production code was found."
+  ],
+  "security_safety_notes": [
+    "All mutating endpoints (create_sku, adjust_stock, create/confirm/cancel reservation) require verify_api_key (app.py); read endpoints are open, consistent with the README.",
+    "Default API key 'dev-key-change-in-production' is shipped and documented; overridable via API_KEY env var — acceptable but should not be a real secret.",
+    "API key comparison uses '!=' (not constant-time); low risk for this scope.",
+    "Missing input bounds on quantity/ttl is a data-integrity risk (negative reservation quantity).",
+    "No shell/network/file operations beyond the local SQLite file; ORM parameterization avoids SQL injection."
+  ],
+  "file_evidence": [
+    {"path": "tests/test_api.py", "note": "Fixture creates create_engine('sqlite:///:memory:') without StaticPool/shared connection; all 13 tests fail with 'no such table: skus' when sync endpoints run in worker threads."},
+    {"path": "src/commerce_service/repository.py:54-62", "note": "adjust_inventory commits available_quantity change before validation; no rollback on the subsequent ValidationError."},
+    {"path": "src/commerce_service/service.py:49-58", "note": "adjust_stock raises ValidationError after the repository already committed a negative balance (reproduced: -50.0)."},
+    {"path": "src/commerce_service/service.py:132-135", "note": "Expired reservation marked EXPIRED in confirm without releasing reserved inventory back to available."},
+    {"path": "src/commerce_service/service.py:81-84", "note": "Idempotency returns existing reservation without comparing request payloads."},
+    {"path": "src/commerce_service/security.py:16-22", "note": "API-key dependency enforced; returns 403 for missing/invalid key (401 would be more conventional for missing auth)."},
+    {"path": "src/commerce_service/app.py:23-26", "note": "Deprecated on_event startup; init_db on the real file engine; works but warns."},
+    {"path": "pyproject.toml", "note": "Dependencies pinned; pytest asyncio_mode=auto and testpaths configured; relies on hatchling src-layout autodiscovery."}
+  ],
+  "commands_run": [
+    "python3 --version  (3.12.4)",
+    "python3 -c 'import fastapi, sqlalchemy, pydantic, httpx, pytest'  -> deps present",
+    "python3 -m pytest -q  -> 13 failed, 17 passed",
+    "python3 -m pytest tests/test_api.py::test_create_sku_success -q  -> sqlite3.OperationalError: no such table: skus",
+    "python3 -m pytest tests/test_service.py -q  -> 13 passed",
+    "python3 -c '<repro of adjust_stock negative>'  -> available_quantity = -50.0 after rejected adjust"
+  ],
+  "review_risk": "low — all files were read, dependencies were available, the full test suite was run, the integration-failure root cause and two domain bugs were reproduced directly; only a real `pip install -e .` (hatchling src-layout build) was not executed."
+}
+```

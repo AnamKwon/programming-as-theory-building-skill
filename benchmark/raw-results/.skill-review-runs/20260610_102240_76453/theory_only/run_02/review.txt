@@ -1,0 +1,161 @@
+All 34 tests pass. I've inspected every source file and verified key behaviors directly. Here is the benchmark evaluation.
+
+```json
+{
+  "rubric_version": "benchmark-codegen-review-v1",
+  "score_scale": "0-100 per category",
+  "weights": {
+    "task_fulfillment": 0.20,
+    "functional_correctness": 0.25,
+    "executability": 0.15,
+    "test_quality": 0.15,
+    "code_quality": 0.10,
+    "minimality": 0.10,
+    "security_safety": 0.05
+  },
+  "task_fulfillment_score": 84,
+  "task_fulfillment_breakdown": {
+    "instruction_compliance": 85,
+    "required_artifacts": 92,
+    "feature_coverage": 80,
+    "constraint_adherence": 78
+  },
+  "functional_correctness_score": 72,
+  "functional_correctness_breakdown": {
+    "domain_invariants": 60,
+    "edge_case_behavior": 78,
+    "data_consistency": 62,
+    "error_semantics": 88
+  },
+  "executability_score": 85,
+  "executability_breakdown": {
+    "installability": 85,
+    "runtime_entrypoints": 90,
+    "command_result": 95,
+    "runtime_isolation": 70
+  },
+  "test_quality_score": 84,
+  "test_quality_breakdown": {
+    "required_test_coverage": 90,
+    "behavioral_assertions": 82,
+    "integration_realism": 88,
+    "repeatability": 76
+  },
+  "code_quality_score": 84,
+  "code_quality_breakdown": {
+    "readability": 88,
+    "maintainability": 80,
+    "boundary_design": 90,
+    "documentation_quality": 78
+  },
+  "minimality_score": 74,
+  "minimality_breakdown": {
+    "no_speculative_infrastructure": 75,
+    "no_dead_or_duplicate_code": 70,
+    "appropriate_abstractions": 85,
+    "dependency_minimality": 65
+  },
+  "security_safety_score": 82,
+  "security_safety_breakdown": {
+    "auth_enforcement": 90,
+    "secret_handling": 75,
+    "input_safety": 68,
+    "unsafe_operations": 95
+  },
+  "review_confidence_score": 90,
+  "review_confidence_breakdown": {
+    "inspection_depth": 92,
+    "command_evidence": 92,
+    "issue_specificity": 90,
+    "uncertainty_handling": 85
+  },
+  "weighted_components": {
+    "task_fulfillment": 16.8,
+    "functional_correctness": 18.0,
+    "executability": 12.8,
+    "test_quality": 12.6,
+    "code_quality": 8.4,
+    "minimality": 7.4,
+    "security_safety": 4.1
+  },
+  "weighted_total": 80.1,
+  "verdict": "good",
+  "key_findings": [
+    "Complete, coherent FastAPI project with clean models/repository/service/app/security layering; all 34 tests pass under pytest (verified).",
+    "Domain-invariant bug: confirming a reservation never releases reserved_stock. Verified empirically — after reserve(10) then confirm, sku shows available=90, reserved=10 forever (service.py:83-109 omits a reserved_delta adjustment).",
+    "Order-level idempotency is advertised (README:11) and scaffolded (Order.idempotency_key unique column, OrderRepository.get_by_idempotency_key) but never wired: confirm_reservation never sets or checks it, so the order column is always None (verified).",
+    "Reservation-level idempotency works correctly (test_idempotent_reservation_with_key passes; verified id reuse).",
+    "Input-safety gaps: adjust_stock and create_reservation accept negative/zero quantities with no floor (verified adjust -1000 drives available_stock to -910).",
+    "Two declared dependencies (pydantic-settings, python-dateutil) are never imported anywhere in src/ or tests/.",
+    "Error semantics are strong and specific: 201/400/404/409/410/403/422 mapped appropriately."
+  ],
+  "score_rationale": {
+    "task_fulfillment": "All requested endpoints and the full SKU→reservation→order workflow exist with correct project structure (pyproject.toml, README.md, src/, tests/). Lost points because order-level idempotency is claimed but not implemented, and the tree ships build/runtime artifacts (commerce.db, egg-info) rather than a clean fresh workspace.",
+    "functional_correctness": "Reservation creation, expiration, cancel, and confirm state transitions mostly hold and error codes are correct, but the reserved_stock invariant is violated on confirm (verified) and persistence uses multiple non-atomic commits per operation (service.py:73-79) with read-modify-write stock math and no locking, so the reserved count drifts permanently.",
+    "executability": "Dependencies are pinned and the package installs cleanly; uvicorn entrypoint and module-level engine are usable; pytest run shows 34 passed. Docked for runtime isolation: the module creates commerce.db in CWD at import and test_api.py drop/create_all's that same file-backed engine (app.py:25-26, test_api.py:4-14), so running tests wipes the dev database, and a stale commerce.db is committed.",
+    "test_quality": "Coverage of all required behaviors (happy path, insufficient stock, idempotency, expiration, auth, pagination) across both API and service layers with realistic SQLite persistence. Behavioral assertions check stock restoration on cancel/expiry, not just status codes. Weakness: no test asserts reserved_stock after confirm (which would have caught the invariant bug), and API tests share/reset a file DB rather than an isolated one.",
+    "code_quality": "Readable names, clear repository/service/schema/security boundaries, and a single TTL constant. Maintainability suffers slightly because stock arithmetic is split between service and repository and the confirm path omits reserved bookkeeping; README slightly overstates idempotency; no docstrings.",
+    "minimality": "Mostly proportional, but contains dead/unused surface: empty ReservationConfirmRequest/ReservationCancelRequest models, an unused Order.idempotency_key path, OrderRepository.get_by_idempotency_key filtering on a CANCELLED order state that no code ever produces, and two unused dependencies.",
+    "security_safety": "Every mutating endpoint enforces verify_api_key; no shell/file/network side effects. Docked for input validation gaps (negative/zero quantities accepted, stock can go negative) and a hardcoded default API key that is not environment-configurable.",
+    "review_confidence": "Read all source and test files, ran the full suite, and wrote a direct probe confirming the reserved_stock, order-idempotency, and negative-stock findings. Remaining uncertainty is only around concurrency behavior, which was reasoned about rather than load-tested."
+  },
+  "instruction_failures": [
+    "README advertises order de-duplication via idempotency keys, but confirm_reservation neither accepts nor sets an order idempotency_key (service.py:83-109); the feature is unimplemented.",
+    "Workspace is not fully fresh/clean: a populated commerce.db and src/commerce_service.egg-info build metadata are present in the tree."
+  ],
+  "correctness_failures": [
+    "reserved_stock is never decremented when a reservation is confirmed into an order, so it grows without bound and stops reflecting reality (verified: avail=90/reserved=10 persists after confirm; service.py:97-107).",
+    "Stock operations are split across multiple independent commits (service.py:73-79; create then key-set then stock-update) with no transaction or row lock, risking partial updates and lost updates under concurrency.",
+    "adjust_stock permits driving available_stock negative with no floor check (verified -910; service.py:41-45, repository.py:22-29).",
+    "create_reservation does not validate quantity > 0; zero/negative reservation quantities are not rejected (models.py:81-84, service.py:47-81)."
+  ],
+  "execution_failures": [
+    "test_api.py reuses the application's file-backed engine and drop/create_all's commerce.db, so the test run mutates/destroys the on-disk dev database (test_api.py:4-14, app.py:25-26).",
+    "Idempotent-key persistence depends on a unique constraint set in a second commit; two concurrent same-key reservations could both pass the existence check and the second commit would raise IntegrityError (500) rather than returning the existing reservation (service.py:55-77)."
+  ],
+  "test_gaps": [
+    "No assertion of sku.reserved_stock after a confirm — this omission is exactly why the reserved_stock invariant bug went undetected.",
+    "No test for the advertised order-level idempotency key (duplicate order prevention).",
+    "No test for negative/zero quantity on reservations or for adjust_stock driving stock negative.",
+    "No test for confirming or cancelling an already-confirmed/cancelled reservation via the API layer (only service-level test_cancel_non_active covers part of this)."
+  ],
+  "quality_notes": [
+    "Layering (models / repository / service / app / security) is clean and easy to follow.",
+    "confirm_reservation creates an Order as PENDING then immediately updates it to CONFIRMED in a second commit; the PENDING state is never observable and the extra commit is wasteful (service.py:100-107).",
+    "Uses deprecated datetime.utcnow() throughout (435 deprecation warnings in the test run); naive datetimes also make expiry comparisons timezone-fragile.",
+    "ErrorResponse pydantic model is defined (models.py:123-125) but endpoints raise plain HTTPException, so it is unused."
+  ],
+  "unnecessary_code_examples": [
+    "ReservationConfirmRequest and ReservationCancelRequest are empty Pydantic models passed as optional null bodies (models.py:97-102, app.py:114,142) — no fields, no purpose.",
+    "Order.idempotency_key column and OrderRepository.get_by_idempotency_key (models.py:57, repository.py:99-104) are never used by any code path.",
+    "OrderRepository.get_by_idempotency_key filters status != CANCELLED, but no code path ever sets an order to CANCELLED — a permanently unreachable condition.",
+    "ErrorResponse model (models.py:123-125) is defined but never referenced.",
+    "Dependencies pydantic-settings and python-dateutil are declared but imported nowhere."
+  ],
+  "security_safety_notes": [
+    "All mutating endpoints (skus, adjust-stock, reservations, confirm, cancel) require verify_api_key; read endpoints are intentionally open (security.py, app.py).",
+    "Default API key 'test-key-123' is hardcoded in source (security.py:6) and documented in README; acceptable as a dev default but not environment-overridable, so it would leak into production unchanged.",
+    "Input validation is incomplete: negative/zero quantities and negative resulting stock are accepted, a data-integrity risk.",
+    "No unsafe shell/file/network/destructive operations in application code."
+  ],
+  "file_evidence": [
+    {"path": "src/commerce_service/service.py", "note": "confirm_reservation (83-109) updates statuses and creates the order but never adjusts reserved_stock; create_reservation (47-81) uses 3 separate commits and no quantity floor."},
+    {"path": "src/commerce_service/repository.py", "note": "update_stock (22-29) applies deltas with no non-negativity guard; OrderRepository.get_by_idempotency_key (99-104) is unused and filters an unreachable CANCELLED state."},
+    {"path": "src/commerce_service/models.py", "note": "Order.idempotency_key unique column (57) unused; empty ReservationConfirm/CancelRequest (97-102); unused ErrorResponse (123-125); utcnow defaults."},
+    {"path": "src/commerce_service/app.py", "note": "Module-level engine creates commerce.db in CWD (25-26); appropriate HTTP status mapping (60/80/106-108/132-136)."},
+    {"path": "src/commerce_service/security.py", "note": "API-key dependency enforced on mutations; hardcoded VALID_API_KEYS default (6)."},
+    {"path": "tests/test_api.py", "note": "Shares app's file-backed engine and drop/create_all's it each test (4-14), wiping the dev DB; good coverage of auth/pagination/idempotency/insufficient-stock."},
+    {"path": "tests/test_service.py", "note": "In-memory SQLite per test (15-23); strong stock-restoration and expiry assertions, but no reserved_stock-after-confirm check."},
+    {"path": "pyproject.toml", "note": "Pinned deps; pydantic-settings and python-dateutil declared but never imported."},
+    {"path": "commerce.db", "note": "Populated SQLite artifact committed into the workspace; not a clean fresh tree."}
+  ],
+  "commands_run": [
+    "find . -type f (excluding caches) — enumerated project layout",
+    "python3 -c import fastapi/sqlalchemy/pydantic/httpx — confirmed deps available",
+    "PYTHONPATH=src python3 -m pytest tests/ -q — 34 passed, 435 warnings",
+    "PYTHONPATH=src python3 probe — verified reserved_stock not released on confirm (avail=90/reserved=10), order idempotency_key=None, adjust -1000 -> available -910",
+    "grep -rn pydantic_settings|BaseSettings|dateutil src/ tests/ — confirmed both deps unused"
+  ],
+  "review_risk": "low — all source and test files were read, the full suite was run (34 passed), and the reserved-stock, order-idempotency, and negative-stock findings were confirmed by direct execution; only concurrency/transaction behavior was reasoned about rather than load-tested."
+}
+```

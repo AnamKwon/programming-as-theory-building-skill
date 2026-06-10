@@ -1,0 +1,153 @@
+All checks done. I inspected every source and test file, ran the full suite (36 pass), and ran targeted probes that confirmed two concrete issues. Here is my evaluation.
+
+```json
+{
+  "rubric_version": "benchmark-codegen-review-v1",
+  "score_scale": "0-100 per category",
+  "weights": {
+    "task_fulfillment": 0.20,
+    "functional_correctness": 0.25,
+    "executability": 0.15,
+    "test_quality": 0.15,
+    "code_quality": 0.10,
+    "minimality": 0.10,
+    "security_safety": 0.05
+  },
+  "task_fulfillment_score": 84,
+  "task_fulfillment_breakdown": {
+    "instruction_compliance": 85,
+    "required_artifacts": 95,
+    "feature_coverage": 80,
+    "constraint_adherence": 78
+  },
+  "functional_correctness_score": 66,
+  "functional_correctness_breakdown": {
+    "domain_invariants": 68,
+    "edge_case_behavior": 70,
+    "data_consistency": 62,
+    "error_semantics": 62
+  },
+  "executability_score": 86,
+  "executability_breakdown": {
+    "installability": 88,
+    "runtime_entrypoints": 90,
+    "command_result": 95,
+    "runtime_isolation": 70
+  },
+  "test_quality_score": 82,
+  "test_quality_breakdown": {
+    "required_test_coverage": 82,
+    "behavioral_assertions": 85,
+    "integration_realism": 85,
+    "repeatability": 75
+  },
+  "code_quality_score": 84,
+  "code_quality_breakdown": {
+    "readability": 88,
+    "maintainability": 82,
+    "boundary_design": 88,
+    "documentation_quality": 80
+  },
+  "minimality_score": 86,
+  "minimality_breakdown": {
+    "no_speculative_infrastructure": 88,
+    "no_dead_or_duplicate_code": 78,
+    "appropriate_abstractions": 88,
+    "dependency_minimality": 92
+  },
+  "security_safety_score": 88,
+  "security_safety_breakdown": {
+    "auth_enforcement": 95,
+    "secret_handling": 70,
+    "input_safety": 92,
+    "unsafe_operations": 95
+  },
+  "review_confidence_score": 90,
+  "review_confidence_breakdown": {
+    "inspection_depth": 92,
+    "command_evidence": 92,
+    "issue_specificity": 90,
+    "uncertainty_handling": 85
+  },
+  "weighted_components": {
+    "task_fulfillment": 16.8,
+    "functional_correctness": 16.5,
+    "executability": 12.9,
+    "test_quality": 12.3,
+    "code_quality": 8.4,
+    "minimality": 8.6,
+    "security_safety": 4.4
+  },
+  "weighted_total": 79.9,
+  "verdict": "good",
+  "key_findings": [
+    "Clean three-layer design (repository/service/schemas/security); all required endpoints present and the full suite passes (36 passed in 0.52s).",
+    "Core reservation 'hold' invariant is weak: reservations do not decrement or reserve available stock, so two reservations each equal to full stock both succeed (verified: reserve1=201, reserve2=201). Overselling is only prevented later at confirm time (confirm2=400).",
+    "Duplicate SKU creation raises an unhandled sqlite3.IntegrityError -> HTTP 500 (verified) because create_sku does not guard the UNIQUE primary key and the route only catches ValueError.",
+    "All 'not found' conditions return HTTP 400 instead of 404 (verified for SKU adjust and reservation confirm), so error semantics are imprecise.",
+    "Idempotency, expiration, state transitions, auth, and pagination all behave correctly and are tested.",
+    "confirm_reservation performs adjust_stock + create_order + confirm_order + update_reservation_state across four separate connections/transactions, so it is not atomic under failure."
+  ],
+  "score_rationale": {
+    "task_fulfillment": "All requested files and endpoints exist (app.py:25-99, README.md:14-25) and the output contract is met. Deductions: the 'hold inventory' feature is overstated vs. actual behavior, duplicate-SKU handling is missing, and a runtime commerce.db file sits in the fresh workspace (commerce.db, app.py:18).",
+    "functional_correctness": "Idempotency (service.py:30-38), expiration (service.py:71-72), and state transitions (service.py:68-69,108-109) are correct, and confirm re-checks stock defensively (service.py:74-76). But the reservation availability check (service.py:43-44) compares against total physical stock without accounting for outstanding holds, allowing over-commit; duplicate SKU crashes with 500; not-found maps to 400; and multi-statement confirm is non-transactional.",
+    "executability": "pyproject.toml is complete with pinned deps and an src layout hatchling auto-detects; uvicorn entrypoint and Repository defaults are usable. 36 tests pass even against locally-installed older versions (fastapi 0.110, pydantic 2.6). Runtime isolation is the weak point: API tests run against the on-disk commerce.db via the module-level repo and only relabel an unused :memory: repo (test_api.py:11-14), leaving a DB artifact.",
+    "test_quality": "Covers happy path, insufficient stock, idempotency, expiration, auth (valid/invalid/missing), state transitions, and pagination with real behavioral assertions (test_service.py:175-196, test_api.py:259-295). Gaps: no over-reservation test, no duplicate-SKU test, and expiration is only tested at the service level. API tests share a file DB cleared per-fixture (test_api.py:8-15) so they are repeatable but not parallel-safe.",
+    "code_quality": "Readable names and clean layer boundaries; business rules are localized to the service layer. Minor maintainability drag from duplicated row->dict mapping in repository.get_reservation vs get_reservation_by_idempotency_key (repository.py:118-152), and README.md:8 'Hold inventory' overstates actual semantics.",
+    "minimality": "No speculative queues/workers/CLIs; dependencies are all used. Small blemishes: an unused Repository(':memory:') in the API test fixture (test_api.py:11), an unused idx_orders_state index (repository.py:45-46), and an empty ReservationConfirm model used only as a body placeholder (models.py:41-42, app.py:70).",
+    "security_safety": "Every mutating endpoint depends on verify_api_key (app.py:34,47,59,72,84) and SQL is fully parameterized with Pydantic validation at the boundary. Deduction only for the hardcoded API key constant rather than env-sourced config (security.py:4), acceptable as a test key but not production-minded.",
+    "review_confidence": "All source and test files were read, the declared test command was run successfully, and targeted scripts confirmed the 500-on-duplicate-SKU and over-reservation behaviors and the 400 not-found codes. Remaining uncertainty is mainly around concurrency behavior, which was reasoned about but not load-tested."
+  },
+  "instruction_failures": [
+    "README advertises reservations that 'Hold inventory' (README.md:8), but reservations never reserve/decrement stock, so the documented behavior is not actually implemented.",
+    "A runtime commerce.db (49152 bytes) is present in the otherwise fresh workspace and is the default DB the app and API tests use (app.py:18)."
+  ],
+  "correctness_failures": [
+    "Over-commit: create_reservation checks sku.quantity >= requested against total physical stock only (service.py:43-44); two reservations each equal to full stock both return 201 (verified), so reservation success does not guarantee confirmability.",
+    "Duplicate SKU creation is unhandled: repository.create_sku (repository.py:62-67) raises sqlite3.IntegrityError on the UNIQUE PK, and the route only catches ValueError (app.py:36-39), yielding HTTP 500 (verified).",
+    "Not-found conditions return 400 rather than 404 for unknown SKU and unknown reservation (verified; service.py:22,42,66 raise ValueError mapped to 400 at app.py:39,52,77).",
+    "confirm_reservation is non-atomic: adjust_stock, create_order, confirm_order, and update_reservation_state each open separate connections (service.py:81-90), so a mid-sequence failure leaves partial state."
+  ],
+  "execution_failures": [
+    "API tests mutate an on-disk commerce.db through the module-level repo and only construct (then discard) a :memory: Repository (test_api.py:11-14), so test execution depends on and rewrites a workspace file rather than isolated in-memory state."
+  ],
+  "test_gaps": [
+    "No test asserts the reservation 'hold' invariant or the over-commit scenario (two reservations exceeding stock).",
+    "No test for duplicate SKU creation, which currently 500s.",
+    "Expiration is only exercised at the service layer (test_service.py:175-187); no API-level expiration test.",
+    "No test asserts not-found status-code semantics (404 vs 400)."
+  ],
+  "quality_notes": [
+    "Duplicated row-to-dict mapping between repository.get_reservation and get_reservation_by_idempotency_key (repository.py:118-152) could be a shared helper.",
+    "OrderResponse/order table carry SHIPPED and CANCELLED states (models.py:9-10) but no transition produces them, so part of the documented order lifecycle is unimplemented.",
+    "README 'Design Notes' claim a clean transactional boundary, but cross-method calls in confirm are not wrapped in a single transaction."
+  ],
+  "unnecessary_code_examples": [
+    "test_api.py:11 — `repo = Repository(\":memory:\")` is created and never used; the fixture then operates on the imported app_repo.",
+    "repository.py:45-46 — idx_orders_state index is never used by any query (no state-filtered SELECT).",
+    "models.py:41-42 — ReservationConfirm is an empty model used only as an unused request-body placeholder (app.py:70)."
+  ],
+  "security_safety_notes": [
+    "All mutating endpoints enforce verify_api_key (app.py:34,47,59,72,84); GET /orders and /health are intentionally public.",
+    "API key is a hardcoded module constant (security.py:4) rather than environment-sourced; fine as a test default but not production-minded and ships the key in source.",
+    "All SQL uses parameter binding (repository.py), and Pydantic Field constraints bound inputs (models.py:13-30), so no obvious injection or unbounded-input risk."
+  ],
+  "file_evidence": [
+    {"path": "src/commerce_service/service.py", "note": "create_reservation availability check (lines 43-44) uses total stock, not available-minus-reserved, enabling over-commit; confirm (74-90) re-checks stock but runs four separate transactions."},
+    {"path": "src/commerce_service/repository.py", "note": "create_sku (62-67) does not guard UNIQUE PK -> IntegrityError surfaces as 500; duplicated reservation mapping (118-152); unused idx_orders_state (45-46)."},
+    {"path": "src/commerce_service/app.py", "note": "Routes catch only ValueError -> 400 for all domain errors including not-found (39,52,77); module-level repo bound to commerce.db (18)."},
+    {"path": "src/commerce_service/security.py", "note": "Hardcoded VALID_API_KEY constant (4); verify_api_key returns 401 on mismatch (9-13)."},
+    {"path": "tests/test_service.py", "note": "Strong behavioral coverage incl. expiration (175-187), state transitions (190-196), pagination (229-246) via shared in-memory InMemoryRepository."},
+    {"path": "tests/test_api.py", "note": "Unused :memory: Repository (11); API tests run against on-disk commerce.db cleared per fixture (12-15); no expiration/over-reservation/duplicate-SKU tests."},
+    {"path": "commerce.db", "note": "49152-byte runtime DB artifact present in the fresh workspace."}
+  ],
+  "commands_run": [
+    "find . -type f ... | sort (listed project files)",
+    "cat __init__.py files; ls -la commerce.db; python3 --version (Python 3.12.4)",
+    "python3 -c import fastapi,httpx,pydantic (fastapi 0.110.0, httpx 0.25.2, pydantic 2.6.0)",
+    "PYTHONPATH=src python3 -m pytest tests/ -q (36 passed in 0.52s)",
+    "Targeted TestClient probes: duplicate SKU -> 500; reserve1/reserve2 both 201 (over-commit); confirm1 200 / confirm2 400; not-found -> 400"
+  ],
+  "review_risk": "low — all source and tests were read, the declared test command passed, and the two main defects (duplicate-SKU 500, over-reservation) plus the 400/404 semantics were reproduced; only multi-client concurrency behavior was reasoned about rather than load-tested, and tests ran against slightly older installed dependency versions than the pinned ones."
+}
+```

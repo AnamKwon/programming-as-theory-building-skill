@@ -1,0 +1,156 @@
+I have enough evidence. Tests: 16 passed (service layer), 11 failed + 10 errors (entire API suite) due to a broken in-memory SQLite fixture; the production app works correctly via file DB. Here is the evaluation.
+
+```json
+{
+  "rubric_version": "benchmark-codegen-review-v1",
+  "score_scale": "0-100 per category",
+  "weights": {
+    "task_fulfillment": 0.20,
+    "functional_correctness": 0.25,
+    "executability": 0.15,
+    "test_quality": 0.15,
+    "code_quality": 0.10,
+    "minimality": 0.10,
+    "security_safety": 0.05
+  },
+  "task_fulfillment_score": 85,
+  "task_fulfillment_breakdown": {
+    "instruction_compliance": 82,
+    "required_artifacts": 90,
+    "feature_coverage": 88,
+    "constraint_adherence": 78
+  },
+  "functional_correctness_score": 70,
+  "functional_correctness_breakdown": {
+    "domain_invariants": 68,
+    "edge_case_behavior": 70,
+    "data_consistency": 68,
+    "error_semantics": 75
+  },
+  "executability_score": 74,
+  "executability_breakdown": {
+    "installability": 85,
+    "runtime_entrypoints": 90,
+    "command_result": 35,
+    "runtime_isolation": 85
+  },
+  "test_quality_score": 61,
+  "test_quality_breakdown": {
+    "required_test_coverage": 85,
+    "behavioral_assertions": 72,
+    "integration_realism": 40,
+    "repeatability": 45
+  },
+  "code_quality_score": 84,
+  "code_quality_breakdown": {
+    "readability": 88,
+    "maintainability": 78,
+    "boundary_design": 88,
+    "documentation_quality": 82
+  },
+  "minimality_score": 77,
+  "minimality_breakdown": {
+    "no_speculative_infrastructure": 88,
+    "no_dead_or_duplicate_code": 70,
+    "appropriate_abstractions": 85,
+    "dependency_minimality": 65
+  },
+  "security_safety_score": 84,
+  "security_safety_breakdown": {
+    "auth_enforcement": 88,
+    "secret_handling": 78,
+    "input_safety": 78,
+    "unsafe_operations": 92
+  },
+  "review_confidence_score": 90,
+  "review_confidence_breakdown": {
+    "inspection_depth": 92,
+    "command_evidence": 92,
+    "issue_specificity": 90,
+    "uncertainty_handling": 85
+  },
+  "weighted_components": {
+    "task_fulfillment": 17.0,
+    "functional_correctness": 17.5,
+    "executability": 11.1,
+    "test_quality": 9.2,
+    "code_quality": 8.4,
+    "minimality": 7.7,
+    "security_safety": 4.2
+  },
+  "weighted_total": 75.1,
+  "verdict": "good",
+  "key_findings": [
+    "Clean, well-layered FastAPI service (models / repository / service / security / app) covering every requested feature: SKUs, stock adjust, reservation create/confirm/cancel, idempotency, expiration, API-key auth, and paginated order listing.",
+    "Declared test command fails: `pytest` yields 16 passed but 11 failed + 10 errors — the ENTIRE tests/test_api.py integration suite is broken by an in-memory SQLite fixture (no StaticPool / check_same_thread), causing cross-thread 'SQLite objects created in a thread' and 'no such table' errors under TestClient.",
+    "Production app verified working end-to-end with a file DB (create SKU 201, reserve 201, idempotent retry returns same id, insufficient stock 409, orders list correct) — the failure is confined to test wiring, not the runtime app.",
+    "Domain invariant gap: an expired reservation (marked lazily on confirm at service.py:92-94) never returns its decremented stock, unlike cancel (service.py:121-122), so expirations silently leak stock.",
+    "Auth semantics: a missing API-key header returns 422 (Header(...) required) instead of 401/403; test_create_sku_unauthorized expects 403 and fails.",
+    "Unused declared dependencies (pydantic-settings, python-dotenv) and dead code (repository.cancel_order, the unreachable empty-key branch in security.verify_api_key)."
+  ],
+  "score_rationale": {
+    "task_fulfillment": "All requested artifacts and the full API surface are present and well organized; constraint adherence is good (env-driven config, no parent reads) but production-mindedness is dented by non-atomic multi-commit writes and stock leakage on expiry.",
+    "functional_correctness": "Happy paths, insufficient stock, idempotency, and core state transitions are correct (verified by smoke test), but expiration leaks stock, create_reservation is not transactional across its three commits, order auto-confirm via all() breaks if any reservation was cancelled, and missing-key auth returns 422.",
+    "executability": "Packaging, imports, and the real entrypoint work and are isolated, but the declared `pytest` command fails for the whole API suite due to a broken fixture, heavily penalizing command_result.",
+    "test_quality": "Coverage of required scenarios is on paper complete and service-layer tests assert real behavior (stock levels, statuses, ids), but the integration suite does not run at all and is not repeatable as written; one cancel test asserts /health instead of actually checking released stock.",
+    "code_quality": "Readable names, clear module boundaries, accurate README; minor issues are the misleading split auth comment and stock-release logic that is present in cancel but absent in expire.",
+    "minimality": "No speculative infra (no queues/workers/migrations/CLI), but two unused dependencies and a couple of dead/unreachable code paths pull this down.",
+    "security_safety": "Mutating endpoints all enforce the API-key dependency, ORM use avoids injection, and inputs are validated by Pydantic; weak spots are a weak default key, unbounded pagination limit/offset, and unauthenticated order listing (read-only, acceptable).",
+    "review_confidence": "All eight source/test files were read, the declared test suite was run, root causes were isolated, and the production path was independently smoke-tested with both in-memory and file DBs."
+  },
+  "instruction_failures": [
+    "Missing-API-key requests return HTTP 422 rather than a 401/403 auth response, contradicting expected auth semantics (security.py:4 uses Header(...) required; app.py:57-63 validates value only after the header exists).",
+    "README claims `pytest` runs the suite, but the suite does not pass as shipped."
+  ],
+  "correctness_failures": [
+    "service.py:91-94 — expired reservations are marked EXPIRED but the previously decremented stock is never restored, leaking inventory (cancel restores at service.py:121-122; expire does not).",
+    "service.py:104-109 — order is auto-confirmed only if ALL reservations are CONFIRMED via all(); a single cancelled/expired reservation permanently blocks order confirmation.",
+    "service.py:63-82 — create_reservation performs order-create, reservation-create, and stock-adjust as separate commits with no transaction boundary; a mid-sequence failure leaves orphaned orders/inconsistent stock.",
+    "app.py:181-189 — /orders accepts arbitrary limit/offset with no upper bound or non-negative validation."
+  ],
+  "execution_failures": [
+    "tests/test_api.py fixtures create `sqlite:///:memory:` without StaticPool or check_same_thread=False (lines 13-23); under TestClient's worker thread this raises 'SQLite objects created in a thread can only be used in that same thread' and 'no such table: skus' — 11 failed, 10 errors.",
+    "test_create_sku_unauthorized (test_api.py:44-53) fails first on `assert 422 == 403` because missing header is a validation error, not a 403."
+  ],
+  "test_gaps": [
+    "No PASSING integration/API test (entire test_api.py errors out), so HTTP-level status mapping and serialization are effectively untested.",
+    "No test asserts that an expired reservation restores stock (the actual missing behavior is therefore uncaught).",
+    "tests/test_api.py:273-275 cancel test 'verifies stock release' by calling GET /health, which proves nothing about stock.",
+    "No test for adjust_stock below-zero via the HTTP layer, nor for the all()-based order auto-confirmation edge."
+  ],
+  "quality_notes": [
+    "security.py:5-12 — the `if not x_api_key` branch is unreachable because Header(...) makes the header required; the comment also misleadingly implies this function accepts the key while real validation lives in app.validate_api_key.",
+    "Pervasive datetime.utcnow() usage triggers DeprecationWarning on Python 3.12 (service.py, repository.py, models.py).",
+    "README and module docstrings are accurate and free of padding; architecture section matches the code."
+  ],
+  "unnecessary_code_examples": [
+    "repository.py:114-121 — cancel_order is never called anywhere.",
+    "security.py:6-9 — dead unreachable missing-key branch.",
+    "pyproject.toml:13-14 — pydantic-settings and python-dotenv are declared but never imported or used (no Settings class, no load_dotenv)."
+  ],
+  "security_safety_notes": [
+    "All mutating endpoints (skus, stock/adjust, reservations create/confirm/cancel) require validate_api_key; /orders is unauthenticated read-only.",
+    "Default API key 'test-key' (app.py:33) is a weak fallback but is env-overridable and not a real leaked secret.",
+    "Inputs validated via Pydantic (quantity gt=0) and all DB access goes through SQLAlchemy ORM (parameterized), so no injection risk; pagination params are unbounded, a minor DoS/data-volume concern.",
+    "No shell, filesystem-escape, or network side effects."
+  ],
+  "file_evidence": [
+    {"path": "tests/test_api.py", "note": "In-memory SQLite fixture (lines 11-23) lacks StaticPool/check_same_thread; all 11 API tests fail with cross-thread / no-such-table errors under TestClient."},
+    {"path": "src/commerce_service/service.py", "note": "Lines 91-94 expire reservation without restoring stock; lines 63-82 non-atomic multi-commit reservation creation; lines 104-109 fragile all()-based order confirmation."},
+    {"path": "src/commerce_service/security.py", "note": "Header(...) required + unreachable empty-key branch; missing header yields 422 not 401/403."},
+    {"path": "src/commerce_service/app.py", "note": "Sound exception->status mapping (400/404/409/410) and auth on all mutations; /orders limit/offset unbounded; verified working via file-DB smoke test."},
+    {"path": "pyproject.toml", "note": "Pinned deps and valid src-layout packaging, but pydantic-settings and python-dotenv are unused."},
+    {"path": "src/commerce_service/repository.py", "note": "Clean data-access layer; cancel_order (114-121) is dead code."}
+  ],
+  "commands_run": [
+    "find . -type f (project listing)",
+    "python3 -c import fastapi/sqlalchemy/pydantic (deps present: fastapi 0.104.1, sqlalchemy 2.0.23, pydantic 2.5.0)",
+    "PYTHONPATH=src python3 -m pytest -q (11 failed, 16 passed, 10 errors)",
+    "pytest detail grep (root cause: SQLite cross-thread / no such table; 422 vs 403)",
+    "TestClient smoke test with sqlite:///:memory: (reproduced fixture failure; auth 422/403 confirmed)",
+    "TestClient smoke test with file DB (create/reserve/idempotency/insufficient/list all behave correctly)",
+    "grep for pydantic_settings/dotenv/cancel_order/StaticPool (confirmed unused deps and dead code)"
+  ],
+  "review_risk": "Low — all source and test files were read, the declared test command and independent smoke tests were run against both in-memory and file databases, and failures were root-caused; installed dependency versions differ slightly from the pins but behavior was directly verified."
+}
+```

@@ -1,0 +1,176 @@
+I have a thorough picture now. All 24 tests pass (with `src` on path), deps install cleanly, and I've identified the domain-invariant gaps. Let me compile the evaluation.
+
+**Theory:** This is a FastAPI + SQLite inventory-reservation/order service. Domain maps: SKUs → stock(available/reserved) → reservations(pending/confirmed/cancelled/expired with TTL) → orders(paginated). Invariants: stock availability gates reservations, idempotency keys dedupe reservations, expiration releases reserved stock, mutations require API key.
+
+Key findings from inspection:
+- All tests pass (24) but only with `src` importable; plain `pytest` per README needs `pip install -e .` first (no `pythonpath` config).
+- **Confirm never consumes reserved stock** — after confirm, `reserved` stays inflated permanently (`repository.confirm_reservation` only flips state + creates an order; no stock mutation).
+- **Cancel has no guard against confirmed reservations** — cancelling a confirmed reservation releases stock again and can drive `reserved` negative while the order persists.
+- Confirm-idempotency matches an order by `sku_id` + state only (no reservation→order FK), so a repeat confirm can return the wrong order.
+- Lazy expiration runs only inside `confirm_reservation`; `create_reservation` doesn't sweep first, so expired-but-unswept reservations cause false `InsufficientStock`.
+- Dead code: unused `pydantic-settings` dep, unused `JSONResponse` (app.py:2), unused `Optional` (models.py:3); committed `commerce.db` state artifact.
+
+```json
+{
+  "rubric_version": "benchmark-codegen-review-v1",
+  "score_scale": "0-100 per category",
+  "weights": {
+    "task_fulfillment": 0.20,
+    "functional_correctness": 0.25,
+    "executability": 0.15,
+    "test_quality": 0.15,
+    "code_quality": 0.10,
+    "minimality": 0.10,
+    "security_safety": 0.05
+  },
+  "task_fulfillment_score": 88,
+  "task_fulfillment_breakdown": {
+    "instruction_compliance": 88,
+    "required_artifacts": 92,
+    "feature_coverage": 90,
+    "constraint_adherence": 80
+  },
+  "functional_correctness_score": 72,
+  "functional_correctness_breakdown": {
+    "domain_invariants": 68,
+    "edge_case_behavior": 72,
+    "data_consistency": 62,
+    "error_semantics": 85
+  },
+  "executability_score": 84,
+  "executability_breakdown": {
+    "installability": 90,
+    "runtime_entrypoints": 84,
+    "command_result": 85,
+    "runtime_isolation": 78
+  },
+  "test_quality_score": 86,
+  "test_quality_breakdown": {
+    "required_test_coverage": 88,
+    "behavioral_assertions": 82,
+    "integration_realism": 88,
+    "repeatability": 90
+  },
+  "code_quality_score": 84,
+  "code_quality_breakdown": {
+    "readability": 86,
+    "maintainability": 80,
+    "boundary_design": 88,
+    "documentation_quality": 82
+  },
+  "minimality_score": 82,
+  "minimality_breakdown": {
+    "no_speculative_infrastructure": 88,
+    "no_dead_or_duplicate_code": 78,
+    "appropriate_abstractions": 88,
+    "dependency_minimality": 75
+  },
+  "security_safety_score": 85,
+  "security_safety_breakdown": {
+    "auth_enforcement": 90,
+    "secret_handling": 72,
+    "input_safety": 82,
+    "unsafe_operations": 95
+  },
+  "review_confidence_score": 89,
+  "review_confidence_breakdown": {
+    "inspection_depth": 92,
+    "command_evidence": 88,
+    "issue_specificity": 90,
+    "uncertainty_handling": 85
+  },
+  "weighted_components": {
+    "task_fulfillment": 17.6,
+    "functional_correctness": 18.0,
+    "executability": 12.6,
+    "test_quality": 12.9,
+    "code_quality": 8.4,
+    "minimality": 8.2,
+    "security_safety": 4.3
+  },
+  "weighted_total": 82.0,
+  "verdict": "good",
+  "key_findings": [
+    "Complete, coherent FastAPI+SQLite project: all requested artifacts (models/repository/service/security/app + two test modules) and the full API surface (SKU create, stock adjust, reservation create/confirm/cancel, paginated orders, health) are present.",
+    "All 24 tests pass under `PYTHONPATH=src python -m pytest` (24 passed in 0.62s); dependencies (fastapi/pydantic/httpx/pytest) import cleanly.",
+    "Correctness gap: confirming a reservation never consumes reserved stock (repository.confirm_reservation only flips state and inserts an order), so `reserved`/`total` stay permanently inflated after sale.",
+    "Correctness gap: cancel_reservation has no guard for confirmed/expired reservations, so cancelling a confirmed reservation re-releases stock and can drive `reserved` negative while the order remains.",
+    "Idempotent confirm matches an order by sku_id+state with no reservation->order link, and can return the wrong order or fall through.",
+    "Tests isolate state well (temp DB per test + dependency_overrides), but none exercise cancel-after-confirm or post-confirm stock accounting, so the above bugs go undetected.",
+    "Minor dead code: unused pydantic-settings dependency, unused JSONResponse import (app.py:2), unused Optional import (models.py:3); a committed commerce.db state artifact is present in the workspace."
+  ],
+  "score_rationale": {
+    "task_fulfillment": "Implements the full requested surface (SKUs, stock, reservations with idempotency+expiration, order state transitions, pagination, API-key auth). Deducted mainly for a committed commerce.db state artifact in an otherwise fresh workspace and a README run command (src.commerce_service) inconsistent with the installed package name (commerce_service).",
+    "functional_correctness": "Happy paths and the explicitly tested edges (insufficient stock->409, idempotent reservation, expiry->410, unauthorized->403, pagination) behave correctly. But core stock invariants leak: confirm never decrements reserved (sold goods stay 'reserved' forever), cancel has no state guard so a confirmed reservation can be cancelled and corrupt/negative the stock counts, expiration is only swept inside confirm (not before a new reservation), and adjust_stock permits negative available. Cross-connection check-then-act in create_reservation is non-atomic (oversell risk under concurrency).",
+    "executability": "pip-installable with pinned deps; uvicorn entrypoint plausible. Tests pass once the package is importable, but there is no pythonpath/conftest, so plain `pytest` fails with ModuleNotFoundError until `pip install -e .` is run; the default Repository() writes ./commerce.db in cwd and a stale one is committed.",
+    "test_quality": "Good two-layer suite (service unit + API integration) with realistic sqlite persistence, temp-DB isolation, and behavioral assertions on stock numbers, state transitions, and pagination non-overlap. Missing tests for cancel-after-confirm, post-confirm reserved accounting, and negative stock; one api idempotency test asserts only that /orders responds ('Just checking the API works') rather than verifying single reservation.",
+    "code_quality": "Clean layer separation and readable names; invariants mostly centralized in CommerceService. The already-confirmed branch in confirm_reservation is awkward and the absent stock-consumption-on-confirm makes the reserved-vs-available invariant unclear. README is accurate apart from the run-command path inconsistency.",
+    "minimality": "No speculative queues/workers/CLIs/migrations. Dinged for an unused pydantic-settings dependency and two unused imports (JSONResponse, Optional in models), plus the committed db file.",
+    "security_safety": "All mutating endpoints enforce verify_api_key via FastAPI dependency; reads are intentionally open. Parameterized SQL throughout (no injection). API key is a hardcoded dev default 'test-key-123' (documented, not a real secret, but not env-driven as the comment claims). Generic `except Exception -> 400, detail=str(e)` can leak internal messages; adjust_stock lacks a non-negative floor.",
+    "review_confidence": "Read every source and test file, ran the suite (pass), confirmed dependency availability, inspected the committed DB schema, and grepped for dead code/deps. Remaining uncertainty is mainly about exact prompt wording and real concurrency behavior, which I did not stress-test."
+  },
+  "instruction_failures": [
+    "README documents `pytest` after `pip install -e .`, but with no pythonpath/conftest the tests cannot run without that install step; a stale committed commerce.db is left in the workspace.",
+    "README run command `python -m uvicorn src.commerce_service.app:app` uses the `src.` prefix while the package installs as top-level `commerce_service` (pyproject wheel packages = src/commerce_service)."
+  ],
+  "correctness_failures": [
+    "confirm_reservation never consumes reserved stock: repository.confirm_reservation (repository.py:194) only updates state and create_order inserts a row; available stays decremented and reserved stays elevated indefinitely after a sale.",
+    "cancel_reservation lacks a state guard (service.py:102): a CONFIRMED reservation can still be cancelled, re-adding to available and subtracting from reserved (can go negative) while the corresponding order persists.",
+    "Idempotent confirm of an already-CONFIRMED reservation (service.py:83-92) finds an order only by sku_id+state with no reservation->order linkage, so it may return an unrelated order or fall through and confirm/create again.",
+    "Expiration is swept only inside confirm_reservation (service.py:70); create_reservation does not expire stale pending reservations first, so unswept-expired holds can cause spurious InsufficientStockError.",
+    "adjust_stock allows available to go negative (repository.py:119) with no floor check.",
+    "create_reservation performs get_stock then create_reservation across separate sqlite connections (non-atomic), allowing oversell under concurrent requests."
+  ],
+  "execution_failures": [
+    "Plain `python -m pytest` fails: ModuleNotFoundError: No module named 'commerce_service' (no pythonpath config / conftest); requires PYTHONPATH=src or `pip install -e .`.",
+    "Module-level singleton `_repository = Repository()` (app.py:27) creates/writes commerce.db in the current working directory on import."
+  ],
+  "test_gaps": [
+    "No test that cancelling a confirmed reservation is rejected or does not corrupt stock (would expose the missing state guard).",
+    "No test asserting stock accounting after confirm (would expose that reserved is never consumed).",
+    "No test for adjust_stock with a negative quantity exceeding available (negative stock).",
+    "No test that create_reservation sweeps expired reservations before checking availability.",
+    "test_api.py::test_create_reservation_idempotent asserts only that GET /orders returns 200 ('Just checking the API works') instead of verifying stock was reserved once."
+  ],
+  "quality_notes": [
+    "Clean separation of models/repository/service/security/app layers; service centralizes business rules.",
+    "confirm_reservation's already-confirmed branch (service.py:83-92) is convoluted and signals the missing reservation->order relationship.",
+    "Generic `except Exception -> HTTPException(400, detail=str(e))` in every route can surface internal error text to clients.",
+    "datetime.utcnow() is used throughout and is deprecated in Python 3.12 (163 DeprecationWarnings during the test run)."
+  ],
+  "unnecessary_code_examples": [
+    "pyproject.toml declares pydantic-settings==2.1.0 but nothing imports it (security.py only mentions config in a comment).",
+    "app.py:2 imports JSONResponse, never used.",
+    "models.py:3 imports Optional, never used in that module.",
+    "Committed commerce.db is a leftover runtime artifact, not source."
+  ],
+  "security_safety_notes": [
+    "All mutating endpoints attach dependencies=[Depends(verify_api_key)] (app.py:40,55,71,91,122); GET /orders and /health are intentionally unauthenticated.",
+    "API key is hardcoded 'test-key-123' in security.py:6 — a documented dev default, not a real secret, but the inline comment claims env/config sourcing that is not implemented.",
+    "All SQL uses parameterized queries (no string interpolation); pydantic validates request bodies.",
+    "Missing API key returns 422 (Header required) rather than 401/403, which is a slightly off auth status.",
+    "No shell/network/file-destructive operations."
+  ],
+  "file_evidence": [
+    {"path": "src/commerce_service/repository.py", "note": "confirm_reservation (194-203) updates only state; create_order never touches stock, so reserved is never decremented on confirm. adjust_stock (110-126) has no non-negative floor."},
+    {"path": "src/commerce_service/service.py", "note": "cancel_reservation (102-111) only guards against already-CANCELLED, not CONFIRMED/EXPIRED; confirm_reservation (68-100) sweeps expiry only here and matches orders by sku_id+state."},
+    {"path": "src/commerce_service/app.py", "note": "Full route surface with auth dependencies; unused JSONResponse import (line 2); module-level Repository() singleton writes ./commerce.db (line 27); broad except->400 leaks str(e)."},
+    {"path": "src/commerce_service/security.py", "note": "Hardcoded dev API key 'test-key-123' (line 6); comment claims env/config sourcing not implemented."},
+    {"path": "src/commerce_service/models.py", "note": "Unused Optional import (line 3); pydantic request models validate inputs (price>0, quantity>=1)."},
+    {"path": "tests/test_service.py", "note": "Strong behavioral assertions on stock/state incl. expiration releasing stock (124-147); no cancel-after-confirm or post-confirm stock test."},
+    {"path": "tests/test_api.py", "note": "TestClient + temp DB via dependency_overrides; covers auth/insufficient/idempotency/pagination; idempotency test (194) only checks /orders responds."},
+    {"path": "pyproject.toml", "note": "Pinned deps; pydantic-settings declared but unused; wheel packages src/commerce_service."},
+    {"path": "commerce.db", "note": "Committed SQLite state artifact present in workspace (tables: skus, stock, reservations, orders, idempotency_keys)."}
+  ],
+  "commands_run": [
+    "find . -type f (project file listing)",
+    "cat README.md; cat pyproject.toml",
+    "python3 --version (3.12.4); python3 -c 'import fastapi, pydantic, httpx, pytest' -> deps OK",
+    "sqlite3 introspection of commerce.db (tables present)",
+    "PYTHONPATH=src python3 -m pytest -q -> 24 passed, 163 warnings in 0.62s",
+    "python3 -m pytest -q (no PYTHONPATH) -> ModuleNotFoundError: No module named 'commerce_service'",
+    "grep for pydantic_settings/BaseSettings/JSONResponse/os/environ and Optional usage"
+  ],
+  "review_risk": "low — all source and tests were read, the suite was executed (24 passed), dependencies and the committed DB were inspected; residual uncertainty is the exact original prompt wording and real concurrency/runtime behavior under load, which was not stress-tested."
+}
+```

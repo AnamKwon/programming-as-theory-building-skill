@@ -1,0 +1,159 @@
+All 30 tests pass. I've reviewed every source and test file and inspected the committed `commerce.db` and `egg-info` artifacts. Here is the evaluation.
+
+```json
+{
+  "rubric_version": "benchmark-codegen-review-v1",
+  "score_scale": "0-100 per category",
+  "weights": {
+    "task_fulfillment": 0.20,
+    "functional_correctness": 0.25,
+    "executability": 0.15,
+    "test_quality": 0.15,
+    "code_quality": 0.10,
+    "minimality": 0.10,
+    "security_safety": 0.05
+  },
+  "task_fulfillment_score": 88,
+  "task_fulfillment_breakdown": {
+    "instruction_compliance": 90,
+    "required_artifacts": 95,
+    "feature_coverage": 90,
+    "constraint_adherence": 75
+  },
+  "functional_correctness_score": 74,
+  "functional_correctness_breakdown": {
+    "domain_invariants": 60,
+    "edge_case_behavior": 78,
+    "data_consistency": 70,
+    "error_semantics": 88
+  },
+  "executability_score": 88,
+  "executability_breakdown": {
+    "installability": 90,
+    "runtime_entrypoints": 90,
+    "command_result": 95,
+    "runtime_isolation": 75
+  },
+  "test_quality_score": 83,
+  "test_quality_breakdown": {
+    "required_test_coverage": 88,
+    "behavioral_assertions": 70,
+    "integration_realism": 85,
+    "repeatability": 90
+  },
+  "code_quality_score": 84,
+  "code_quality_breakdown": {
+    "readability": 88,
+    "maintainability": 80,
+    "boundary_design": 85,
+    "documentation_quality": 82
+  },
+  "minimality_score": 74,
+  "minimality_breakdown": {
+    "no_speculative_infrastructure": 70,
+    "no_dead_or_duplicate_code": 65,
+    "appropriate_abstractions": 85,
+    "dependency_minimality": 75
+  },
+  "security_safety_score": 88,
+  "security_safety_breakdown": {
+    "auth_enforcement": 92,
+    "secret_handling": 80,
+    "input_safety": 85,
+    "unsafe_operations": 95
+  },
+  "review_confidence_score": 90,
+  "review_confidence_breakdown": {
+    "inspection_depth": 95,
+    "command_evidence": 90,
+    "issue_specificity": 90,
+    "uncertainty_handling": 85
+  },
+  "weighted_components": {
+    "task_fulfillment": 17.6,
+    "functional_correctness": 18.5,
+    "executability": 13.2,
+    "test_quality": 12.5,
+    "code_quality": 8.4,
+    "minimality": 7.4,
+    "security_safety": 4.4
+  },
+  "weighted_total": 82.0,
+  "verdict": "good",
+  "key_findings": [
+    "All 30 tests pass locally (pytest: 30 passed) with declared deps available; clean layered architecture (models/repository/service/security/app).",
+    "Real domain-invariant bug: confirm_reservation on an expired reservation marks it EXPIRED and commits but never releases the reserved stock (service.py:142-146), so expired holds leak inventory permanently.",
+    "cleanup_expired_reservations (service.py:230) is the only code that correctly releases expired stock, but it is never invoked by any endpoint or scheduler — dead safety net.",
+    "Order state machine is effectively static: orders are created PENDING and update_order_status (repository.py:122) is never called; OrderStatus.CONFIRMED/DELIVERED are unused despite README claiming 'state transitions to confirmed order'.",
+    "Fresh-workspace constraint partially violated: a populated commerce.db schema file and src/commerce_service.egg-info build artifacts are committed into the workspace.",
+    "Mutating endpoints all enforce the X-API-Key dependency; read endpoints are correctly left open."
+  ],
+  "score_rationale": {
+    "task_fulfillment": "Every requested file, endpoint, and workflow is present (SKUs, stock, reservations confirm/cancel, orders + pagination, health, API-key auth, SQLite). Docked mainly on constraint_adherence because a generated commerce.db and egg-info are shipped in the supposedly fresh workspace.",
+    "functional_correctness": "Happy paths, insufficient stock (409), idempotent retry, not-found (404), and expired-idempotency (410) all behave correctly. The expiration path leaks reserved stock (no release on confirm; cleanup never wired), adjust_stock has no floor so available can go negative, and the check-then-update reservation flow is non-atomic with no comment acknowledging the race — these pull domain_invariants and data_consistency down.",
+    "executability": "pip-installable layout, working `python -m commerce_service.app` entrypoint, DATABASE_URL override, and a green test run. Runtime isolation is slightly weakened by the committed commerce.db and the default ./commerce.db write target, though tests themselves use in-memory SQLite.",
+    "test_quality": "Coverage spans all required scenarios across both a service-level and an API-level suite with isolated in-memory DBs (repeatable). Weakness is behavioral depth: tests assert statuses and a few fields but never assert stock available/reserved accounting after reserve/cancel/confirm, so the expiration stock-leak bug goes undetected; the expiration test only checks the raised error.",
+    "code_quality": "Clear naming, coherent repository/service/schema/security separation, and honest docstrings. Maintainability is reduced by dead code (get_service context manager, update_order_status) and the unwired cleanup routine, which obscure where invariants are actually enforced.",
+    "minimality": "Mostly proportionate, but several dead/speculative pieces: unused get_service contextmanager (app.py:43), never-called update_order_status, never-wired cleanup_expired_reservations, unused OrderStatus.CONFIRMED/DELIVERED, an unused python-multipart dependency, and committed egg-info/db artifacts.",
+    "security_safety": "API-key dependency guards all four mutating endpoints; pydantic validates inputs (quantity gt 0, length bounds); no shell/network/destructive ops. Minor: the only valid key is hardcoded in source (security.py:4) with no env override, and the WWW-Authenticate: Bearer header is mismatched for an API-key scheme.",
+    "review_confidence": "All source and test files were read in full, dependencies were present, the full test suite was executed, and the db/egg-info artifacts were inspected directly; findings cite concrete files and lines. Residual uncertainty is limited to concurrent/production runtime behavior, which was not load-tested."
+  },
+  "instruction_failures": [
+    "commerce.db (with created schema) committed into the workspace, contradicting a fresh-workspace expectation (workspace root).",
+    "src/commerce_service.egg-info/* build artifacts shipped in the source tree.",
+    "README claims order 'state transitions from reservation to confirmed order', but confirmed reservations produce orders that remain in PENDING and never transition."
+  ],
+  "correctness_failures": [
+    "service.py:142-146 — confirm_reservation on an expired reservation sets status EXPIRED and commits but does not release reserved stock back to available; inventory is leaked.",
+    "cleanup_expired_reservations (service.py:230-242) is the only path that releases expired stock and is never called by any endpoint, scheduler, or startup hook.",
+    "adjust_stock (service.py:51-63) applies a signed delta with no lower bound, so a negative adjustment can drive stock.available below zero.",
+    "reserve_inventory performs get_stock availability check then update_stock as separate statements (service.py:91-104); under concurrency this can oversell, and no comment documents the assumption.",
+    "get_orders_paginated (repository.py:105-120) cursors on strict created_at < boundary; orders sharing an identical created_at at a page edge can be skipped (untested tie case)."
+  ],
+  "execution_failures": [],
+  "test_gaps": [
+    "No test asserts stock available/reserved numbers after reserve, cancel, or confirm, so the expired-reservation stock-leak and the missing stock release on cancel are not verified beyond status.",
+    "No test calls or covers cleanup_expired_reservations.",
+    "No test for adjust_stock with a negative quantity / negative-balance prevention.",
+    "Idempotency reuse of the same key against a different sku_id/quantity is not tested (silently returns the original reservation)."
+  ],
+  "quality_notes": [
+    "app.py:43-49 defines get_service contextmanager that is never used; endpoints instantiate CommerceService directly.",
+    "repository.py:122 update_order_status is dead code; order status never changes after creation.",
+    "list_orders endpoint (app.py:174-186) closes db in its own finally while get_db already closes in finally — redundant double close.",
+    "Pervasive datetime.utcnow() deprecation warnings (Python 3.12) across models.py/repository.py/service.py."
+  ],
+  "unnecessary_code_examples": [
+    "src/commerce_service/app.py:43 get_service() contextmanager — unused.",
+    "src/commerce_service/repository.py:122 update_order_status() — never invoked.",
+    "src/commerce_service/service.py:230 cleanup_expired_reservations() — never wired to any caller.",
+    "models.py:14-15 OrderStatus.CONFIRMED/DELIVERED — declared but never assigned.",
+    "pyproject.toml:16 python-multipart dependency — no form/multipart endpoints use it.",
+    "src/commerce_service.egg-info/ and commerce.db — build/runtime artifacts checked into the workspace."
+  ],
+  "security_safety_notes": [
+    "All mutating endpoints depend on validate_api_key (app.py:63,79,97,124,145); GET /orders and /orders/{id} are intentionally unauthenticated.",
+    "Valid API key 'sk-demo-key' is hardcoded in security.py:4 with no environment override; acceptable as a documented demo but not production-configurable.",
+    "WWW-Authenticate: Bearer header (security.py:13) is semantically mismatched for an X-API-Key scheme.",
+    "Inputs validated via pydantic (quantity gt 0, id/name length bounds); ORM parameterization avoids SQL injection; app binds 0.0.0.0 which is broad but conventional for a containerized service."
+  ],
+  "file_evidence": [
+    {"path": "src/commerce_service/service.py", "note": "confirm_reservation expiration path (142-146) does not release reserved stock; cleanup_expired_reservations (230) never called; non-atomic check-then-reserve (91-104)."},
+    {"path": "src/commerce_service/repository.py", "note": "Clean data-access layer; update_order_status (122) is dead; cursor pagination uses strict created_at < boundary (105-120)."},
+    {"path": "src/commerce_service/app.py", "note": "API-key dependency on all mutating routes; unused get_service contextmanager (43); redundant db.close in list_orders (185)."},
+    {"path": "src/commerce_service/security.py", "note": "Hardcoded single API key and mismatched WWW-Authenticate header."},
+    {"path": "src/commerce_service/models.py", "note": "Coherent ORM + pydantic schemas; OrderStatus.CONFIRMED/DELIVERED unused."},
+    {"path": "tests/test_api.py", "note": "Covers auth, insufficient stock, idempotency, pagination via TestClient with in-memory DB override; asserts statuses/fields but no stock accounting."},
+    {"path": "tests/test_service.py", "note": "Service-level coverage incl. expiration error, but expiration test asserts only the raised error, not stock release."},
+    {"path": "commerce.db", "note": "Committed SQLite file with created (empty) tables present in workspace root."},
+    {"path": "pyproject.toml", "note": "Deps complete and plausible; python-multipart appears unused."}
+  ],
+  "commands_run": [
+    "ls -la; find . -type f (project file inventory)",
+    "python3 -c 'import fastapi, sqlalchemy, httpx, pytest' (dep availability: fastapi 0.104.1, sqlalchemy 2.0.23)",
+    "sqlite3 inspection of commerce.db (4 tables, all 0 rows)",
+    "PYTHONPATH=src python3 -m pytest tests/ -q (30 passed, 214 deprecation warnings)"
+  ],
+  "review_risk": "low — all source and tests were read and the full suite was executed with dependencies present; only concurrent/production runtime behavior (e.g., oversell race, expiration cleanup at scale) was reasoned about rather than load-tested."
+}
+```

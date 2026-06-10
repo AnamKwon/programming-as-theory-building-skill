@@ -1,0 +1,158 @@
+All 23 tests pass. I've inspected all source and test files, run the suite, and confirmed the dead-code/unused-import findings. Here is the evaluation.
+
+```json
+{
+  "rubric_version": "benchmark-codegen-review-v1",
+  "score_scale": "0-100 per category",
+  "weights": {
+    "task_fulfillment": 0.20,
+    "functional_correctness": 0.25,
+    "executability": 0.15,
+    "test_quality": 0.15,
+    "code_quality": 0.10,
+    "minimality": 0.10,
+    "security_safety": 0.05
+  },
+  "task_fulfillment_score": 85,
+  "task_fulfillment_breakdown": {
+    "instruction_compliance": 88,
+    "required_artifacts": 90,
+    "feature_coverage": 82,
+    "constraint_adherence": 78
+  },
+  "functional_correctness_score": 81,
+  "functional_correctness_breakdown": {
+    "domain_invariants": 78,
+    "edge_case_behavior": 82,
+    "data_consistency": 72,
+    "error_semantics": 90
+  },
+  "executability_score": 86,
+  "executability_breakdown": {
+    "installability": 90,
+    "runtime_entrypoints": 85,
+    "command_result": 95,
+    "runtime_isolation": 72
+  },
+  "test_quality_score": 87,
+  "test_quality_breakdown": {
+    "required_test_coverage": 90,
+    "behavioral_assertions": 88,
+    "integration_realism": 88,
+    "repeatability": 82
+  },
+  "code_quality_score": 86,
+  "code_quality_breakdown": {
+    "readability": 88,
+    "maintainability": 84,
+    "boundary_design": 90,
+    "documentation_quality": 82
+  },
+  "minimality_score": 72,
+  "minimality_breakdown": {
+    "no_speculative_infrastructure": 75,
+    "no_dead_or_duplicate_code": 60,
+    "appropriate_abstractions": 75,
+    "dependency_minimality": 78
+  },
+  "security_safety_score": 85,
+  "security_safety_breakdown": {
+    "auth_enforcement": 92,
+    "secret_handling": 72,
+    "input_safety": 80,
+    "unsafe_operations": 95
+  },
+  "review_confidence_score": 90,
+  "review_confidence_breakdown": {
+    "inspection_depth": 92,
+    "command_evidence": 90,
+    "issue_specificity": 90,
+    "uncertainty_handling": 88
+  },
+  "weighted_components": {
+    "task_fulfillment": 17.0,
+    "functional_correctness": 20.3,
+    "executability": 12.9,
+    "test_quality": 13.1,
+    "code_quality": 8.6,
+    "minimality": 7.2,
+    "security_safety": 4.3
+  },
+  "weighted_total": 83.3,
+  "verdict": "good",
+  "key_findings": [
+    "Clean, idiomatic layered FastAPI app (models / repository / service / security / app) with all 23 tests passing under PYTHONPATH=src python -m pytest.",
+    "Core reservation math is coherent: availability = stock - sum(pending); confirm deducts from stock and clears pending; cancel of a confirmed reservation refunds stock (verified by tests test_cancel_confirmed_reservation and test_confirm_reservation).",
+    "Required edge cases are implemented with appropriate HTTP codes: insufficient stock 409, expired-on-confirm 410, not-found 404, invalid transition 400, unauthorized 403.",
+    "Real invariant gap: expired-but-unconfirmed reservations still count as PENDING in availability (get_pending_reservations_for_sku filters only by state, not expires_at), so expired holds keep blocking stock until someone confirms them.",
+    "Order orchestration is thin/partly dead: POST /orders takes no body, so reservation linkage (OrderReservationModel, create_order's reservation_ids path) is unreachable via the API, and orders never transition to OrderState.COMPLETED.",
+    "Workspace ships build/runtime artifacts (committed commerce.db and src/commerce_service.egg-info/) and several unused imports, hurting minimality and runtime-isolation cleanliness."
+  ],
+  "score_rationale": {
+    "task_fulfillment": "All requested artifacts and the bulk of the API surface (SKU create/adjust, reservations create/confirm/cancel, idempotency, expiration, order listing+pagination, API-key auth) are present and documented in README. Deductions: order orchestration is shallow (orders cannot actually carry reservations via the API and never complete), and a stale commerce.db plus egg-info undercut the fresh-workspace/production-minded constraint.",
+    "functional_correctness": "Happy paths and most edge cases are correct and tested. Lost points for the expired-reservation-still-reserves-stock gap (service.py:67-69 + repository.py:72-78), unguarded negative results from adjust_stock (repository.py:32 allows available_stock to go below zero/below reserved), and two-commit non-atomic confirm (service.py:99 then :102) with no concurrency guard on the read-modify-write availability check.",
+    "executability": "Packaging is complete with pinned deps and a src layout; uvicorn entrypoint and create_all import are usable; 23/23 tests pass. Lower runtime_isolation because app.py writes ./commerce.db in the cwd and a pre-populated commerce.db is committed, which is ambient state rather than a clean default.",
+    "test_quality": "Strong coverage of happy paths, insufficient stock, idempotency, expiration, auth, and pagination across both service-level and API-level suites, with behavioral assertions on stock deduction (==90) and refund (==100), not just status codes. test_service.py uses a module-global engine (create_all/drop_all per fixture keeps it repeatable but is less isolated than the api suite's StaticPool in-memory fixture).",
+    "code_quality": "Readable names and clean separation of concerns; invariants live in the service layer and the expiration window is a named constant. Minor: no docstrings, response dicts are hand-built and duplicated across get_order/list_orders, and the order-linking abstraction exists without a caller.",
+    "minimality": "Main deduction is dead/unused code: unused imports Numeric (models.py:3), contextmanager and JSONResponse (app.py:1,3); repository.update_order_state and OrderState.COMPLETED are never used; the reservation-to-order linking path is unreachable via the API. python-multipart is pinned but no form/multipart handling is used.",
+    "security_safety": "Every mutating endpoint declares Depends(verify_api_key) and the listing endpoint is also gated; pydantic validates bodies and pagination is bounded (ge=1, le=100). Deductions: API key is hardcoded in source and README with no env override, and adjust_stock does not validate against negative/over-decrement, allowing inconsistent stock.",
+    "review_confidence": "All source and test files were read, dependencies were already installed, the full suite was executed (23 passed), and dead-code findings were grep-confirmed. Remaining uncertainty is limited to concurrent/under-load behavior not exercised by the tests."
+  },
+  "instruction_failures": [
+    "Fresh-workspace/production-minded constraint partially violated: a populated commerce.db and a generated src/commerce_service.egg-info/ directory are committed into the workspace.",
+    "Order orchestration workflow is incomplete relative to a commerce 'order orchestration' framing: orders cannot be created with reservations through the API and never reach a completed state."
+  ],
+  "correctness_failures": [
+    "Expired reservations are not freed from availability: get_pending_reservations_for_sku (repository.py:72-78) ignores expires_at, so an expired-but-unconfirmed reservation keeps blocking stock in create_reservation's availability calc (service.py:67-69). Expiry is only realized lazily when confirm is attempted.",
+    "adjust_stock (repository.py:28-34) accepts arbitrary negative quantities with no floor, allowing available_stock to drop below zero or below already-reserved quantity.",
+    "confirm_reservation performs two separate commits (stock adjust at service.py:99, state update at service.py:102) with no surrounding transaction; a failure between them would deduct stock without confirming the reservation.",
+    "Availability check is a non-atomic read-modify-write; concurrent reservations on the same SKU could both pass the stock check (no row locking / SELECT ... FOR UPDATE)."
+  ],
+  "execution_failures": [
+    "App default DATABASE_URL is sqlite:///./commerce.db, a cwd-relative file that creates/uses ambient state on first run rather than an isolated or configurable location."
+  ],
+  "test_gaps": [
+    "No test for an expired reservation still consuming availability for a subsequent reservation (the main domain gap is untested).",
+    "No test that confirming twice or confirming a cancelled reservation returns the InvalidStateTransition 400 path.",
+    "No test for adjust_stock with a negative quantity / over-decrement behavior.",
+    "Pagination is tested only for the happy split; no assertion on out-of-range pages or page beyond total.",
+    "GET /orders unauthorized (missing key) path is not asserted, though listing is auth-gated."
+  ],
+  "quality_notes": [
+    "Response payloads are assembled as dicts repeatedly in service.create_sku/adjust_stock/_format_reservation/get_order/list_orders; could share a helper (minor duplication).",
+    "declarative_base() uses the deprecated SQLAlchemy 1.x import location (models.py:7); SQLAlchemy 2.0 emits a MovedIn20Warning.",
+    "datetime.utcnow() is used throughout (service.py:78,94; models.py defaults) and is deprecation-warned on Python 3.12."
+  ],
+  "unnecessary_code_examples": [
+    "models.py:3 imports Numeric, never used.",
+    "app.py:1 imports contextmanager and app.py:3 imports JSONResponse, neither used.",
+    "repository.py:95 update_order_state and models.py:19 OrderState.COMPLETED are never invoked/assigned.",
+    "service.create_order's reservation_ids parameter and the OrderReservationModel linking path are unreachable because POST /orders (app.py:145-151) sends no reservation ids.",
+    "python-multipart pinned in pyproject.toml dependencies but no form/multipart endpoints exist."
+  ],
+  "security_safety_notes": [
+    "API key 'test-key-123' is hardcoded in security.py:4 and echoed in README; acceptable as a dev default but there is no environment-variable override for production.",
+    "verify_api_key uses a plain set-membership check (not constant-time); negligible at this scope but noted.",
+    "All mutating endpoints and the orders listing endpoint enforce Depends(verify_api_key) (app.py) — auth coverage is complete.",
+    "ORM-based queries avoid SQL injection; pydantic Field constraints validate untrusted input and pagination bounds (page ge=1, page_size ge=1/le=100)."
+  ],
+  "file_evidence": [
+    {"path": "src/commerce_service/service.py", "note": "Availability math (67-69), confirm deducts then commits separately (99,102), expiry only checked on confirm (94-96); create_order reservation_ids path (120-126) unused by API."},
+    {"path": "src/commerce_service/repository.py", "note": "get_pending_reservations_for_sku (72-78) ignores expires_at; adjust_stock (28-34) unguarded; update_order_state (95-101) never called."},
+    {"path": "src/commerce_service/app.py", "note": "All mutations gated by verify_api_key; unused imports contextmanager/JSONResponse (1,3); POST /orders (145-151) takes no reservation ids; default sqlite:///./commerce.db (29)."},
+    {"path": "src/commerce_service/security.py", "note": "Hardcoded VALID_API_KEYS={'test-key-123'} (4), 403 on missing/invalid key."},
+    {"path": "src/commerce_service/models.py", "note": "Unused Numeric import (3); OrderState.COMPLETED defined (19) but never set; pydantic validation on request models (62-75)."},
+    {"path": "tests/test_service.py", "note": "Behavioral assertions on stock deduction (77) and refund (116), expiry via manual expires_at (87); module-global engine fixture (14-25)."},
+    {"path": "tests/test_api.py", "note": "Isolated in-memory StaticPool fixture with get_db override (12-41); covers auth, insufficient stock, idempotency, pagination."},
+    {"path": "commerce.db", "note": "Pre-populated SQLite DB committed into the workspace (ambient state)."},
+    {"path": "src/commerce_service.egg-info/", "note": "Generated build metadata committed into source tree."}
+  ],
+  "commands_run": [
+    "find . -type f ... | sort (list project files)",
+    "python3 --version; python3 -c 'import fastapi, sqlalchemy, httpx, pytest' (deps present, Python 3.12.4)",
+    "PYTHONPATH=src python3 -m pytest tests/ -q (23 passed, 74 warnings)",
+    "grep -rn for Numeric / contextmanager / JSONResponse / update_order_state / COMPLETED / reservation_ids (confirmed dead code)"
+  ],
+  "review_risk": "low — all source and tests were read and the full suite ran green (23 passed); only concurrent/under-load behavior (race conditions, transaction atomicity) was not exercised at runtime."
+}
+```

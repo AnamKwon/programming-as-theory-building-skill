@@ -1,0 +1,167 @@
+I have enough evidence. Confirmed findings:
+
+- **Fatal:** `repository.py:3` imports `Literal` from `sqlalchemy`, which does not exist → `ImportError`. The whole package is unimportable; the app won't start and both test modules fail to collect (0 tests run as shipped).
+- The import is also **dead** — `Literal` is never used (models use `typing.Literal`). After removing it, all **33 tests pass**.
+- `pydantic-settings` is a declared dependency but never used; `get_reservation` and the `confirmed_at` column are dead.
+- Orders are created as `"pending"` and never transition to confirmed/cancelled, despite the README claiming that transition.
+- `StockAdjustment.delta = Field(..., ne=0)` — `ne` is not a Pydantic v2 constraint (silently ignored), so `delta=0` is allowed.
+- No expiration test (logic exists but is untested).
+
+```json
+{
+  "rubric_version": "benchmark-codegen-review-v1",
+  "score_scale": "0-100 per category",
+  "weights": {
+    "task_fulfillment": 0.20,
+    "functional_correctness": 0.25,
+    "executability": 0.15,
+    "test_quality": 0.15,
+    "code_quality": 0.10,
+    "minimality": 0.10,
+    "security_safety": 0.05
+  },
+  "task_fulfillment_score": 80,
+  "task_fulfillment_breakdown": {
+    "instruction_compliance": 75,
+    "required_artifacts": 90,
+    "feature_coverage": 75,
+    "constraint_adherence": 80
+  },
+  "functional_correctness_score": 78,
+  "functional_correctness_breakdown": {
+    "domain_invariants": 75,
+    "edge_case_behavior": 75,
+    "data_consistency": 75,
+    "error_semantics": 85
+  },
+  "executability_score": 46,
+  "executability_breakdown": {
+    "installability": 85,
+    "runtime_entrypoints": 20,
+    "command_result": 10,
+    "runtime_isolation": 70
+  },
+  "test_quality_score": 80,
+  "test_quality_breakdown": {
+    "required_test_coverage": 68,
+    "behavioral_assertions": 85,
+    "integration_realism": 85,
+    "repeatability": 82
+  },
+  "code_quality_score": 80,
+  "code_quality_breakdown": {
+    "readability": 85,
+    "maintainability": 80,
+    "boundary_design": 85,
+    "documentation_quality": 72
+  },
+  "minimality_score": 72,
+  "minimality_breakdown": {
+    "no_speculative_infrastructure": 85,
+    "no_dead_or_duplicate_code": 60,
+    "appropriate_abstractions": 80,
+    "dependency_minimality": 65
+  },
+  "security_safety_score": 85,
+  "security_safety_breakdown": {
+    "auth_enforcement": 95,
+    "secret_handling": 70,
+    "input_safety": 80,
+    "unsafe_operations": 95
+  },
+  "review_confidence_score": 94,
+  "review_confidence_breakdown": {
+    "inspection_depth": 95,
+    "command_evidence": 95,
+    "issue_specificity": 95,
+    "uncertainty_handling": 90
+  },
+  "weighted_components": {
+    "task_fulfillment": 16.0,
+    "functional_correctness": 19.5,
+    "executability": 6.9,
+    "test_quality": 12.0,
+    "code_quality": 8.0,
+    "minimality": 7.2,
+    "security_safety": 4.3
+  },
+  "weighted_total": 73.9,
+  "verdict": "mixed",
+  "key_findings": [
+    "FATAL: repository.py:3 imports 'Literal' from sqlalchemy, which does not exist (ImportError). The package cannot be imported, so the FastAPI app fails to start and both test modules fail at collection (0 tests run as shipped). Verified via `python3 -m pytest`.",
+    "The offending 'Literal' import is also unused dead code. Removing it (verified in an isolated patched copy) makes all 33 tests pass, so the underlying domain logic is sound.",
+    "Order state machine is incomplete: confirm creates an OrderModel with status 'pending' and never transitions it to 'confirmed'/'cancelled'; 'confirmed_at' column is never set. README claims 'pending -> confirmed or cancelled' transitions that the code does not perform.",
+    "Reservation domain invariants are otherwise correct: stock decremented once under idempotency, restored on cancel, expiration checked on confirm, insufficient-stock rejected (proven by passing service/API tests).",
+    "Auth is consistently enforced on all mutating endpoints via Depends(verify_api_key); read-only /orders and /health are open, which is acceptable.",
+    "Unused declared dependency 'pydantic-settings' and dead repository method get_reservation reduce minimality."
+  ],
+  "score_rationale": {
+    "task_fulfillment": "All requested endpoints, repository/service/schema/security layering, idempotency, pagination, and API-key auth are present with the requested project structure. Docked for the incomplete order state transition (orders stuck at 'pending') and the project being unimportable as delivered.",
+    "functional_correctness": "Domain logic (stock checks, idempotent reservation with single decrement, expiry handling, cancel restoring stock, sensible status codes) is correct and proven by the 33 passing tests after the import fix. Lowered for the unfinished order->confirmed transition, the silently-ignored delta!=0 validation, and .with_for_update() being a no-op on SQLite (no real concurrency guarantee).",
+    "executability": "Packaging/deps are plausible and complete, but the shipped entrypoint and test command both fail immediately: `pytest` produces 2 collection errors and runs 0 tests due to the sqlalchemy Literal ImportError. Runtime isolation is otherwise good (tests use temp DBs); default Repository() writes commerce.db into cwd.",
+    "test_quality": "Test design is strong: behavioral assertions (stock decremented once, stock restored on cancel, idempotent id equality, pagination slicing), realistic TestClient + SQLite integration, per-test temp DBs via monkeypatch for repeatability. Main gaps: no expiration test (a required item) and the suite cannot execute as shipped.",
+    "code_quality": "Readable names, clear control flow, and coherent module boundaries (models/repository/service/security/app). Service layer is a thin pass-through. README overstates order-state transitions and there are no docstrings; redundant double commits (method + context manager).",
+    "minimality": "No speculative queues/workers/CLI. But dead code (unused Literal import, unused get_reservation, never-set confirmed_at, never-returned order.reservation_id) and an unused 'pydantic-settings' dependency weigh against it.",
+    "security_safety": "All mutating endpoints require the API-key dependency; no shell/network/destructive operations; ORM avoids injection. Docked for a hardcoded API key with no env override (test value, not a real secret) and the ignored delta!=0 constraint.",
+    "review_confidence": "All 11 source/test files were read; ran the import check, pytest on the shipped tree (failed), pytest on an isolated patched copy (33 passed), and targeted greps. Findings cite specific files/lines."
+  },
+  "instruction_failures": [
+    "Order state transition to 'confirmed'/'cancelled' requested and claimed in README is not implemented; orders remain 'pending'.",
+    "Project does not run as delivered, so the documented `pytest` and `uvicorn` quick-start commands both fail."
+  ],
+  "correctness_failures": [
+    "repository.py:3 `from sqlalchemy import ... Literal` raises ImportError at import time, breaking the entire application and test suite.",
+    "StockAdjustment.delta Field(..., ne=0) does not enforce non-zero (ne is not a valid Pydantic v2 constraint; deprecation warning emitted), so delta=0 is accepted.",
+    "OrderModel.confirmed_at and the order's terminal states are never populated/changed."
+  ],
+  "execution_failures": [
+    "`PYTHONPATH=src python3 -m pytest -q` -> 2 collection errors, 0 tests run (ImportError: cannot import name 'Literal' from 'sqlalchemy').",
+    "App import `commerce_service.app:app` would raise the same ImportError, so `uvicorn` startup fails."
+  ],
+  "test_gaps": [
+    "No reservation-expiration test, despite expiration being a required coverage item (confirm-after-expiry path in repository.py:148-151 is untested).",
+    "No test for delta=0 stock adjustment (and the validation that should reject it is ineffective).",
+    "No negative-stock adjustment test at the API layer (only service layer).",
+    "Concurrency/race behavior (with_for_update) is untested and not effective on SQLite."
+  ],
+  "quality_notes": [
+    "Clean layered design: models.py (Pydantic schemas), repository.py (ORM + persistence), service.py (orchestration), security.py (auth), app.py (routes).",
+    "Service layer is largely a pass-through to the repository.",
+    "Methods call session.commit() and the get_session context manager commits again (redundant but harmless).",
+    "Uses deprecated datetime.utcnow() throughout (warnings only).",
+    "README claims order state transitions that the implementation does not perform."
+  ],
+  "unnecessary_code_examples": [
+    "repository.py:3 unused (and invalid) `Literal` import.",
+    "repository.py:123 get_reservation() is never called.",
+    "models? no — OrderModel.confirmed_at (repository.py:36) is declared but never set.",
+    "OrderModel.reservation_id is stored but never returned in any response.",
+    "pyproject.toml declares 'pydantic-settings' which is never imported or used."
+  ],
+  "security_safety_notes": [
+    "All mutating endpoints (POST /skus, PATCH stock, POST/DELETE reservations, confirm) require Depends(verify_api_key).",
+    "API key is hardcoded as 'sk-test-key-12345' in security.py with no environment-variable override; it is a test value, not a real secret, and is not leaked elsewhere.",
+    "Inputs validated via Pydantic; SQLAlchemy ORM parameterization avoids SQL injection.",
+    "No shell, network, or destructive filesystem operations."
+  ],
+  "file_evidence": [
+    {"path": "src/commerce_service/repository.py", "note": "Line 3 imports nonexistent sqlalchemy.Literal (fatal ImportError, also unused). Core domain logic (stock, idempotency lines 81-121, expiry confirm lines 139-170, cancel restore lines 172-186) is otherwise correct. with_for_update() is a no-op on SQLite."},
+    {"path": "src/commerce_service/models.py", "note": "Line 19 StockAdjustment.delta uses Field(ne=0), an invalid Pydantic v2 constraint that is ignored."},
+    {"path": "src/commerce_service/app.py", "note": "All mutating routes use Depends(verify_api_key); module-level Repository() (line 18) creates a persistent commerce.db in cwd; entrypoint unimportable due to repository ImportError."},
+    {"path": "src/commerce_service/security.py", "note": "Hardcoded API key; missing header -> 403, invalid key -> 401."},
+    {"path": "tests/test_service.py", "note": "Strong behavioral assertions (single decrement on idempotency, stock restore on cancel) but no expiration test; uses temp DB fixtures."},
+    {"path": "tests/test_api.py", "note": "Covers happy paths, insufficient stock, idempotency, auth (401/403), pagination, 422 limit validation; monkeypatches repo/service with temp DB for isolation."},
+    {"path": "pyproject.toml", "note": "Complete packaging with pinned deps; 'pydantic-settings' declared but unused."},
+    {"path": "README.md", "note": "Clear quick-start and endpoint list; claims order 'pending -> confirmed or cancelled' transitions not implemented."}
+  ],
+  "commands_run": [
+    "find . -type f (project listing)",
+    "python3 -c import fastapi/sqlalchemy/... (fastapi 0.110.0, sqlalchemy 2.0.25 available)",
+    "python3 -c 'from sqlalchemy import Literal' -> ImportError confirmed",
+    "PYTHONPATH=src python3 -m pytest -q -> 2 collection errors, 0 tests run",
+    "Copied to temp dir, removed the Literal import, ran pytest -> 33 passed",
+    "grep for pydantic_settings/get_reservation/confirmed_at/order status transitions"
+  ],
+  "review_risk": "low — all source and test files were read; the fatal import failure and the all-pass-after-fix result were both reproduced with pytest, though SQLite-only verification means real concurrency behavior (with_for_update) and the file-DB default were not exercised under load."
+}
+```

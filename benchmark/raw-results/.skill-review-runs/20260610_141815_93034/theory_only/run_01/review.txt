@@ -1,0 +1,155 @@
+I have enough evidence. Two confirmed defects: the entire API test suite errors at fixture setup (`KeyError: 'CommerceService'`), and duplicate SKU creation raises an unhandled `IntegrityError` → HTTP 500 instead of the documented 409. The service layer and happy paths work.
+
+```json
+{
+  "rubric_version": "benchmark-codegen-review-v1",
+  "score_scale": "0-100 per category",
+  "weights": {
+    "task_fulfillment": 0.20,
+    "functional_correctness": 0.25,
+    "executability": 0.15,
+    "test_quality": 0.15,
+    "code_quality": 0.10,
+    "minimality": 0.10,
+    "security_safety": 0.05
+  },
+  "task_fulfillment_score": 85,
+  "task_fulfillment_breakdown": {
+    "instruction_compliance": 80,
+    "required_artifacts": 92,
+    "feature_coverage": 85,
+    "constraint_adherence": 84
+  },
+  "functional_correctness_score": 69,
+  "functional_correctness_breakdown": {
+    "domain_invariants": 72,
+    "edge_case_behavior": 70,
+    "data_consistency": 64,
+    "error_semantics": 68
+  },
+  "executability_score": 67,
+  "executability_breakdown": {
+    "installability": 90,
+    "runtime_entrypoints": 82,
+    "command_result": 35,
+    "runtime_isolation": 60
+  },
+  "test_quality_score": 56,
+  "test_quality_breakdown": {
+    "required_test_coverage": 50,
+    "behavioral_assertions": 70,
+    "integration_realism": 55,
+    "repeatability": 50
+  },
+  "code_quality_score": 79,
+  "code_quality_breakdown": {
+    "readability": 85,
+    "maintainability": 76,
+    "boundary_design": 85,
+    "documentation_quality": 70
+  },
+  "minimality_score": 81,
+  "minimality_breakdown": {
+    "no_speculative_infrastructure": 78,
+    "no_dead_or_duplicate_code": 70,
+    "appropriate_abstractions": 85,
+    "dependency_minimality": 92
+  },
+  "security_safety_score": 84,
+  "security_safety_breakdown": {
+    "auth_enforcement": 90,
+    "secret_handling": 70,
+    "input_safety": 82,
+    "unsafe_operations": 95
+  },
+  "review_confidence_score": 91,
+  "review_confidence_breakdown": {
+    "inspection_depth": 95,
+    "command_evidence": 92,
+    "issue_specificity": 90,
+    "uncertainty_handling": 88
+  },
+  "weighted_components": {
+    "task_fulfillment": 17.0,
+    "functional_correctness": 17.3,
+    "executability": 10.1,
+    "test_quality": 8.4,
+    "code_quality": 7.9,
+    "minimality": 8.1,
+    "security_safety": 4.2
+  },
+  "weighted_total": 73.0,
+  "verdict": "mixed",
+  "key_findings": [
+    "Entire HTTP API test suite (15 tests in tests/test_api.py) ERRORS at fixture setup with `KeyError: 'CommerceService'` due to a fragile monkeypatch (`test_db.__class__.__init__.__globals__[\"CommerceService\"]`); CommerceService is not in repository.py's globals. The declared command `pytest tests/` finishes 13 passed, 15 errors.",
+    "Duplicate SKU creation returns HTTP 500, not the documented 409. service.create_sku()/SkuRepository.create never catch IntegrityError, so the exception propagates; app.py's `if not result` 409 branch is unreachable. Confirmed via smoke test.",
+    "Service-layer logic is sound: stock reservation/release/confirm tracking, idempotency (pending), expiration handling, and pagination all pass in tests/test_service.py (13 passed).",
+    "Auth is enforced on every mutating endpoint via api_key_validator.validate(); read endpoints are open (reasonable).",
+    "Clean layered architecture (app/service/repository/models/security) with readable naming, but some dead code and a thorough-but-overclaiming README."
+  ],
+  "score_rationale": {
+    "task_fulfillment": "All requested artifacts, project structure, and the full endpoint surface (SKU, stock, reservations create/confirm/cancel, orders get/list, health) are present and match the README. Docked because the duplicate-SKU output contract (documented 409) is not honored at runtime.",
+    "functional_correctness": "Core invariants (available = quantity - reserved, reserve/release/confirm, idempotent pending retry, expiration cleanup) hold and are test-verified at the service layer. Subtracted for the 500-on-duplicate-SKU defect, multi-step operations using separate commits with no transaction boundary (confirm_reservation does 3 independent commits — order failure after stock decrement leaves inconsistent state), idempotency reuse after cancel/expire falling through to a confusing 400, and adjust_stock allowing quantity to go negative below reserved.",
+    "executability": "Packaging (pyproject) and uvicorn entrypoint are plausible and the app imports/serves (smoke-tested). Heavily docked because the declared test command yields 15 errors, and `db = Database()` at import creates ./commerce.db in the CWD as an import side effect.",
+    "test_quality": "Intent covers all required areas, and service tests assert real behavior (e.g., test_stock_reservation_tracking, idempotency is_duplicate, cleanup). But half the suite (all API/integration tests) never executes, auth/HTTP-status behavior is therefore unproven, and the broken fixture monkeypatch is fragile and not repeatable.",
+    "code_quality": "Good module boundaries and naming, invariants reasonably localized in the service layer. Lowered for dead code (unused ErrorResponse model, unused require_api_key dependency, cleanup_expired_reservations with no caller/endpoint) and a README that claims test coverage and a 409 path that don't hold.",
+    "minimality": "No speculative queues/workers/migrations/CLIs; dependencies are all used. Minor deductions for duplicate idempotency branches returning identical dicts, unused ErrorResponse/require_api_key, and a cleanup method invoked only by tests.",
+    "security_safety": "Mutating endpoints all require the API key; ORM use avoids SQL injection and Pydantic validates inputs (ttl bounds, quantity>0). Docked for hardcoded keys in security.py with no env/config override and unbounded negative stock deltas.",
+    "review_confidence": "All source and test files read; declared test command and a targeted HTTP smoke test were run, reproducing both major defects with concrete file/line references."
+  },
+  "instruction_failures": [
+    "Documented 409 Conflict for duplicate SKU is not produced; a 500 occurs instead (README lines 86, 198; app.py:49-52; service.py:21-32; repository.py:26-31).",
+    "README 'Test Coverage' claims (unauthorized mutations, pagination via API) are not actually exercised because tests/test_api.py errors out entirely."
+  ],
+  "correctness_failures": [
+    "POST /skus on an existing id raises sqlalchemy.exc.IntegrityError -> HTTP 500 (reproduced via TestClient smoke test).",
+    "confirm_reservation performs stock confirm, reservation status update, and order insert as three separate commits with no transaction; a failure mid-sequence leaves stock decremented without an order (service.py:139-145).",
+    "Reusing an idempotency_key whose reservation is cancelled/expired falls through, re-reserves stock, then hits the unique-key IntegrityError and returns None -> opaque 400 (service.py:70-107).",
+    "adjust_stock accepts arbitrary negative delta; quantity can drop below reserved, making available negative (repository.py:50-56; service.py:34-51)."
+  ],
+  "execution_failures": [
+    "`pytest tests/` => 13 passed, 15 errors. All tests/test_api.py cases error with KeyError: 'CommerceService' at the autouse setup_temp_db fixture (test_api.py:23).",
+    "Importing commerce_service.app creates ./commerce.db in the working directory as a side effect (app.py:24; repository.py:13)."
+  ],
+  "test_gaps": [
+    "No executing test verifies HTTP auth (401), status codes, or the error-body envelope, since the API suite errors before running.",
+    "No test for duplicate-SKU conflict behavior (would have caught the 500).",
+    "No test for confirming an expired reservation via the service/API (expiration is only exercised through cleanup_expired_reservations).",
+    "No test asserts stock counters (quantity/reserved/available) after confirm or after expiration cleanup releases the hold."
+  ],
+  "quality_notes": [
+    "ErrorResponse Pydantic model (models.py:98-100) is defined but never used; the exception handler builds a raw dict (app.py:156-161).",
+    "require_api_key dependency (app.py:29-30) is defined but unused; endpoints instead read Header(alias='X-API-Key') and call validate() inline.",
+    "The two idempotency return branches (pending vs confirmed) build identical dicts and could be merged (service.py:74-93).",
+    "datetime.utcnow() is used throughout and is deprecated on Python 3.12 (many DeprecationWarnings); also naive UTC timestamps.",
+    "cleanup_expired_reservations exists but is wired to no endpoint or scheduler in app.py; only reachable in tests."
+  ],
+  "unnecessary_code_examples": [
+    "models.py:98-100 ErrorResponse (unused).",
+    "app.py:29-30 require_api_key dependency (unused).",
+    "repository.py:130-135 update_status assumes get() returns non-None (no guard), reachable only because callers pre-check."
+  ],
+  "security_safety_notes": [
+    "API keys hardcoded as {'test-key-1','test-key-2'} in security.py:21 with no environment/config override; acceptable for a demo but flagged for production claims.",
+    "All mutating endpoints enforce the API key (app.py:45,62,79,106,123); GET /orders and GET /health are unauthenticated by design.",
+    "Inputs validated via Pydantic (quantity>0, ttl 60..3600, offset/limit Query bounds) and ORM parameterization avoids SQL injection.",
+    "adjust_stock delta is unbounded, allowing negative inventory states (data-integrity risk, not injection)."
+  ],
+  "file_evidence": [
+    {"path": "tests/test_api.py", "note": "Line 23 monkeypatch `test_db.__class__.__init__.__globals__[\"CommerceService\"]` raises KeyError; all 15 API tests error at setup."},
+    {"path": "src/commerce_service/service.py", "note": "create_sku (21-32) does not handle duplicate id; confirm_reservation (120-155) uses multiple separate commits with no transaction; idempotency fall-through (70-107)."},
+    {"path": "src/commerce_service/repository.py", "note": "SkuRepository.create (26-31) commits without catching IntegrityError -> 500 on duplicate SKU; adjust_quantity (50-56) permits negative quantity."},
+    {"path": "src/commerce_service/app.py", "note": "db=Database() at import (24) writes ./commerce.db; unused require_api_key (29-30); unreachable 409 branch (49-52); custom error envelope (156-161)."},
+    {"path": "src/commerce_service/security.py", "note": "Hardcoded API keys (21); validation correctly raises 401 on missing/invalid key."},
+    {"path": "src/commerce_service/models.py", "note": "Unused ErrorResponse (98-100); idempotency_key unique constraint (34) drives the cancel/expire-retry failure."},
+    {"path": "README.md", "note": "Claims 409 on duplicate SKU (198) and API auth/pagination test coverage (166-172) that do not hold at runtime."}
+  ],
+  "commands_run": [
+    "find . -type f (project file listing)",
+    "python3 -c 'import fastapi,pydantic,sqlalchemy,httpx' (deps present); python3 --version (3.12.4)",
+    "PYTHONPATH=src python3 -m pytest tests/ -v --tb=short  => 13 passed, 15 errors (all test_api.py: KeyError 'CommerceService')",
+    "PYTHONPATH=src python3 -c '<TestClient smoke test>'  => SKU create 201; duplicate SKU raised sqlite3/sqlalchemy IntegrityError -> 500"
+  ],
+  "review_risk": "low — all source/tests read and the declared test command plus a targeted HTTP smoke test were run, reproducing both major defects; concurrency/transaction risks were assessed by inspection rather than load testing."
+}
+```

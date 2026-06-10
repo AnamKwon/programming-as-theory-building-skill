@@ -1,0 +1,153 @@
+```json
+{
+  "rubric_version": "benchmark-codegen-review-v1",
+  "score_scale": "0-100 per category",
+  "weights": {
+    "task_fulfillment": 0.20,
+    "functional_correctness": 0.25,
+    "executability": 0.15,
+    "test_quality": 0.15,
+    "code_quality": 0.10,
+    "minimality": 0.10,
+    "security_safety": 0.05
+  },
+  "task_fulfillment_score": 81,
+  "task_fulfillment_breakdown": {
+    "instruction_compliance": 80,
+    "required_artifacts": 90,
+    "feature_coverage": 80,
+    "constraint_adherence": 75
+  },
+  "functional_correctness_score": 36,
+  "functional_correctness_breakdown": {
+    "domain_invariants": 30,
+    "edge_case_behavior": 35,
+    "data_consistency": 40,
+    "error_semantics": 40
+  },
+  "executability_score": 58,
+  "executability_breakdown": {
+    "installability": 85,
+    "runtime_entrypoints": 70,
+    "command_result": 15,
+    "runtime_isolation": 60
+  },
+  "test_quality_score": 52,
+  "test_quality_breakdown": {
+    "required_test_coverage": 80,
+    "behavioral_assertions": 70,
+    "integration_realism": 45,
+    "repeatability": 25
+  },
+  "code_quality_score": 66,
+  "code_quality_breakdown": {
+    "readability": 75,
+    "maintainability": 45,
+    "boundary_design": 80,
+    "documentation_quality": 65
+  },
+  "minimality_score": 69,
+  "minimality_breakdown": {
+    "no_speculative_infrastructure": 80,
+    "no_dead_or_duplicate_code": 45,
+    "appropriate_abstractions": 80,
+    "dependency_minimality": 70
+  },
+  "security_safety_score": 71,
+  "security_safety_breakdown": {
+    "auth_enforcement": 85,
+    "secret_handling": 60,
+    "input_safety": 50,
+    "unsafe_operations": 90
+  },
+  "review_confidence_score": 90,
+  "review_confidence_breakdown": {
+    "inspection_depth": 95,
+    "command_evidence": 90,
+    "issue_specificity": 90,
+    "uncertainty_handling": 85
+  },
+  "weighted_components": {
+    "task_fulfillment": 16.2,
+    "functional_correctness": 9.0,
+    "executability": 8.7,
+    "test_quality": 7.8,
+    "code_quality": 6.6,
+    "minimality": 6.9,
+    "security_safety": 3.6
+  },
+  "weighted_total": 58.8,
+  "verdict": "mixed",
+  "key_findings": [
+    "Core confirm-reservation workflow is broken at runtime: service.py:103 (and the idempotency-expiry check at service.py:64) compare a tz-naive datetime read back from SQLite against tz-aware datetime.now(timezone.utc), raising TypeError. confirm_reservation can never succeed against the persisted DB.",
+    "Test suite does not pass: `pytest tests/` reports 21 failed, 13 passed, 3 errors. API tests fail with 'no such table: skus' and cross-thread SQLite errors because the test fixture uses sqlite:///:memory: with the default SingletonThreadPool (no StaticPool / check_same_thread), so the TestClient request thread sees a different empty in-memory DB.",
+    "Overselling invariant violated: stock is not decremented at reservation time, only at confirm (service.py:116), and confirm subtracts without a non-negative guard. Multiple PENDING reservations can each pass the create-time stock check and stock can be driven negative on confirm.",
+    "Dead/broken code block in confirm_reservation (service.py:121-125): a no-op for-loop wrapping a malformed nested Session.query(...).from_statement(f\"SELECT ... WHERE reservation_id = '{reservation_id}'\") that interpolates raw SQL via f-string. It is unreachable in tests only because line 103 throws first.",
+    "Auth status-code inconsistency: missing X-API-Key yields 403 (APIKeyHeader auto_error), but a present-but-invalid key yields 401 (security.py:11). test_create_reservation_invalid_api_key asserts 403 and fails (401 != 403)."
+  ],
+  "score_rationale": {
+    "task_fulfillment": "All requested artifacts and the full endpoint surface (SKUs, stock adjust, reservation create/confirm/cancel, order get/list with pagination, API-key auth) are present and structured cleanly under src/commerce_service. Docked because the confirm feature, while implemented, is non-functional, and the service binds a fixed module-level ./commerce.db at import.",
+    "functional_correctness": "Severe. The expiration/idempotency/confirm paths fail at runtime due to naive-vs-aware datetime comparison; the stock-reservation invariant allows overselling and negative stock; no transactional guard couples stock change with status change. Insufficient-stock and pagination paths are correct, which keeps this above failed.",
+    "executability": "Dependencies and packaging are complete and plausible (fastapi/sqlalchemy/uvicorn) and the app module imports cleanly, but the declared test command fails heavily (21 failed/3 errors/13 passed) and confirm raises an unhandled TypeError (HTTP 500) in normal operation. Failures isolate to two clear root causes.",
+    "test_quality": "Coverage matrix is good on paper — happy paths, insufficient stock, idempotent retry, expiration, auth, and pagination are all named, with some behavioral assertions (stock reduced to 90, idempotent quantity preserved). But the API fixture is mis-built (wrong sqlite pool) so most integration tests cannot run, repeatability is broken, and one auth test asserts the wrong status code.",
+    "code_quality": "Layering (models/repository/service/security/app) is coherent and readable, and the TTL constant centralizes the expiry rule. Maintainability is hurt by the broken dead-code block, duplicated inline order-lookup in confirm/cancel that belongs in the repository, and scattered datetime handling. README is mostly clear but slightly inaccurate.",
+    "minimality": "No speculative queues/workers/migrations/CLIs. Loses points for the dead nested-query loop, duplicated order-lookup logic, unused imports (Optional and create_engine in models.py), and the unused python-multipart dependency.",
+    "security_safety": "Mutating endpoints all depend on verify_api_key, and there are no shell/network/destructive operations. Lowered for the hardcoded default key 'test-key-123' baked into source with no env override, and the f-string raw-SQL construction in confirm (injection pattern; low real risk since reservation_id is a server-generated UUID, but bad practice).",
+    "review_confidence": "All source and test files were read and the full test suite plus an isolated failing case were executed with root errors captured (no such table, cross-thread SQLite, naive/aware datetime TypeError). Dependencies were already installed."
+  },
+  "instruction_failures": [
+    "README documents `GET /orders/{order_id} - Get order details` without the API-key note, but app.py:133-138 requires verify_api_key — doc/behavior mismatch.",
+    "README claims reservations 'expire after 15 minutes of inactivity', but the TTL is a fixed 15-minute window from creation with no inactivity/sliding logic (service.py:82)."
+  ],
+  "correctness_failures": [
+    "service.py:103 confirm_reservation raises TypeError (offset-naive vs offset-aware) for any reservation persisted to SQLite — confirm is unusable against the real DB.",
+    "service.py:64 idempotency-expiry comparison `existing.expires_at > datetime.now(timezone.utc)` raises the same TypeError on any retry once the row is reloaded from the DB.",
+    "No stock is held at reservation time; multiple concurrent/sequential PENDING reservations all pass the create-time check, enabling overselling.",
+    "service.py:116 `sku.current_stock -= reservation.quantity` has no non-negative guard, so confirmed orders can push stock below zero.",
+    "Stock decrement and reservation/order status updates in confirm are separate commits with no transaction boundary; a failure between them leaves inconsistent state."
+  ],
+  "execution_failures": [
+    "`pytest tests/`: 21 failed, 13 passed, 3 errors.",
+    "API tests: sqlite3.OperationalError 'no such table: skus' and 'SQLite objects created in a thread can only be used in that same thread' — fixture uses sqlite:///:memory: without StaticPool/check_same_thread so the request thread gets a separate empty DB.",
+    "Service tests: 5 failures with 'can't compare offset-naive and offset-aware datetimes' in confirm/expiry/idempotency paths.",
+    "test_create_reservation_invalid_api_key fails: expects 403 but verify_api_key returns 401 for an invalid key."
+  ],
+  "test_gaps": [
+    "No test asserts the overselling/negative-stock scenario (two reservations exceeding stock, then confirm), so the most important domain invariant is unverified.",
+    "Expiration is only tested at the service layer with a manually backdated row; no test confirms an expired idempotency key is treated as a new request (the relevant branch at service.py:66-68).",
+    "The 401-vs-403 auth distinction is asserted inconsistently and the failing case is not reconciled.",
+    "API integration tests are effectively non-executing due to the broken fixture, so 'integration realism' is unproven despite being written."
+  ],
+  "quality_notes": [
+    "service.py:121-125 is a dead, malformed no-op loop that should be deleted; the working order lookup immediately follows it.",
+    "Inline `select(Order).where(Order.reservation_id == ...)` is duplicated in confirm_reservation and cancel_reservation; it belongs in Repository as e.g. get_order_by_reservation.",
+    "models.py imports Optional (unused) and create_engine (unused).",
+    "Status fields are stored as raw strings (e.g. ReservationStatus.PENDING enum default on a String column), which works but is loosely typed at the persistence boundary."
+  ],
+  "unnecessary_code_examples": [
+    "service.py:121-125 dead nested Session.query(...).from_statement(...) for-loop.",
+    "Unused imports: `Optional` and `create_engine` in models.py.",
+    "Declared dependency python-multipart>=0.0.6 with no form/file/multipart endpoint anywhere."
+  ],
+  "security_safety_notes": [
+    "Hardcoded default API key 'test-key-123' in security.py:6 with no environment-variable override.",
+    "service.py:123 builds raw SQL via f-string interpolation of reservation_id (injection-shaped pattern); risk is mitigated only because reservation_id is a server-generated UUID, and the code is dead, but it should not ship.",
+    "Mutating endpoints correctly require the verify_api_key dependency; pydantic Field constraints validate inputs (min_length, gt=0, ge=0)."
+  ],
+  "file_evidence": [
+    {"path": "src/commerce_service/service.py", "note": "Line 103 and 64 naive/aware datetime TypeError; line 116 unguarded stock decrement; lines 121-125 dead/broken f-string SQL loop; duplicated order lookup with cancel_reservation."},
+    {"path": "tests/test_api.py", "note": "Lines 10-26 fixture uses sqlite:///:memory: with default SingletonThreadPool causing 'no such table' / cross-thread errors; line 73-79 asserts 403 for an invalid key that returns 401."},
+    {"path": "src/commerce_service/security.py", "note": "Hardcoded VALID_API_KEYS={'test-key-123'}; returns 401 on invalid key while missing key yields 403 from APIKeyHeader."},
+    {"path": "src/commerce_service/app.py", "note": "Line 30-35 binds a fixed module-level ./commerce.db and creates tables at import; endpoints wire service/repo correctly but confirm propagates an uncaught TypeError as 500."},
+    {"path": "src/commerce_service/models.py", "note": "Unused Optional and create_engine imports; status columns are String with enum-valued defaults."},
+    {"path": "pyproject.toml", "note": "Declares python-multipart dependency that is never used by any endpoint."}
+  ],
+  "commands_run": [
+    "find . -type f (excluding venv/cache) | sort",
+    "python3 -c 'import fastapi, sqlalchemy, httpx, pytest' (fastapi 0.104.1, sqlalchemy 2.0.23 available)",
+    "PYTHONPATH=src python3 -m pytest tests/ -q  => 21 failed, 13 passed, 3 errors",
+    "PYTHONPATH=src python3 -m pytest tests/test_api.py::test_create_sku -q  => sqlite3.OperationalError: no such table: skus; cross-thread ProgrammingError"
+  ],
+  "review_risk": "low — all source and test files were read and the declared test command plus an isolated failing case were executed with root-cause errors captured; concurrency behavior under a real multi-worker deployment was reasoned about rather than load-tested."
+}
+```

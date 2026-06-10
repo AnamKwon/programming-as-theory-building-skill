@@ -1,0 +1,158 @@
+All 40 tests pass. I've inspected every source and test file and run static checks. Here is my evaluation.
+
+```json
+{
+  "rubric_version": "benchmark-codegen-review-v1",
+  "score_scale": "0-100 per category",
+  "weights": {
+    "task_fulfillment": 0.20,
+    "functional_correctness": 0.25,
+    "executability": 0.15,
+    "test_quality": 0.15,
+    "code_quality": 0.10,
+    "minimality": 0.10,
+    "security_safety": 0.05
+  },
+  "task_fulfillment_score": 85,
+  "task_fulfillment_breakdown": {
+    "instruction_compliance": 85,
+    "required_artifacts": 90,
+    "feature_coverage": 85,
+    "constraint_adherence": 80
+  },
+  "functional_correctness_score": 69,
+  "functional_correctness_breakdown": {
+    "domain_invariants": 62,
+    "edge_case_behavior": 65,
+    "data_consistency": 60,
+    "error_semantics": 88
+  },
+  "executability_score": 88,
+  "executability_breakdown": {
+    "installability": 90,
+    "runtime_entrypoints": 85,
+    "command_result": 95,
+    "runtime_isolation": 80
+  },
+  "test_quality_score": 80,
+  "test_quality_breakdown": {
+    "required_test_coverage": 58,
+    "behavioral_assertions": 85,
+    "integration_realism": 88,
+    "repeatability": 90
+  },
+  "code_quality_score": 83,
+  "code_quality_breakdown": {
+    "readability": 88,
+    "maintainability": 80,
+    "boundary_design": 90,
+    "documentation_quality": 75
+  },
+  "minimality_score": 74,
+  "minimality_breakdown": {
+    "no_speculative_infrastructure": 70,
+    "no_dead_or_duplicate_code": 68,
+    "appropriate_abstractions": 85,
+    "dependency_minimality": 72
+  },
+  "security_safety_score": 89,
+  "security_safety_breakdown": {
+    "auth_enforcement": 95,
+    "secret_handling": 88,
+    "input_safety": 88,
+    "unsafe_operations": 85
+  },
+  "review_confidence_score": 92,
+  "review_confidence_breakdown": {
+    "inspection_depth": 95,
+    "command_evidence": 92,
+    "issue_specificity": 92,
+    "uncertainty_handling": 88
+  },
+  "weighted_components": {
+    "task_fulfillment": 17.0,
+    "functional_correctness": 17.3,
+    "executability": 13.2,
+    "test_quality": 12.0,
+    "code_quality": 8.3,
+    "minimality": 7.4,
+    "security_safety": 4.5
+  },
+  "weighted_total": 79.6,
+  "verdict": "good",
+  "key_findings": [
+    "All 40 tests pass cleanly (tests/test_api.py 20 + tests/test_service.py 20) with declared deps already installed; project is coherent and mostly usable.",
+    "Clean layered separation (models/repository/service/security/app) with sensible HTTP status semantics (401/403/404/409/410/422/400).",
+    "Correctness gap: expired-reservation handling leaks stock. confirm_reservation marks an expired reservation EXPIRED but never returns its quantity to stock (service.py:118-124); only cleanup_expired_reservations releases stock, and that method is never invoked anywhere.",
+    "Auto-expiration is never wired: cleanup_expired_reservations (service.py:193) has no scheduler, lifespan task, or endpoint, so expiration only happens lazily at confirm time. README claims 'automatic expiration'.",
+    "No test exercises expiration at all, despite it being a required coverage item; tests/test_service.py even imports ReservationExpiredError, datetime/timedelta/timezone and never uses them.",
+    "Idempotency IntegrityError fallback can double-decrement stock: stock is decremented and committed (service.py:80-81) before the reservation insert; on a concurrent duplicate the rollback (service.py:94) does not restore the already-committed stock."
+  ],
+  "score_rationale": {
+    "task_fulfillment": "All requested artifacts and the full endpoint surface (SKU, stock adjust, reservation create/confirm/cancel, paginated orders, auth) are present and match the README contract. Minor deduction: a commerce.db is written to cwd merely on import, and expiration—an explicitly requested workflow—is only partially realized.",
+    "functional_correctness": "Happy paths, insufficient stock, sequential idempotency, state transitions, and pagination are correct and proven. Deductions for the expired-confirm stock leak, unwired auto-expiry, and the committed-stock-before-insert idempotency race that can double-decrement; error_semantics are strong.",
+    "executability": "pyproject pins complete deps; `commerce_service.app:app` and `run_server` entrypoints are valid; full suite runs green. Isolation is slightly weakened by import-time creation of commerce.db in cwd and tests importing via the `src.` prefix rather than the installed package name.",
+    "test_quality": "Strong behavioral assertions (stock return, status transitions, matching ids), realistic SQLite temp-db integration, and clean per-test isolation. Held back by the complete absence of expiration tests, a required scenario.",
+    "code_quality": "Readable, well-named, cleanly bounded modules. Maintainability dinged by duplicated expiry logic across confirm_reservation and cleanup_expired_reservations and by README claims ('automatic expiration', 'Comprehensive test coverage') not matched by the code/tests.",
+    "minimality": "Several unused imports across all modules, an unused ErrorResponse model and ReservationResponse import, a never-invoked cleanup method, a no-op lifespan, and a declared-but-unused pydantic-settings dependency.",
+    "security_safety": "Every non-health endpoint enforces verify_api_key; secret sourced from env with no hardcoded production secret; pydantic bounds validation and ORM usage limit injection/integrity risk. Minor: plain `==` key comparison (no constant-time compare) and 0.0.0.0 bind default.",
+    "review_confidence": "Read all 6 source files and both test files, ran the full pytest suite (40 passed), and ran pyflakes to confirm dead imports; findings cite concrete files/lines."
+  },
+  "instruction_failures": [
+    "README claims 'automatic expiration' but no mechanism (scheduler/background task/endpoint) invokes cleanup_expired_reservations.",
+    "README claims 'Comprehensive test coverage' yet expiration is untested."
+  ],
+  "correctness_failures": [
+    "service.py:118-124 confirm_reservation on an expired reservation marks it EXPIRED and raises but does NOT restock the reserved quantity — permanent stock leak under the only reachable expiration path.",
+    "cleanup_expired_reservations (service.py:193-220) is the only code that restocks expired reservations and is never called, so expired reservations effectively never release inventory in normal operation.",
+    "service.py:80-94 stock is decremented and committed before the reservation insert; on a duplicate idempotency_key the IntegrityError rollback restores only the uncommitted insert, leaving stock double-decremented under concurrent retries."
+  ],
+  "execution_failures": [
+    "Importing commerce_service.app instantiates Repository() at module scope, creating commerce.db in the current working directory as a side effect (an artifact, commerce.db, is present in the workspace).",
+    "Tests import the package as `src.commerce_service`, coupling test execution to running from repo root rather than the installed `commerce_service` package name from pyproject."
+  ],
+  "test_gaps": [
+    "No test for reservation expiration (expired confirm -> 410, or cleanup_expired_reservations restocking and order cancellation).",
+    "No test asserting stock is restored after expiration (the actual leaking behavior would go unnoticed).",
+    "No test for the idempotency IntegrityError fallback path (service.py:93-99) or concurrent duplicate reservations.",
+    "No test for adjust_stock clamp interaction at the API layer beyond service level, and no test for partial-confirm leaving order pending across multiple reservations."
+  ],
+  "quality_notes": [
+    "Unused imports: service.py Optional & Session; security.py Depends; app.py os, ReservationResponse, ErrorResponse; repository.py timedelta (confirmed via pyflakes).",
+    "ErrorResponse model (models.py:82) is defined and imported but never used.",
+    "Expiry-check logic (tz-normalize + compare) is duplicated between confirm_reservation and cleanup_expired_reservations; would benefit from a single helper.",
+    "Broad `except Exception -> 500` blocks bind an unused `e` (app.py:58,69,82,97,110,130)."
+  ],
+  "unnecessary_code_examples": [
+    "cleanup_expired_reservations: implemented restock/cancel logic that is never wired into any entrypoint — speculative/dead in current behavior.",
+    "Empty no-op lifespan context manager (app.py:33-35).",
+    "pydantic-settings dependency declared in pyproject.toml:12 but never imported (security uses os.getenv directly).",
+    "ErrorResponse schema declared but unused."
+  ],
+  "security_safety_notes": [
+    "All mutating and read endpoints require verify_api_key via Depends; /health is intentionally public.",
+    "API key read from COMMERCE_API_KEY env at request time; no hardcoded production secret ('test-api-key' appears only in tests).",
+    "API key compared with plain `==` (security.py:19) — no constant-time comparison; low-severity timing concern.",
+    "run_server binds host 0.0.0.0 (app.py:147) — acceptable for containers but worth noting for production exposure.",
+    "Inputs validated with pydantic Field bounds; SQLAlchemy ORM avoids SQL injection."
+  ],
+  "file_evidence": [
+    {"path": "src/commerce_service/service.py", "note": "confirm_reservation (118-124) marks expired without restocking; cleanup_expired_reservations (193-220) restocks but is never invoked; idempotency stock-decrement committed before insert (80-94)."},
+    {"path": "src/commerce_service/app.py", "note": "All endpoints gated by Depends(verify_api_key); correct status mapping incl. 410 for expired (94); module-level Repository()/service instantiation; unused imports os/ReservationResponse/ErrorResponse."},
+    {"path": "src/commerce_service/security.py", "note": "Env-based key, 401 missing / 403 invalid; plain == comparison; unused Depends import."},
+    {"path": "src/commerce_service/repository.py", "note": "Repository defaults to sqlite:///commerce.db, creating a file in cwd; clean ORM access methods; unused timedelta import."},
+    {"path": "tests/test_service.py", "note": "20 service tests; imports ReservationExpiredError and datetime/timedelta/timezone but never uses them — confirms expiration is untested."},
+    {"path": "tests/test_api.py", "note": "20 API tests with temp-db + api-key fixtures; overrides app_module.repository/service for isolation; covers auth, insufficient stock, idempotency, pagination but not expiration."},
+    {"path": "pyproject.toml", "note": "Complete pinned deps and console script; declares unused pydantic-settings==2.1.0."},
+    {"path": "commerce.db", "note": "32KB SQLite file left in the workspace, created as an import-time side effect of Repository()."}
+  ],
+  "commands_run": [
+    "find . -type f (project listing)",
+    "python3 -c import fastapi, sqlalchemy, httpx, pytest (deps confirmed: fastapi 0.104.1, sqlalchemy 2.0.23)",
+    "python3 -m pytest tests/ -q (40 passed in 0.87s)",
+    "python3 -m pyflakes src tests (enumerated unused imports/vars)",
+    "grep for cleanup_expired/EXPIRED/410 and pydantic_settings usage"
+  ],
+  "review_risk": "low — all source and test files were read, the full suite was run green, and static checks confirmed dead code; concurrency/transaction findings are reasoned from code (not load-tested), and runtime was exercised only via tests, not a live uvicorn smoke run."
+}
+```

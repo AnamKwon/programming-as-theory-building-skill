@@ -1,0 +1,159 @@
+I have enough evidence. Key findings: all 21 service-layer tests pass, but all 12 API tests fail due to a test-fixture bug (in-memory SQLite + TestClient threadpool → `no such table`), and the core stock-availability invariant is broken (stock is never decremented on reservation/confirmation).
+
+```json
+{
+  "rubric_version": "benchmark-codegen-review-v1",
+  "score_scale": "0-100 per category",
+  "weights": {
+    "task_fulfillment": 0.20,
+    "functional_correctness": 0.25,
+    "executability": 0.15,
+    "test_quality": 0.15,
+    "code_quality": 0.10,
+    "minimality": 0.10,
+    "security_safety": 0.05
+  },
+  "task_fulfillment_score": 86,
+  "task_fulfillment_breakdown": {
+    "instruction_compliance": 85,
+    "required_artifacts": 95,
+    "feature_coverage": 80,
+    "constraint_adherence": 85
+  },
+  "functional_correctness_score": 65,
+  "functional_correctness_breakdown": {
+    "domain_invariants": 45,
+    "edge_case_behavior": 75,
+    "data_consistency": 55,
+    "error_semantics": 85
+  },
+  "executability_score": 73,
+  "executability_breakdown": {
+    "installability": 90,
+    "runtime_entrypoints": 90,
+    "command_result": 35,
+    "runtime_isolation": 75
+  },
+  "test_quality_score": 61,
+  "test_quality_breakdown": {
+    "required_test_coverage": 85,
+    "behavioral_assertions": 60,
+    "integration_realism": 45,
+    "repeatability": 55
+  },
+  "code_quality_score": 83,
+  "code_quality_breakdown": {
+    "readability": 88,
+    "maintainability": 80,
+    "boundary_design": 90,
+    "documentation_quality": 75
+  },
+  "minimality_score": 83,
+  "minimality_breakdown": {
+    "no_speculative_infrastructure": 92,
+    "no_dead_or_duplicate_code": 80,
+    "appropriate_abstractions": 88,
+    "dependency_minimality": 72
+  },
+  "security_safety_score": 87,
+  "security_safety_breakdown": {
+    "auth_enforcement": 90,
+    "secret_handling": 75,
+    "input_safety": 88,
+    "unsafe_operations": 95
+  },
+  "review_confidence_score": 93,
+  "review_confidence_breakdown": {
+    "inspection_depth": 95,
+    "command_evidence": 95,
+    "issue_specificity": 92,
+    "uncertainty_handling": 90
+  },
+  "weighted_components": {
+    "task_fulfillment": 17.2,
+    "functional_correctness": 16.3,
+    "executability": 11.0,
+    "test_quality": 9.2,
+    "code_quality": 8.3,
+    "minimality": 8.3,
+    "security_safety": 4.4
+  },
+  "weighted_total": 74.5,
+  "verdict": "mixed",
+  "key_findings": [
+    "Core stock-availability invariant is broken: service.create_reservation (service.py:70-78) checks sku.stock_available but NEVER decrements it, and confirm_reservation (service.py:82-105) never reserves/decrements stock either. The same 100-unit SKU can be reserved 30 units an unlimited number of times; the stock check is only meaningful for a single isolated reservation.",
+    "All 12 API tests fail at runtime: `pytest` yields '12 failed, 21 passed'. Root cause is a test-fixture bug in tests/test_api.py:13-22 — each `create_engine('sqlite:///:memory:')` plus TestClient running sync handlers on an anyio worker thread (SingletonThreadPool) gives the request a different empty in-memory DB, producing `sqlite3.OperationalError: no such table: skus`. The standard StaticPool/shared-connection setup is missing.",
+    "Service-layer suite is solid: 21/21 tests in tests/test_service.py pass and cover happy paths, insufficient stock, idempotency (including cancelled-key reuse), expiration, and pagination.",
+    "Clean layered design (models / repository / service / security / app) with coherent error semantics (404/409/400/403).",
+    "No test asserts stock decreases after a reservation/order, so the broken invariant is invisible to the suite.",
+    "pydantic-settings is declared as a dependency but never imported (config is read via os.getenv); HTTPException is imported but unused in service.py."
+  ],
+  "score_rationale": {
+    "task_fulfillment": "All requested artifacts and endpoints exist (SKU CRUD-lite, reservations with idempotency/TTL, confirm/cancel, orders, pagination, API-key auth, SQLite+SQLAlchemy). Feature coverage is docked because the reservation workflow does not actually couple to stock, leaving the central 'reserve inventory' behavior incomplete.",
+    "functional_correctness": "Idempotency, expiration (lazy on confirm), and error codes are correct, but the stock-availability invariant does not hold (no decrement anywhere), and there is no concurrency/locking or documented transaction risk. Order state is created PENDING with no completion transition. domain_invariants and data_consistency are the main drags.",
+    "executability": "App imports and runs; deps are pinned and installable; entrypoint `commerce_service.app:app` is usable. The declared `pytest` command, however, fails for over a third of the suite due to the in-memory SQLite isolation bug, and app.py creates ./commerce.db in cwd at import time.",
+    "test_quality": "Coverage list is comprehensive on paper and the service tests assert real domain behavior. But the entire API integration layer is non-functional at runtime, repeatability is undermined by the broken fixture, and no test verifies the stock-decrement invariant (because it is never implemented).",
+    "code_quality": "Readable, well-named, cleanly separated layers with docstrings. README is largely accurate but slightly over-claims 'stock tracking' given reservations never affect stock. Minor maintainability gap: the stock invariant has no home in the service.",
+    "minimality": "No speculative infrastructure (no queues, workers, migrations, CLIs). Small deductions for an unused pydantic-settings dependency, an unused HTTPException import in service.py, and an empty OrderConfirmRequest model that forces a `{}` body.",
+    "security_safety": "All mutating endpoints depend on verify_api_key; reads are intentionally open. ORM parametrization avoids injection and pydantic validates inputs. Minor: default fallback key 'test-key' and non-constant-time comparison; 403 used where 401 would be more conventional for a missing key.",
+    "review_confidence": "All eight project files were read and the declared test command was executed with the failure root-caused to a specific fixture. Only residual uncertainty is the installed FastAPI 0.104.1 vs pinned 0.109.0, which does not affect the diagnosed test-isolation failure."
+  },
+  "instruction_failures": [
+    "Reservation does not decrement/hold stock, so the inventory-reservation workflow central to the prompt is only partially implemented.",
+    "README claims SKU 'stock tracking' and a 'reservation system' that does not actually reserve stock against availability."
+  ],
+  "correctness_failures": [
+    "service.py:70-78 — stock_available is checked but never decremented; unlimited over-reservation against the same stock is possible.",
+    "service.py:82-105 — confirm_reservation creates an order but never decrements stock or otherwise consumes the reservation against inventory.",
+    "Idempotent retry (service.py:57-64) returns the existing reservation without verifying that sku_id/quantity match the original request, so a reused key with a conflicting body silently returns the prior reservation.",
+    "No concurrency control or row locking; under concurrent reservations even a correct decrement would race (not documented as a known risk)."
+  ],
+  "execution_failures": [
+    "`PYTHONPATH=src pytest` → '12 failed, 21 passed': every API test in tests/test_api.py fails with `sqlite3.OperationalError: no such table: skus`.",
+    "Cause: tests/test_api.py:13-22 in-memory SQLite engine is not shared across threads (no StaticPool/shared cache); TestClient runs sync endpoints on a worker thread that gets a fresh, table-less in-memory DB.",
+    "app.py:16-20 creates ./commerce.db in the current working directory at import time."
+  ],
+  "test_gaps": [
+    "No test asserts that stock_available decreases after a reservation or order — the broken invariant is untested.",
+    "Entire API/HTTP integration layer is effectively unverified because all 12 endpoint tests error before asserting.",
+    "No test for idempotency-key reuse with a conflicting body (different quantity/sku).",
+    "No test for the expired-reservation -> EXPIRED status transition persisted in create_reservation idempotency path (a time-expired but still PENDING reservation is returned as 'existing').",
+    "No 403/auth test at the service-integration level for confirm/cancel/adjust beyond create_sku."
+  ],
+  "quality_notes": [
+    "Layer separation (repository.py / service.py / models.py / security.py / app.py) is clean and easy to follow.",
+    "CommerceProblem -> HTTPException translation is consistent and centralizes status codes.",
+    "models.py mixes SQLAlchemy ORM models and pydantic schemas in one file; acceptable at this size but the `from . import models as schema` aliasing is slightly awkward.",
+    "datetime.utcnow() is deprecated on 3.12+ (warnings emitted); timezone-aware datetimes would be more future-proof."
+  ],
+  "unnecessary_code_examples": [
+    "service.py:5 — `from fastapi import HTTPException` is imported but never used (translation happens in app.py).",
+    "models.py:103-104 — `OrderConfirmRequest(BaseModel): pass` empty model forces clients to send `{}` for no benefit.",
+    "pyproject.toml:15 — `pydantic-settings` dependency is declared but never imported anywhere in src/."
+  ],
+  "security_safety_notes": [
+    "All mutating endpoints (POST /skus, /skus/{id}/adjust-stock, /reservations, confirm, cancel) depend on verify_api_key (app.py:47-121).",
+    "Default API key falls back to hardcoded 'test-key' when API_KEY env var is unset (security.py:10) — acceptable for a demo but should not ship as a production default.",
+    "API-key comparison uses `!=` (security.py:11), not constant-time; minor timing-side-channel.",
+    "Missing key returns 403; 401 with WWW-Authenticate would be more conventional.",
+    "ORM queries are parametrized; pydantic Field constraints (gt/ge) validate quantities — no injection or obvious data-integrity input risk."
+  ],
+  "file_evidence": [
+    {"path": "src/commerce_service/service.py", "note": "create_reservation/confirm_reservation never decrement stock (lines 53-105); HTTPException unused import (line 5); idempotent path returns existing without body match (57-64)."},
+    {"path": "tests/test_api.py", "note": "Fixture (13-22) uses unshared in-memory SQLite; all 12 endpoint tests fail with 'no such table: skus' under TestClient threadpool."},
+    {"path": "tests/test_service.py", "note": "21 passing service tests covering idempotency, insufficient stock, expiration, cancel, pagination; none assert stock decrement."},
+    {"path": "src/commerce_service/app.py", "note": "Clean endpoint wiring; auth on all mutations; creates ./commerce.db at import (16-20); read endpoints intentionally unauthenticated (127-156)."},
+    {"path": "src/commerce_service/models.py", "note": "ORM + pydantic schemas; empty OrderConfirmRequest (103-104); reasonable Field validation on ReservationRequest (84-88)."},
+    {"path": "src/commerce_service/security.py", "note": "verify_api_key with hardcoded 'test-key' default and non-constant-time compare; returns 403 for invalid/missing key."},
+    {"path": "pyproject.toml", "note": "Pinned deps; declares unused pydantic-settings; pytest asyncio_mode=auto configured."},
+    {"path": "README.md", "note": "Accurate run/test instructions; over-claims stock tracking given reservations do not affect stock."}
+  ],
+  "commands_run": [
+    "find . -type f (list project files)",
+    "python3 -c 'import fastapi, sqlalchemy, pydantic, httpx, pytest' (deps present; fastapi 0.104.1, sqlalchemy 2.0.23)",
+    "PYTHONPATH=src python3 -m pytest -q (result: 12 failed, 21 passed, 22 warnings)",
+    "PYTHONPATH=src python3 -m pytest tests/test_api.py::test_create_sku -q (root cause: sqlite3.OperationalError: no such table: skus)"
+  ],
+  "review_risk": "low — all source and test files were read and the declared test command was executed; the only minor unknown is installed FastAPI 0.104.1 vs the pinned 0.109.0, which does not affect the diagnosed test-isolation failure or the stock-invariant gap."
+}
+```

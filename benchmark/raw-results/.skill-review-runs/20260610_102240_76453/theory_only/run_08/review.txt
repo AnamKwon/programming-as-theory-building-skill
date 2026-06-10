@@ -1,0 +1,164 @@
+I have thorough evidence. Let me compile the evaluation.
+
+I read all source and test files, confirmed dependencies are installed, ran the full suite, and reproduced the domain bugs directly.
+
+```json
+{
+  "rubric_version": "benchmark-codegen-review-v1",
+  "score_scale": "0-100 per category",
+  "weights": {
+    "task_fulfillment": 0.20,
+    "functional_correctness": 0.25,
+    "executability": 0.15,
+    "test_quality": 0.15,
+    "code_quality": 0.10,
+    "minimality": 0.10,
+    "security_safety": 0.05
+  },
+  "task_fulfillment_score": 86,
+  "task_fulfillment_breakdown": {
+    "instruction_compliance": 85,
+    "required_artifacts": 95,
+    "feature_coverage": 90,
+    "constraint_adherence": 75
+  },
+  "functional_correctness_score": 45,
+  "functional_correctness_breakdown": {
+    "domain_invariants": 30,
+    "edge_case_behavior": 45,
+    "data_consistency": 35,
+    "error_semantics": 70
+  },
+  "executability_score": 64,
+  "executability_breakdown": {
+    "installability": 90,
+    "runtime_entrypoints": 85,
+    "command_result": 25,
+    "runtime_isolation": 55
+  },
+  "test_quality_score": 51,
+  "test_quality_breakdown": {
+    "required_test_coverage": 70,
+    "behavioral_assertions": 50,
+    "integration_realism": 40,
+    "repeatability": 45
+  },
+  "code_quality_score": 71,
+  "code_quality_breakdown": {
+    "readability": 80,
+    "maintainability": 65,
+    "boundary_design": 80,
+    "documentation_quality": 60
+  },
+  "minimality_score": 81,
+  "minimality_breakdown": {
+    "no_speculative_infrastructure": 85,
+    "no_dead_or_duplicate_code": 75,
+    "appropriate_abstractions": 85,
+    "dependency_minimality": 80
+  },
+  "security_safety_score": 81,
+  "security_safety_breakdown": {
+    "auth_enforcement": 90,
+    "secret_handling": 70,
+    "input_safety": 85,
+    "unsafe_operations": 80
+  },
+  "review_confidence_score": 94,
+  "review_confidence_breakdown": {
+    "inspection_depth": 95,
+    "command_evidence": 95,
+    "issue_specificity": 95,
+    "uncertainty_handling": 90
+  },
+  "weighted_components": {
+    "task_fulfillment": 17.2,
+    "functional_correctness": 11.3,
+    "executability": 9.6,
+    "test_quality": 7.7,
+    "code_quality": 7.1,
+    "minimality": 8.1,
+    "security_safety": 4.1
+  },
+  "weighted_total": 65.0,
+  "verdict": "mixed",
+  "key_findings": [
+    "Complete project structure and full requested API surface (SKUs, stock, reservations create/confirm/cancel, orders list/get, health, API-key auth, idempotency, cursor pagination) with clean app/service/repository/model/security layering.",
+    "CRITICAL domain bug: reservations never decrement `available` (only increment `reserved`), so the availability check `stock.available < quantity` permits unbounded over-reservation. Reproduced: 100 stock allowed two reservations of 100 each (reserved=200, available=100). src/commerce_service/service.py:87-93.",
+    "Data-consistency bug: adjust_stock commits the negative delta BEFORE checking `available < 0`, so the rejected adjustment is persisted. Reproduced: available=-9899 after an InsufficientStockError. src/commerce_service/service.py:45-48, repository.py:71-76.",
+    "Idempotency bug on confirm: re-confirming a reservation looks up the order via get_order(reservation_id) which queries by order_id (a different UUID), never matches, and creates a SECOND order. Reproduced: 2 distinct orders from one reservation. src/commerce_service/service.py:116-119.",
+    "Pagination loses rows on equal created_at timestamps (strict `<` cursor, no tie-breaker). test_service.py::test_list_orders_with_pagination FAILED (page 2 returned 4 instead of 5). repository.py:126-140.",
+    "Entire API test suite is broken: 15 failed + 3 errors of 40 tests. Test fixture creates an in-memory SQLite engine without check_same_thread/StaticPool, so TestClient's worker-thread handlers hit 'SQLite objects created in a thread can only be used in that same thread' → caught by catch-all → 400. tests/test_api.py:11-17.",
+    "Module-level `repo = Repository()` opens sqlite:///./commerce.db at import, writing a commerce.db file into the working directory (confirmed created).",
+    "Confirming a reservation never releases/decrements `reserved`, so reserved stock stays inflated permanently after an order is created."
+  ],
+  "score_rationale": {
+    "task_fulfillment": "All requested artifacts (pyproject.toml, README.md, src package, tests) and the full endpoint surface exist with sensible layering. Docked for constraint adherence: a commerce.db file is written into the workspace at import time, which is not production-minded for a fresh-workspace constraint.",
+    "functional_correctness": "Several core invariants are violated and were reproduced: over-reservation (available not reduced), negative stock persisted after a rejected adjust, and duplicate orders on repeated confirm. Reserved is never released on confirm. First-attempt insufficient-stock, idempotent create, expiration, and auth do work, and HTTP status mapping is mostly reasonable, but the broken invariants dominate.",
+    "executability": "Dependencies are complete and the app imports/serves cleanly; pip install and uvicorn entrypoint are plausible. However the declared `pytest` command fails badly (15 failed, 3 errors) and the failures are not isolated edge cases but the whole API integration layer, plus an import-time DB file in CWD.",
+    "test_quality": "Tests nominally name every required scenario, but the API integration tests do not run at all, assertions lean on status codes, and no test catches the over-reservation, duplicate-order, or negative-stock bugs — some tests assert the buggy behavior as correct. The pagination test is flaky due to timestamp ties.",
+    "code_quality": "Readable names and good separation of API/service/repository/schema/security. Lowered because the available/reserved model is incoherent, the confirm idempotency path is structurally wrong, and the README asserts invariants ('stock never goes negative', 'reservations cannot exceed available stock') that the code does not uphold.",
+    "minimality": "No speculative queues/workers/CLIs/migrations; SQLAlchemy and httpx are justified. Minor deductions: unused `select` import in repository.py, and pytest-asyncio/asyncio_mode=auto appear unnecessary since tests use the synchronous TestClient.",
+    "security_safety": "All mutating endpoints enforce verify_api_key via Depends; Pydantic validation (min_length, gt=0) guards inputs and the ORM avoids SQL injection. Minor deductions: the API key is hardcoded ('test-key-12345') with no env override, and a DB file is written to CWD.",
+    "review_confidence": "Read every source and test file, confirmed installed dependencies, ran the full suite, captured tracebacks, and independently reproduced the three domain bugs and the pagination failure with small scripts."
+  },
+  "instruction_failures": [
+    "README documents invariants ('Stock never goes negative', 'Reservations cannot exceed available stock') that the implementation does not enforce — a false documentation claim.",
+    "Production-minded constraint weakened by writing commerce.db into the working directory at import time."
+  ],
+  "correctness_failures": [
+    "Over-reservation: create_reservation does not decrement available, so availability check permits reserving far beyond stock (service.py:87-93).",
+    "Negative stock persisted: adjust commits before the >=0 check, leaving negative balances in the DB (service.py:45-48 + repository.py:71-76).",
+    "Duplicate orders on re-confirm: get_order(reservation_id) queries by order_id and never matches, creating a new order each confirm (service.py:116-119).",
+    "Reserved stock never released on confirm; reserved counter remains permanently inflated after an order is created.",
+    "Cursor pagination drops rows when created_at values tie (no secondary sort key); reproduced as 4 instead of 5 on page 2 (repository.py:126-140)."
+  ],
+  "execution_failures": [
+    "tests/test_api.py: 15 failures + 3 errors due to in-memory SQLite engine without check_same_thread=False/StaticPool; TestClient worker thread cannot reuse the main-thread connection (tests/test_api.py:11-17).",
+    "tests/test_service.py::test_list_orders_with_pagination fails on timestamp ties.",
+    "Import-time creation of ./commerce.db couples runtime to the current working directory."
+  ],
+  "test_gaps": [
+    "No test exercises cumulative reservations exhausting/over-drawing stock (would expose the over-reservation bug).",
+    "No test re-confirms a reservation to assert order idempotency (would expose duplicate-order bug).",
+    "No test asserts persisted stock after a rejected negative adjust (would expose negative-balance persistence).",
+    "No test asserts reserved is released after confirm.",
+    "API integration tests assert mostly status codes and currently cannot run at all.",
+    "Pagination test relies on distinct timestamps and is non-deterministic."
+  ],
+  "quality_notes": [
+    "Clean layer separation (app/service/repository/models/security) and consistent naming aid readability.",
+    "Repeated manual dict construction of response payloads across service methods is mildly duplicative but acceptable.",
+    "create_sku endpoint uses a broad `except Exception` that maps any error (including DB/thread errors) to HTTP 400, masking root causes (app.py:54-55).",
+    "datetime.utcnow() is used throughout and emits deprecation warnings on Python 3.12."
+  ],
+  "unnecessary_code_examples": [
+    "repository.py:4 imports `select` from sqlalchemy but it is never used.",
+    "pyproject.toml dev dependency pytest-asyncio plus asyncio_mode='auto' appear unused since tests use the synchronous fastapi TestClient."
+  ],
+  "security_safety_notes": [
+    "All mutating endpoints depend on verify_api_key (security.py); GET endpoints are intentionally open.",
+    "API key is a hardcoded demo value 'test-key-12345' in security.py with no environment/config override.",
+    "Pydantic field constraints (min_length, gt=0) validate untrusted input; SQLAlchemy ORM parameterization avoids SQL injection.",
+    "No shell/network/destructive operations; only side effect is creating ./commerce.db in the working directory."
+  ],
+  "file_evidence": [
+    {"path": "src/commerce_service/service.py", "note": "Lines 67-93: reservation checks available but only update_stock_reserved(+qty) is called — available never decremented (over-reservation). Lines 45-48: negative-balance check after commit. Lines 116-119: re-confirm uses get_order(reservation_id) by order_id, creating duplicate orders."},
+    {"path": "src/commerce_service/repository.py", "note": "Lines 71-76 adjust_stock commits before any guard; lines 126-140 cursor pagination uses strict created_at < cursor with no tie-breaker; line 4 unused `select` import."},
+    {"path": "src/commerce_service/app.py", "note": "Line 28 `repo = Repository()` writes ./commerce.db at import; lines 54-55 catch-all maps all errors to 400."},
+    {"path": "tests/test_api.py", "note": "Lines 11-17 in-memory engine without check_same_thread=False/StaticPool causes thread errors under TestClient — 15 failed + 3 errors."},
+    {"path": "README.md", "note": "Lines 71-77 list invariants (no negative stock, no over-reservation) that the code violates."},
+    {"path": "pyproject.toml", "note": "Deps complete and plausible; pytest-asyncio + asyncio_mode=auto appear unused for sync TestClient tests."}
+  ],
+  "commands_run": [
+    "find . -type f (list project files)",
+    "python3 -c 'import fastapi, sqlalchemy, pydantic, httpx, pytest' (deps ok)",
+    "PYTHONPATH=src python3 -m pytest -q (15 failed, 25 passed, 3 errors)",
+    "PYTHONPATH=src python3 -m pytest tests/test_api.py::test_create_sku_authorized (captured SQLite cross-thread traceback)",
+    "PYTHONPATH=src python3 -m pytest tests/test_service.py::test_list_orders_with_pagination (page2 got 4 != 5); ls commerce.db (file exists)",
+    "PYTHONPATH=src python3 -c '<reservation/adjust probe>' (reproduced over-reservation reserved=200/available=100 and persisted available=-9899)",
+    "PYTHONPATH=src python3 -c '<re-confirm probe>' (reproduced 2 distinct orders from one reservation)"
+  ],
+  "review_risk": "low — all files were read, dependencies were installed, the full test suite was run, and every cited domain bug plus the test-suite failure was reproduced directly."
+}
+```

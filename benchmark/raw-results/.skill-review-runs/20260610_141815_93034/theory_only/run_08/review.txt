@@ -1,0 +1,155 @@
+```json
+{
+  "rubric_version": "benchmark-codegen-review-v1",
+  "score_scale": "0-100 per category",
+  "weights": {
+    "task_fulfillment": 0.20,
+    "functional_correctness": 0.25,
+    "executability": 0.15,
+    "test_quality": 0.15,
+    "code_quality": 0.10,
+    "minimality": 0.10,
+    "security_safety": 0.05
+  },
+  "task_fulfillment_score": 86,
+  "task_fulfillment_breakdown": {
+    "instruction_compliance": 80,
+    "required_artifacts": 90,
+    "feature_coverage": 85,
+    "constraint_adherence": 88
+  },
+  "functional_correctness_score": 29,
+  "functional_correctness_breakdown": {
+    "domain_invariants": 25,
+    "edge_case_behavior": 25,
+    "data_consistency": 20,
+    "error_semantics": 45
+  },
+  "executability_score": 46,
+  "executability_breakdown": {
+    "installability": 85,
+    "runtime_entrypoints": 12,
+    "command_result": 5,
+    "runtime_isolation": 80
+  },
+  "test_quality_score": 74,
+  "test_quality_breakdown": {
+    "required_test_coverage": 85,
+    "behavioral_assertions": 80,
+    "integration_realism": 82,
+    "repeatability": 50
+  },
+  "code_quality_score": 82,
+  "code_quality_breakdown": {
+    "readability": 85,
+    "maintainability": 75,
+    "boundary_design": 88,
+    "documentation_quality": 78
+  },
+  "minimality_score": 77,
+  "minimality_breakdown": {
+    "no_speculative_infrastructure": 85,
+    "no_dead_or_duplicate_code": 55,
+    "appropriate_abstractions": 82,
+    "dependency_minimality": 85
+  },
+  "security_safety_score": 83,
+  "security_safety_breakdown": {
+    "auth_enforcement": 88,
+    "secret_handling": 65,
+    "input_safety": 85,
+    "unsafe_operations": 95
+  },
+  "review_confidence_score": 92,
+  "review_confidence_breakdown": {
+    "inspection_depth": 95,
+    "command_evidence": 92,
+    "issue_specificity": 92,
+    "uncertainty_handling": 88
+  },
+  "weighted_components": {
+    "task_fulfillment": 17.2,
+    "functional_correctness": 7.3,
+    "executability": 6.9,
+    "test_quality": 11.1,
+    "code_quality": 8.2,
+    "minimality": 7.7,
+    "security_safety": 4.2
+  },
+  "weighted_total": 62.6,
+  "verdict": "mixed",
+  "key_findings": [
+    "FATAL: Both ReservationModel (models.py:48) and OrderModel (models.py:70) declare an index literally named 'idx_sku_status'. SQLite requires globally unique index names, so Base.metadata.create_all() raises 'index idx_sku_status already exists'. This breaks every code path.",
+    "Confirmed by running the suite: all 35 tests ERROR during DB setup (sqlite3.OperationalError). Independently confirmed init_db(get_engine()) fails, so the FastAPI startup event also crashes — the server cannot boot as delivered.",
+    "The defect is a single-line fix (rename one index). Underneath it, the architecture (models/repository/service/security/app) is clean and the test suite is well-designed and comprehensive, so the project would likely work once the index name collides are resolved.",
+    "Data-integrity bug: CommerceService.adjust_stock (service.py:34-41) commits the quantity delta (repository.py:53-58) BEFORE checking inv.quantity < 0, then raises ValidationError. The rejected negative stock is already persisted, so a 'failed' adjustment corrupts stored quantity.",
+    "Several unused imports/schemas: repository.py:1 imports select, func (unused); service.py:2,5 import datetime and ReservationModel (unused); app.py:9 imports ReservationResponse which is never used as a response_model."
+  ],
+  "score_rationale": {
+    "task_fulfillment": "All requested artifacts exist (pyproject, README, src package, two test modules) and the full API surface is present in code: SKU create, stock adjust, reservation create/confirm/cancel with idempotency and expiration, API-key auth on mutations, and paginated order listing. Scored high because the requested scope is built; not perfect because the 'production-style' claim is undercut by a showstopper bug.",
+    "functional_correctness": "Severely penalized: as delivered nothing executes — create_all fails on the duplicate index name, so no invariant (stock availability, idempotency, expiration, state transitions) can actually hold at runtime. Additionally adjust_stock persists negative stock before rejecting it. Error-status mapping in app.py is sensible on inspection, which is the only thing keeping this above zero.",
+    "executability": "Dependencies are pinned and install cleanly (installability good) and the test harness uses isolated in-memory SQLite (isolation good), but the application crashes on startup and 35/35 tests ERROR. The failure is a single, well-isolated root cause, but command_result is effectively total failure.",
+    "test_quality": "Test design is genuinely strong: covers happy paths, insufficient stock, idempotent retry (asserting same reservation/order id and unchanged reserved count), expiration (back-dating created_at), auth 401/403, pagination across pages, and behavioral assertions on reserved/available/confirmed_at. Marked down heavily on repeatability because, despite good isolation design, the suite cannot currently pass at all; the negative-stock test also only asserts the raise, missing the persisted-corruption it would catch.",
+    "code_quality": "Clear layering and boundaries (repository for persistence, service for rules, schemas in models, security isolated). Readable names and a single TTL constant. Maintainability dinged by the copy-paste index-name collision and stringly-typed statuses; uses deprecated declarative_base and on_event('startup').",
+    "minimality": "No speculative queues/workers/CLIs/migrations. Dependencies are mostly justified, though pytest-asyncio + asyncio_mode='auto' are configured with no async tests. Main deduction is dead code: multiple unused imports and an unused ReservationResponse schema, plus duplicate Index definitions.",
+    "security_safety": "Every mutating endpoint calls verify_api_key (app.py:58,73,94,120,138); reads are intentionally open. Pydantic validates inputs (length bounds, quantity gt=0) and pagination is bounded (Query ge/le + service guard). Deduction for hardcoded API keys in source (security.py:6) rather than env/config, though they are clearly placeholder dev keys, not real secrets.",
+    "review_confidence": "All source and test files were read in full; the failure was reproduced via pytest and an isolated init_db call, and the exact SQLite error captured. Findings cite specific files/lines. Remaining uncertainty is only about behavior past the startup crash, which cannot be observed until the index bug is fixed."
+  },
+  "instruction_failures": [
+    "README claims a 'production-style' service, but the delivered artifact does not start (duplicate index name), so it is not runnable as shipped."
+  ],
+  "correctness_failures": [
+    "models.py:48 and models.py:70 both define Index('idx_sku_status', ...); create_all raises 'index idx_sku_status already exists' on SQLite — fatal for app startup and all tests.",
+    "service.py:34-41 adjust_stock commits the delta (repository.py:53-58) before validating non-negativity, so a rejected negative adjustment leaves corrupted (negative) quantity persisted.",
+    "Idempotency semantics are questionable: a retry whose prior reservation was cancelled raises ValidationError (service.py:50-51) instead of being treated idempotently or allowing reuse of the key.",
+    "Expired pending reservations continue to hold 'reserved' inventory indefinitely; expiration only blocks confirm (service.py:91) and there is no release-on-expiry path, so availability can be silently understated until manual cancel."
+  ],
+  "execution_failures": [
+    "pytest -q: 35 errors, 0 passed — every test fails in fixture setup at Base.metadata.create_all with sqlite3.OperationalError: index idx_sku_status already exists.",
+    "init_db(get_engine()) raises the same OperationalError, so the FastAPI @app.on_event('startup') handler crashes the server on boot."
+  ],
+  "test_gaps": [
+    "No test asserts that a rejected negative stock adjustment leaves quantity unchanged, so the persisted-negative-stock bug goes undetected.",
+    "No test covers cancelling an already-cancelled reservation or confirming an already-confirmed one (the 'already cancelled' branch in service.py:113 is untested).",
+    "No test exercises reservation against a SKU with zero inventory row (get_inventory None branch in service.py:66) versus insufficient available stock.",
+    "Idempotency test does not verify behavior when the prior reservation was confirmed or cancelled (only the pending-reuse path is tested)."
+  ],
+  "quality_notes": [
+    "Uses deprecated sqlalchemy.ext.declarative.declarative_base (models.py:6) and FastAPI on_event('startup') (app.py:29); both emit deprecation warnings under the pinned versions.",
+    "Auth is enforced by calling verify_api_key manually inside each handler rather than via a FastAPI dependency; it works but is repetitive and easy to forget on a new endpoint.",
+    "Order/reservation statuses are stringly-typed with comments listing allowed values (models.py:42,65) rather than enums, so invariants are not type-enforced."
+  ],
+  "unnecessary_code_examples": [
+    "repository.py:1 — `from sqlalchemy import create_engine, select, func`; select and func are never used.",
+    "service.py:2 — `from datetime import datetime` is unused (the only datetime use is a local import inside repository.update_reservation_status).",
+    "service.py:5 — `from .models import ReservationModel, OrderModel`; ReservationModel is never referenced.",
+    "app.py:9 / models.py:98 — ReservationResponse schema is imported and defined but never used as a response_model (reservation endpoints return ad-hoc dicts).",
+    "pyproject.toml:20 — pytest-asyncio + [tool.pytest.ini_options] asyncio_mode='auto' configured though there are no async tests."
+  ],
+  "security_safety_notes": [
+    "All mutating endpoints require the API key via verify_api_key (app.py:58,73,94,120,138); GET /orders and /health are intentionally unauthenticated, matching the spec.",
+    "VALID_API_KEYS is hardcoded in security.py:6 ('test-api-key-123','dev-key') rather than read from environment/config; acceptable as placeholder dev keys but not production-safe.",
+    "Inputs validated with Pydantic constraints (SKU id/name length, quantity gt=0, idempotency_key length) and pagination bounded by Query ge/le plus a service-layer guard; SQLAlchemy ORM avoids raw SQL injection.",
+    "No shell, filesystem, or network side effects beyond writing the SQLite DB file to the working directory (repository.py:7)."
+  ],
+  "file_evidence": [
+    {"path": "src/commerce_service/models.py", "note": "Lines 47-49 and 69-71: duplicate Index('idx_sku_status', ...) on two tables — root cause of create_all failure. RESERVATION_TTL_MINUTES and is_expired() (51-55) implement expiration cleanly."},
+    {"path": "src/commerce_service/repository.py", "note": "adjust_stock (53-58) commits the delta before the caller validates non-negativity; unused imports select/func at line 1; get_orders_paginated (143-148) implements offset/limit pagination."},
+    {"path": "src/commerce_service/service.py", "note": "adjust_stock (34-41) validates after commit (data corruption); idempotency handling (48-57) returns prior reservation+order; confirm/cancel enforce state transitions and expiration; unused datetime/ReservationModel imports."},
+    {"path": "src/commerce_service/app.py", "note": "Mutating routes all call verify_api_key; clean exception->HTTP mapping (404/400/409/500); imports unused ReservationResponse; startup event runs init_db which crashes."},
+    {"path": "src/commerce_service/security.py", "note": "API-key header dependency with auto_error=False, 401 for missing / 403 for invalid; hardcoded key set."},
+    {"path": "tests/test_service.py", "note": "Thorough service-level tests incl. idempotency, expiration via back-dated created_at, cancel-confirmed rejection, pagination — but all ERROR due to the index bug."},
+    {"path": "tests/test_api.py", "note": "Integration tests via TestClient with dependency-overridden in-memory DB; covers auth 401/403, insufficient stock, idempotency, pagination, 422 validation — all ERROR at fixture setup."},
+    {"path": "pyproject.toml", "note": "Pinned, installable deps; pytest-asyncio/asyncio_mode configured without async tests."}
+  ],
+  "commands_run": [
+    "find . -type f ... (project file listing)",
+    "python3 -m venv .venv_review && pip install -e .[dev] (clean install, succeeded)",
+    "pytest -q (35 errors, 0 passed)",
+    "pytest tests/test_service.py::TestSKUAndStock::test_create_sku (captured: sqlite3.OperationalError: index idx_sku_status already exists)",
+    "python -c 'init_db(get_engine())' (reproduced startup-time OperationalError)",
+    "cleanup: rm -rf .venv_review commerce.db .pytest_cache"
+  ],
+  "review_risk": "Low for the dominant finding: the startup/test failure was reproduced directly and the exact SQLite error captured. Behavior beyond the create_all crash (e.g., true runtime correctness of confirm/cancel/idempotency flows over HTTP) could not be observed because the app cannot start until the duplicate index name is fixed."
+}
+```

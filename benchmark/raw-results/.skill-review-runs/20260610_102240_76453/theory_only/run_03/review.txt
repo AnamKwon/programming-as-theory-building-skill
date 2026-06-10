@@ -1,0 +1,153 @@
+All 28 tests pass. I've reviewed all source and test files and identified the key issues. Let me record the main correctness finding precisely — the expiry path in `confirm_reservation`.
+
+The bug: in `service.py:119-126`, when a reservation is expired-on-confirm, it transitions to `CANCELLED` but never releases the held `reserved` stock back to `available` (unlike `cancel_reservation` at `service.py:164-170`). Reserved stock is permanently leaked. Combined with each repository method using its own session/commit (non-atomic check-then-act, no row locking), this is the main correctness/consistency weakness.
+
+```json
+{
+  "rubric_version": "benchmark-codegen-review-v1",
+  "score_scale": "0-100 per category",
+  "weights": {
+    "task_fulfillment": 0.20,
+    "functional_correctness": 0.25,
+    "executability": 0.15,
+    "test_quality": 0.15,
+    "code_quality": 0.10,
+    "minimality": 0.10,
+    "security_safety": 0.05
+  },
+  "task_fulfillment_score": 87,
+  "task_fulfillment_breakdown": {
+    "instruction_compliance": 88,
+    "required_artifacts": 92,
+    "feature_coverage": 88,
+    "constraint_adherence": 80
+  },
+  "functional_correctness_score": 73,
+  "functional_correctness_breakdown": {
+    "domain_invariants": 70,
+    "edge_case_behavior": 72,
+    "data_consistency": 65,
+    "error_semantics": 85
+  },
+  "executability_score": 89,
+  "executability_breakdown": {
+    "installability": 90,
+    "runtime_entrypoints": 90,
+    "command_result": 95,
+    "runtime_isolation": 80
+  },
+  "test_quality_score": 87,
+  "test_quality_breakdown": {
+    "required_test_coverage": 84,
+    "behavioral_assertions": 85,
+    "integration_realism": 88,
+    "repeatability": 90
+  },
+  "code_quality_score": 86,
+  "code_quality_breakdown": {
+    "readability": 88,
+    "maintainability": 82,
+    "boundary_design": 88,
+    "documentation_quality": 85
+  },
+  "minimality_score": 85,
+  "minimality_breakdown": {
+    "no_speculative_infrastructure": 88,
+    "no_dead_or_duplicate_code": 85,
+    "appropriate_abstractions": 88,
+    "dependency_minimality": 78
+  },
+  "security_safety_score": 89,
+  "security_safety_breakdown": {
+    "auth_enforcement": 92,
+    "secret_handling": 80,
+    "input_safety": 88,
+    "unsafe_operations": 95
+  },
+  "review_confidence_score": 91,
+  "review_confidence_breakdown": {
+    "inspection_depth": 95,
+    "command_evidence": 90,
+    "issue_specificity": 92,
+    "uncertainty_handling": 88
+  },
+  "weighted_components": {
+    "task_fulfillment": 17.4,
+    "functional_correctness": 18.3,
+    "executability": 13.4,
+    "test_quality": 13.1,
+    "code_quality": 8.6,
+    "minimality": 8.5,
+    "security_safety": 4.5
+  },
+  "weighted_total": 83.6,
+  "verdict": "good",
+  "key_findings": [
+    "All 28 tests pass under `PYTHONPATH=src python3 -m pytest tests/` (service + API layers); project is coherent and usable.",
+    "Clean layering: models/repository/service/security/app are well separated with a thin FastAPI surface.",
+    "Correctness bug: confirm_reservation on an expired reservation cancels it but never releases held `reserved` stock back to `available` (service.py:119-126), leaking inventory.",
+    "Each repository method opens its own session and commits independently; create_reservation performs check-then-act across two separate transactions with no locking — oversell race and partial-write risk on concurrency/crash.",
+    "Expiration is only evaluated lazily (on confirm or idempotent re-request); a pending-but-expired reservation that is never touched holds stock indefinitely, and there is no test for stock-release-on-expiry.",
+    "All mutating endpoints plus GET /orders enforce the X-API-Key dependency; auth returns 403 (arguably should be 401 for a missing credential)."
+  ],
+  "score_rationale": {
+    "task_fulfillment": "Every requested artifact, endpoint, and feature (idempotency, expiration, stock holds, order listing with pagination, API-key auth) is present and matches the README. Docked for a committed commerce.db artifact and non-atomic persistence undercutting the production-minded constraint.",
+    "functional_correctness": "Happy paths, insufficient stock, idempotent retry, state-transition guards, and pagination all behave correctly and are test-proven. Lowered for the reserved-stock leak on expired-confirm (service.py:119-126), non-atomic multi-session writes with no row locking (oversell race), and global (non-SKU-scoped, non-unique) idempotency keys. Error semantics are clean (404/409/410/400/403).",
+    "executability": "Pinned deps, hatchling packaging, and a usable uvicorn entrypoint (app.py:23-25); 28/28 tests pass. Docked because module-level Repository() writes a relative commerce.db into cwd on import (the leftover 24KB file), which is ambient but stays within the workspace.",
+    "test_quality": "Covers all required scenarios across both service and API layers with in-memory SQLite, behavioral assertions on stock/quantity/state, and per-test isolation. Gaps: no test for stock release on expiry (which would expose the bug) and no concurrency test.",
+    "code_quality": "Readable names and clear module boundaries; README is accurate and concise. Maintainability is slightly reduced because response-dict construction is duplicated across service methods and invariants (stock arithmetic) are spread across confirm/cancel without a shared helper.",
+    "minimality": "No speculative queues/workers/CLIs/migrations. Minor: python-dotenv is declared but never used (security.py reads os.getenv directly), and the Stock.committed flow / order state field carry slightly more than the implemented behavior uses.",
+    "security_safety": "Auth dependency applied to all mutations and order listing; ORM parameterization avoids injection; Pydantic validates quantity>0 and bounds limit/offset. Docked for a hardcoded dev fallback key ('dev-key-12345') in security.py:10.",
+    "review_confidence": "All six source files and both test files were read in full and the declared test command was executed successfully; findings cite specific files/lines. Remaining uncertainty is limited to concurrency behavior under real load, which was reasoned about rather than executed."
+  },
+  "instruction_failures": [
+    "A pre-existing commerce.db (24KB) is present in the workspace, so the delivered tree is not a pristine fresh workspace (created by module-level Repository() on import)."
+  ],
+  "correctness_failures": [
+    "confirm_reservation on an expired reservation transitions it to CANCELLED but does not return reserved->available, permanently leaking held stock (service.py:119-126).",
+    "create_reservation checks stock and writes reservation/stock across separate sessions with no locking, allowing oversell under concurrency and partial writes on failure (service.py:82-99, repository.py per-method sessions).",
+    "Idempotency keys are looked up globally and the column is not unique (models.py:48, repository.py:119-128); concurrent duplicates can create two reservations and a key reused across SKUs returns the wrong reservation.",
+    "Expired pending reservations are never proactively released (no background/cleanup path); stock stays held until a confirm/idempotent retry happens to observe expiry."
+  ],
+  "execution_failures": [
+    "Importing commerce_service.app instantiates Repository() at module scope, writing commerce.db into the current working directory as a side effect (app.py:24)."
+  ],
+  "test_gaps": [
+    "No test asserts reserved stock is released when a reservation expires (the exact path that contains the leak bug).",
+    "No concurrency/race test for simultaneous reservations against limited stock.",
+    "No test for the expired-idempotent-retry branch (ReservationExpiredError at service.py:66-67).",
+    "No test for duplicate sku_code creation (unique constraint surfacing as 400 via the broad except in app.py:38-39)."
+  ],
+  "quality_notes": [
+    "Response-dict construction is duplicated across create/confirm/cancel reservation methods (service.py); a shed helper would localize the shape.",
+    "app.py:38-39 catches bare Exception and maps to 400, which can mask unexpected server errors as client errors.",
+    "Service returns float() for quantities/stock (service.py:55-58, 71, 104) before Pydantic re-coerces to Decimal, an unnecessary precision round-trip."
+  ],
+  "unnecessary_code_examples": [
+    "python-dotenv is declared in pyproject.toml dependencies but never imported or used anywhere in src/.",
+    "Order.state and ReservationState reuse imply a pending/cancelled order lifecycle, but orders are only ever created in CONFIRMED state (service.py:142-144), so other order states are effectively unused."
+  ],
+  "security_safety_notes": [
+    "Hardcoded fallback API key 'dev-key-12345' in security.py:10 (dev default, not a real secret, but ships an accepted credential when API_KEY is unset).",
+    "Missing API key returns 403 rather than 401 (security.py:9); functional but semantically off.",
+    "All mutating endpoints and GET /orders correctly require Depends(verify_api_key); ORM usage avoids SQL injection and Pydantic enforces quantity>0 and limit/offset bounds."
+  ],
+  "file_evidence": [
+    {"path": "src/commerce_service/service.py", "note": "Expired-confirm cancels reservation without releasing reserved stock (lines 119-126); cancel path does release correctly (164-170)."},
+    {"path": "src/commerce_service/repository.py", "note": "Each method opens/commits its own session (e.g. 90-110, 66-88); no shared transaction or locking across check-then-act."},
+    {"path": "src/commerce_service/app.py", "note": "Module-level repo = Repository() writes commerce.db to cwd on import (24); endpoints map domain errors to 404/409/410/400."},
+    {"path": "src/commerce_service/security.py", "note": "X-API-Key verified against API_KEY env with hardcoded fallback 'dev-key-12345'; missing key -> 403 (lines 6-13)."},
+    {"path": "src/commerce_service/models.py", "note": "idempotency_key is nullable, non-unique (48); Numeric(12,2) money columns; Pydantic schemas validate quantity gt=0 (90)."},
+    {"path": "tests/test_api.py", "note": "Realistic TestClient tests patching app module with in-memory DB; covers auth, insufficient stock (409), idempotency, confirm/cancel, pagination."},
+    {"path": "tests/test_service.py", "note": "Service-level coverage incl. expiry-on-confirm (123-140) and stock-release-on-cancel (162-174); no expiry stock-release assertion."},
+    {"path": "commerce.db", "note": "Leftover 24KB SQLite file present in workspace, evidence of module-level DB creation; not a pristine tree."}
+  ],
+  "commands_run": [
+    "find . -type f (excluding venv/cache) — enumerated 6 source files, 2 test files, pyproject.toml, README.md, commerce.db",
+    "python3 -c 'import fastapi, sqlalchemy, httpx, pytest' — deps available",
+    "PYTHONPATH=src python3 -m pytest tests/ -q — 28 passed in 0.74s",
+    "ls -la commerce.db — confirmed 24KB leftover db artifact"
+  ],
+  "review_risk": "low — all source and test files were read in full and the test suite ran green; concurrency/oversell and crash-atomicity concerns were reasoned from the code (separate per-method sessions) rather than executed under real load."
+}
+```
