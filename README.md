@@ -80,11 +80,11 @@ Generated SQLite databases, Python caches, and pytest caches are intentionally i
 Option A: Claude Code plugin
 
 ```text
-/plugin marketplace add <github-owner>/programming-as-theory-building-skill
-/plugin install programming-as-theory-building-skill@programming-as-theory-building
+/plugin marketplace add AnamKwon/programming-as-theory-building-skill
+/plugin install programming-as-theory-building-skill@programming-as-theory-building-skill
 ```
 
-Replace `<github-owner>` with the account or organization that publishes this repository.
+For a fork, replace `AnamKwon` with the account or organization that publishes the repository. The install command is `<plugin-name>@<marketplace-id>`; this repository uses `programming-as-theory-building-skill` for both.
 
 Option B: manual Claude Code skill install
 
@@ -137,6 +137,7 @@ Naur, Peter. "Programming as Theory Building." *Microprocessing and Microprogram
 |-- CITATION.cff
 |-- CLAUDE.md
 |-- .claude-plugin/
+|   |-- marketplace.json
 |   `-- plugin.json
 |-- benchmark/
 |   |-- README.md

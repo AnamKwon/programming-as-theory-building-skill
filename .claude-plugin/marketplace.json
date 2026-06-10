@@ -1,0 +1,27 @@
+{
+  "name": "programming-as-theory-building-skill",
+  "description": "Claude Code marketplace for the Programming as Theory Building skill.",
+  "version": "1.0.0",
+  "owner": {
+    "name": "AnamKwon"
+  },
+  "plugins": [
+    {
+      "name": "programming-as-theory-building-skill",
+      "source": "./",
+      "description": "Programming as Theory Building guidelines for coding agents: recover the domain invariant, place changes by similarity, avoid speculative abstractions, and verify behavior that matters.",
+      "version": "1.0.0",
+      "author": {
+        "name": "Programming as Theory Building Skill contributors"
+      },
+      "keywords": [
+        "claude-code",
+        "coding-agent",
+        "programming-as-theory-building",
+        "software-engineering",
+        "code-generation"
+      ],
+      "category": "workflow"
+    }
+  ]
+}
