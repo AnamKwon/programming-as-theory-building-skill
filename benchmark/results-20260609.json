@@ -1,0 +1,70 @@
+{
+  "benchmark": "skill-codegen-commerce-service",
+  "date": "2026-06-09",
+  "codegen_model": "Claude Haiku",
+  "codegen_model_setting": "MODEL=haiku",
+  "review_model": "Claude Opus",
+  "codegen_run": ".skill-codegen-runs/20260609_195509_38196",
+  "review_run": ".skill-review-runs/20260609_231224_49469",
+  "repeats_per_arm": 10,
+  "arms": {
+    "skills_off": {
+      "weighted_total_avg": 73.7,
+      "weighted_total_min": 60.1,
+      "weighted_total_max": 84.1,
+      "task_fulfillment_avg": 82.0,
+      "functional_correctness_avg": 60.7,
+      "executability_avg": 75.7,
+      "test_quality_avg": 73.0,
+      "code_quality_avg": 79.4,
+      "minimality_avg": 76.7,
+      "security_safety_avg": 83.5,
+      "review_confidence_avg": 90.8,
+      "verdicts": {
+        "good": 4,
+        "mixed": 6
+      }
+    },
+    "karpathy_only": {
+      "weighted_total_avg": 72.0,
+      "weighted_total_min": 56.1,
+      "weighted_total_max": 86.3,
+      "task_fulfillment_avg": 82.8,
+      "functional_correctness_avg": 56.5,
+      "executability_avg": 70.1,
+      "test_quality_avg": 71.0,
+      "code_quality_avg": 79.9,
+      "minimality_avg": 79.6,
+      "security_safety_avg": 83.4,
+      "review_confidence_avg": 90.8,
+      "verdicts": {
+        "good": 4,
+        "mixed": 6
+      }
+    },
+    "theory_only": {
+      "weighted_total_avg": 76.7,
+      "weighted_total_min": 56.3,
+      "weighted_total_max": 87.2,
+      "task_fulfillment_avg": 84.0,
+      "functional_correctness_avg": 67.7,
+      "executability_avg": 76.7,
+      "test_quality_avg": 74.7,
+      "code_quality_avg": 82.2,
+      "minimality_avg": 76.8,
+      "security_safety_avg": 86.5,
+      "review_confidence_avg": 91.0,
+      "verdicts": {
+        "good": 6,
+        "mixed": 4
+      }
+    }
+  },
+  "summary": {
+    "theory_only_weighted_total_delta_vs_skills_off": 3.0,
+    "theory_only_weighted_total_delta_vs_karpathy_only": 4.7,
+    "theory_only_functional_correctness_delta_vs_skills_off": 7.0,
+    "theory_only_functional_correctness_delta_vs_karpathy_only": 11.2,
+    "interpretation": "The theory-only arm produced the highest average weighted score, functional correctness score, code quality score, and security/safety score in this run. It also shifted the verdict distribution from 4 good / 6 mixed to 6 good / 4 mixed."
+  }
+}

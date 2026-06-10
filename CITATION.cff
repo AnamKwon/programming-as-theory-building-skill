@@ -1,0 +1,17 @@
+cff-version: 1.2.0
+title: "Programming as Theory Building Skill"
+message: "If you cite the skill's design basis, cite Peter Naur's paper listed as the preferred citation."
+authors:
+  - name: "Programming as Theory Building Skill contributors"
+preferred-citation:
+  type: article
+  title: "Programming as Theory Building"
+  authors:
+    - family-names: "Naur"
+      given-names: "Peter"
+  journal: "Microprocessing and Microprogramming"
+  volume: "15"
+  issue: "5"
+  start: 253
+  end: 261
+  year: 1985

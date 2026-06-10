@@ -1,0 +1,15 @@
+.DS_Store
+.claude/
+.codex/
+.gemini/
+.skill-codegen-runs/
+.skill-review-runs/
+__pycache__/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.pyc
+*.log
+*.sqlite
+*.sqlite3
+*.db

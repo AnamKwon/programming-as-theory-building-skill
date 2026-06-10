@@ -1,0 +1,19 @@
+{
+  "name": "programming-as-theory-building-skill",
+  "description": "Programming as Theory Building guidelines for coding agents, grounded in Peter Naur's paper and focused on preserving program theory during code work.",
+  "version": "1.0.0",
+  "author": {
+    "name": "Programming as Theory Building Skill contributors"
+  },
+  "license": "MIT",
+  "keywords": [
+    "coding",
+    "skills",
+    "programming-as-theory-building",
+    "naur",
+    "code-generation"
+  ],
+  "skills": [
+    "./skills/programming-as-theory-building"
+  ]
+}
