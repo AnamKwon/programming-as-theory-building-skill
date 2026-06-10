@@ -1,0 +1,151 @@
+I have conclusive runtime evidence. Let me record the key facts before scoring.
+
+**Runtime findings:**
+- `/health` → 200 OK (only endpoint with no DB access).
+- `POST /skus` and every DB-touching endpoint → **500 `DetachedInstanceError`**. The repository (`repository.py`) commits and `session.close()`s before returning ORM objects; `service.py`/response serialization then reads attributes off detached instances → crash. This breaks 6 of 7 endpoints at actual runtime.
+- `test_api.py` — all 17 tests **error at fixture setup**: `monkeypatch.setattr(app, "repository", test_repo)` targets the `FastAPI` instance (which has no `repository` attr) → `AttributeError`. (Compounding bug: handlers reference the module-global `service`, so even a corrected monkeypatch wouldn't isolate.)
+- `test_service.py` — 11 failed (same `DetachedInstanceError`), 1 passed (`test_adjust_stock_not_found`, the only path with no post-close attribute access).
+- **Final: 1 passed, 11 failed, 17 errors / 29 (3.4%).**
+
+```json
+{
+  "rubric_version": "benchmark-codegen-review-v1",
+  "score_scale": "0-100 per category",
+  "weights": {
+    "task_fulfillment": 0.20,
+    "functional_correctness": 0.25,
+    "executability": 0.15,
+    "test_quality": 0.15,
+    "code_quality": 0.10,
+    "minimality": 0.10,
+    "security_safety": 0.05
+  },
+  "task_fulfillment_score": 80,
+  "task_fulfillment_breakdown": {
+    "file_structure_compliance": 90,
+    "api_surface_coverage": 100,
+    "output_contract_adherence": 50
+  },
+  "functional_correctness_score": 26,
+  "functional_correctness_breakdown": {
+    "business_logic_accuracy": 25,
+    "expiration_and_state_rules": 25,
+    "concurrency_and_idempotency": 25,
+    "error_handling_semantics": 30
+  },
+  "executability_score": 61,
+  "executability_breakdown": {
+    "dependency_completeness": 100,
+    "imports_and_entrypoints": 80,
+    "automated_test_results": 3
+  },
+  "test_quality_score": 70,
+  "test_quality_breakdown": {
+    "specification_coverage": 95,
+    "assertion_rigor": 90,
+    "environment_isolation": 25
+  },
+  "code_quality_score": 83,
+  "code_quality_breakdown": {
+    "clarity_and_naming": 85,
+    "separation_of_concerns": 80
+  },
+  "minimality_score": 68,
+  "minimality_breakdown": {
+    "no_dead_code": 55,
+    "structural_complexity": 80
+  },
+  "security_safety_score": 93,
+  "security_safety_breakdown": {
+    "authentication_gate": 95,
+    "input_validation": 90
+  },
+  "review_confidence_score": 96,
+  "weighted_components": {
+    "task_fulfillment": 16.0,
+    "functional_correctness": 6.5,
+    "executability": 9.2,
+    "test_quality": 10.5,
+    "code_quality": 8.3,
+    "minimality": 6.8,
+    "security_safety": 4.7
+  },
+  "weighted_total": 61.9,
+  "verdict": "mixed",
+  "key_findings": [
+    "CRITICAL runtime defect: repository.py closes the SQLAlchemy session before returning ORM objects; service.py and response serialization then access attributes on detached instances, raising DetachedInstanceError. 6 of 7 endpoints return HTTP 500 at runtime; only GET /health (no DB access) works.",
+    "test_api.py is non-runnable: the `client` fixture does monkeypatch.setattr(app, 'repository', ...) on the FastAPI app object, which has no such attribute -> AttributeError errors all 17 API tests at setup.",
+    "Compounding isolation bug: route handlers call the module-global `service`, not `app.service`, so the fixture's monkeypatch could never have redirected requests to the temp DB even if the attribute existed.",
+    "Full suite result (executed): 1 passed, 11 failed, 17 errors out of 29 (3.4% pass rate).",
+    "Design/spec coverage is strong on paper: all 7 endpoints present, correct status codes (201/200), idempotency check, 300s expiration with stock restoration, PENDING enforcement, 400/401 mapping, Pydantic validation, auth gate on all mutations -- but almost none of it executes successfully.",
+    "Auth (401) paths DO work at runtime because validate_api_key runs before any DB access."
+  ],
+  "score_rationale": {
+    "task_fulfillment": "All 7 endpoints and all core source/test files are present with the requested src/commerce_service + tests layout, scoring high on structure and API surface. The required exclusive-JSON agent output (files_created/entrypoint/test_command) is not present as an artifact in the workspace and cannot be verified, so output_contract_adherence is scored at midpoint.",
+    "functional_correctness": "Business rules are coded correctly when read statically, but the mandated test execution and direct TestClient runtime both show 6/7 endpoints crash with HTTP 500 (DetachedInstanceError). Insufficient-stock would 500 rather than return 400 because get_sku returns a detached object before the stock comparison. Only 401 auth rejection behaves correctly at runtime. Scored low to reflect actual runtime behavior per instructions.",
+    "executability": "Dependencies in pyproject.toml are complete and correct (FastAPI, Pydantic, pydantic-settings, uvicorn, SQLAlchemy; dev: pytest, pytest-asyncio, httpx) and the app imports and boots (health=200). However automated tests effectively do not pass (1/29), dragging the category down.",
+    "test_quality": "Tests cover all six required scenarios (happy path, insufficient stock, idempotency, expiration, auth block, pagination) with rigorous assertions on data, state, and stock levels. Environment isolation is broken: the API client fixture errors out entirely and handlers bypass the injected service, so no API test ever achieves isolation.",
+    "code_quality": "Naming, routing, and control flow are clear and the layering (app/service/repository/security/models) is clean and conventional. The chosen separation is, however, exactly what produced the detached-session defect, so separation_of_concerns is marked down slightly.",
+    "minimality": "No over-engineering, but several dead artifacts exist: unused get_api_key_from_header function, unused imports (fastapi.status in app.py, select in repository.py, Optional in models.py/service.py), an unused ErrorResponse model, and a declared pydantic-settings dependency with no settings module.",
+    "security_safety": "All mutating endpoints (skus, stock/adjust, reservations, confirm, cancel) are gated by validate_api_key, returning 401 for missing/invalid keys, and this path works at runtime. Pydantic models enforce types and constraints (min_length, ge, gt) on all payloads."
+  },
+  "instruction_failures": [
+    "No JSON output artifact (files_created/entrypoint/test_command) is present in the workspace to confirm the 'output exclusively JSON' contract; a README.md was produced instead, which may violate the exclusive-output requirement.",
+    "'Do not modify files' honored; only generated comm.db artifacts were created/removed during test runs."
+  ],
+  "correctness_failures": [
+    "repository.py:51-59 (create_sku) and all other repo methods return ORM objects after session.close(); callers (service.py:14, etc.) trigger DetachedInstanceError -> HTTP 500.",
+    "POST /skus, /stock/adjust, /reservations, /reservations/{id}/confirm, /reservations/{id}/cancel, GET /orders all fail at runtime with 500 due to detached instances.",
+    "Insufficient-stock check (service.py:31) never reaches its 400 path at runtime because reading sku_model.available_stock on a detached instance crashes first.",
+    "Stock-restoration and idempotency logic cannot be exercised successfully at runtime due to the same session bug."
+  ],
+  "execution_failures": [
+    "pytest: 1 passed, 11 failed, 17 errors (29 total).",
+    "tests/test_api.py: 17/17 errors -- AttributeError: FastAPI object has no attribute 'repository' in client fixture (test_api.py:27).",
+    "tests/test_service.py: 11 failed with sqlalchemy.orm.exc.DetachedInstanceError; only test_adjust_stock_not_found passed.",
+    "Direct TestClient probe: POST /skus -> 500 DetachedInstanceError; GET /health -> 200."
+  ],
+  "test_gaps": [
+    "No test verifies stock is actually decremented in the DB after a successful API reservation (only service-level test checks this, and it fails).",
+    "No negative test for confirming/cancelling a non-existent reservation_id (ValueError -> 400 path).",
+    "API-level tests never run, so the entire HTTP layer (status codes, response_model shapes, auth ordering) is unverified by the suite as written.",
+    "Idempotency test asserts equal IDs but not that stock was unchanged at the API layer."
+  ],
+  "quality_notes": [
+    "Clean, conventional FastAPI layering and readable handler code.",
+    "The session-per-method repository pattern returns live ORM objects across the session boundary -- the root cause of the runtime collapse; methods should return detached-safe data (expire_on_commit=False, refresh-then-detach, or dict/DTO conversion inside the session).",
+    "Mixing module-global `service`/`repository` with attempted app-attribute injection makes the service hard to test and is internally inconsistent."
+  ],
+  "unnecessary_code_examples": [
+    "security.py:6-12 get_api_key_from_header is defined and imported but never used.",
+    "app.py:1 imports `status` from fastapi but uses integer literals instead.",
+    "repository.py:5 imports `select` (never used; code uses session.query).",
+    "models.py:2 imports Optional (unused); models.py:56-57 ErrorResponse model is never referenced.",
+    "service.py:2 imports Optional (unused).",
+    "pyproject.toml declares pydantic-settings but no settings module exists."
+  ],
+  "security_safety_notes": [
+    "All mutating endpoints enforce X-API-Key via validate_api_key; missing key -> 401 'Missing API key', wrong key -> 401 'Invalid API key'. This path is functional at runtime.",
+    "GET /orders is unauthenticated (read-only) -- acceptable, but note orders data is exposed without a key.",
+    "Pydantic Field constraints (min_length=1, ge=0, gt=0) provide solid input validation against malformed payloads.",
+    "Default API key 'test-key-123' is hardcoded as a fallback; acceptable for dev but should be required in production."
+  ],
+  "file_evidence": [
+    {"path": "src/commerce_service/repository.py", "note": "Lines 51-59/61-66/etc: every method commits/closes session then returns ORM object -> detached instance root cause."},
+    {"path": "src/commerce_service/service.py", "note": "Line 14 and _format_* methods read attributes off objects whose session is already closed -> DetachedInstanceError."},
+    {"path": "src/commerce_service/app.py", "note": "Handlers use module-global `service`; all 5 mutating endpoints call validate_api_key; status codes 201/200 set correctly."},
+    {"path": "tests/test_api.py", "note": "Line 27 monkeypatch.setattr(app,'repository',...) errors all 17 API tests at fixture setup."},
+    {"path": "tests/test_service.py", "note": "Covers all 6 scenarios with strong assertions; 11/12 fail on DetachedInstanceError at runtime."},
+    {"path": "pyproject.toml", "note": "Dependency set complete; declares unused pydantic-settings."},
+    {"path": "src/commerce_service/security.py", "note": "validate_api_key functional; get_api_key_from_header is dead code."}
+  ],
+  "commands_run": [
+    "find . -type f (project file listing)",
+    "python3 --version; python3 -c import fastapi,pydantic,sqlalchemy,httpx,pytest (deps OK, Python 3.12.4)",
+    "python3 -m pytest tests/ -v  (1 passed, 11 failed, 17 errors)",
+    "python3 -m pytest tests/test_api.py::test_health_check  (AttributeError in client fixture)",
+    "python3 -c TestClient probe: /health -> 200, POST /skus -> 500 DetachedInstanceError"
+  ],
+  "review_risk": "Low. Findings are grounded in executed pytest output and a direct TestClient runtime probe, with specific file:line citations. The exclusive-JSON output-contract item is the only criterion that could not be verified from the workspace (no agent-output artifact available), and is scored conservatively. The numeric weighted_total (61.9) lands in the 'mixed' band, and the result independently meets the 'mixed' qualifier of requiring immediate manual code fixes (session handling + test fixtures) to function."
+}
+```

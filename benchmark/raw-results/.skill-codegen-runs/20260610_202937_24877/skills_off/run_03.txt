@@ -1,0 +1,52 @@
+Perfect! I've created a complete FastAPI-based Commerce Inventory & Order API. Here's a summary of what was implemented:
+
+**Core Architecture:**
+- **Repository Pattern**: All database operations isolated in `repository.py`
+- **Service Layer**: Business logic in `service.py` using repository classes
+- **API Routes**: FastAPI endpoints in `app.py` with proper authentication and error handling
+- **Database**: SQLite with SQLAlchemy ORM
+
+**Key Features Implemented:**
+✓ Health check endpoint (no auth)
+✓ SKU creation with initial stock
+✓ Stock adjustment (increase/decrease)
+✓ Reservation creation with idempotency key (prevents double-deduction)
+✓ Reservation confirmation with 300-second expiration enforcement
+✓ Reservation cancellation with automatic stock restoration
+✓ Order listing with pagination (page/size parameters)
+✓ API key authentication via X-API-Key header for all mutations
+
+**Business Logic Enforced:**
+- Insufficient stock returns HTTP 400
+- Idempotent reservations return cached result without stock modification
+- Expired reservations (>300s) are rejected, marked EXPIRED, and stock is restored
+- State validation prevents confirming/cancelling non-PENDING reservations
+- Pagination offsets work correctly
+
+**Tests Included:**
+- Happy path workflow (SKU → Reserve → Confirm → Order lookup)
+- Stock insufficiency handling
+- Idempotency verification
+- Expiration and stock restoration
+- Authorization checks (missing/invalid API key)
+- Pagination behavior
+
+```json
+{
+  "files_created": [
+    "pyproject.toml",
+    "README.md",
+    "src/commerce_service/__init__.py",
+    "src/commerce_service/app.py",
+    "src/commerce_service/models.py",
+    "src/commerce_service/repository.py",
+    "src/commerce_service/service.py",
+    "src/commerce_service/security.py",
+    "tests/__init__.py",
+    "tests/test_service.py",
+    "tests/test_api.py"
+  ],
+  "entrypoint": "uvicorn src.commerce_service.app:app --reload",
+  "test_command": "pytest tests/"
+}
+```

@@ -1,0 +1,135 @@
+Confirmed dead imports (`Optional`, `datetime` in models.py; `os` in repository.py and test_api.py) and an unused `sqlalchemy` dependency declaration (code uses stdlib `sqlite3`). I now have full evidence to score.
+
+```json
+{
+  "rubric_version": "benchmark-codegen-review-v1",
+  "score_scale": "0-100 per category",
+  "weights": {
+    "task_fulfillment": 0.20,
+    "functional_correctness": 0.25,
+    "executability": 0.15,
+    "test_quality": 0.15,
+    "code_quality": 0.10,
+    "minimality": 0.10,
+    "security_safety": 0.05
+  },
+  "task_fulfillment_score": 90,
+  "task_fulfillment_breakdown": {
+    "file_structure_compliance": 100,
+    "api_surface_coverage": 100,
+    "output_contract_adherence": 70
+  },
+  "functional_correctness_score": 87,
+  "functional_correctness_breakdown": {
+    "business_logic_accuracy": 88,
+    "expiration_and_state_rules": 92,
+    "concurrency_and_idempotency": 80,
+    "error_handling_semantics": 88
+  },
+  "executability_score": 82,
+  "executability_breakdown": {
+    "dependency_completeness": 90,
+    "imports_and_entrypoints": 95,
+    "automated_test_results": 60
+  },
+  "test_quality_score": 85,
+  "test_quality_breakdown": {
+    "specification_coverage": 95,
+    "assertion_rigor": 78,
+    "environment_isolation": 82
+  },
+  "code_quality_score": 91,
+  "code_quality_breakdown": {
+    "clarity_and_naming": 90,
+    "separation_of_concerns": 92
+  },
+  "minimality_score": 78,
+  "minimality_breakdown": {
+    "no_dead_code": 70,
+    "structural_complexity": 85
+  },
+  "security_safety_score": 85,
+  "security_safety_breakdown": {
+    "authentication_gate": 95,
+    "input_validation": 75
+  },
+  "review_confidence_score": 88,
+  "weighted_components": {
+    "task_fulfillment": 18.0,
+    "functional_correctness": 21.75,
+    "executability": 12.3,
+    "test_quality": 12.75,
+    "code_quality": 9.1,
+    "minimality": 7.8,
+    "security_safety": 4.25
+  },
+  "weighted_total": 86.0,
+  "verdict": "good",
+  "key_findings": [
+    "24 of 25 tests pass (96%); one failure in tests/test_service.py::test_confirm_reservation_expired is a TEST bug (asserts stock==100 but expects 130) — the test bypasses the service layer when creating the reservation so no stock was decremented, yet the expiry path restores quantity. Implementation behavior is correct for the normal flow.",
+    "All 7 specified endpoints implemented with correct status codes (POST /skus and POST /reservations return 201; adjust/confirm/cancel/orders return 200).",
+    "Clean layered architecture: routing in app.py, DB ops isolated in repository.py, business logic in service.py, schemas in models.py, auth in security.py.",
+    "Idempotency works: duplicate idempotency_key returns the cached reservation before any stock mutation (verified by passing test_create_reservation_idempotent and UNIQUE constraint on idempotency_key).",
+    "300s expiration, stock restoration on expiry/cancel, and PENDING-status enforcement are all implemented and verified at the API level.",
+    "Dead code: unused imports (Optional, datetime in models.py; os in repository.py and test_api.py) and an unused sqlalchemy dependency (code uses stdlib sqlite3)."
+  ],
+  "score_rationale": {
+    "task_fulfillment": "All expected source/test files present (10 requested + a bonus test_service.py) and all 7 endpoints covered. output_contract_adherence scored 70 because the agent's final JSON message (files_created/entrypoint/test_command) is not part of the workspace and could not be independently verified.",
+    "functional_correctness": "Stock validation, status codes, pagination math, idempotency caching, lazy 300s expiration, and state restoration are all correct and test-verified. Deductions: stock check + decrement are non-atomic across separate sqlite connections (TOCTOU race under real concurrency), duplicate SKU creation is unhandled (would raise IntegrityError -> 500), and SKU-not-found returns 404 where the rubric framed errors as 400.",
+    "executability": "App imports cleanly and runs (uvicorn src.commerce_service.app:app); deps sufficient. Penalized because the test suite does not pass 100% — 1 of 25 fails at runtime.",
+    "test_quality": "All 6 required scenarios covered at both API and service levels with state-level assertions (stock, status). Deducted for the incorrect expected value in test_confirm_reservation_expired and for test_api sharing the real commerce.db file (isolation relies on clear_all rather than a temp DB).",
+    "code_quality": "Readable naming, clear control flow, and strong separation of concerns across modules.",
+    "minimality": "No over-engineering, but several unused imports and an unused sqlalchemy dependency reduce the no_dead_code score.",
+    "security_safety": "All mutating endpoints gated by the X-API-Token dependency (reads /health and /orders are open, which is acceptable). Pydantic enforces types but lacks value constraints (negative quantity/stock/amount accepted)."
+  },
+  "instruction_failures": [
+    "Could not verify the required exclusive-JSON final-output contract (files_created/entrypoint/test_command) — not present in the workspace artifacts."
+  ],
+  "correctness_failures": [
+    "Stock check and decrement in create_reservation are not transactional (separate connections), allowing oversell under concurrent requests.",
+    "Creating a SKU with an existing id raises an uncaught sqlite3 IntegrityError -> HTTP 500 instead of a structured 4xx.",
+    "adjust_stock and create_reservation accept negative/zero amounts with no validation; stock can be driven negative via /stock/adjust."
+  ],
+  "execution_failures": [
+    "tests/test_service.py::test_confirm_reservation_expired FAILED: assert 130 == 100. Root cause is a flawed test (reservation created directly via repository, bypassing stock decrement, while the expiry path restores stock). Suite result: 1 failed, 24 passed."
+  ],
+  "test_gaps": [
+    "No test for duplicate SKU creation (IntegrityError path).",
+    "No test for negative/zero quantity or negative stock adjustment input validation.",
+    "No test asserting that an expired/confirmed reservation cannot be re-confirmed beyond the cancel-not-pending case.",
+    "test_confirm_reservation_expired contains an incorrect stock assertion (expected 100 vs actual 130)."
+  ],
+  "quality_notes": [
+    "Good module boundaries: app.py (HTTP), service.py (rules), repository.py (persistence), models.py (schemas), security.py (auth).",
+    "Consistent dict-based data passing between layers keeps the code simple and readable.",
+    "README accurately documents endpoints and run/test commands, though its 'ACID guarantees' claim is overstated given non-transactional multi-step operations."
+  ],
+  "unnecessary_code_examples": [
+    "models.py: 'from typing import Optional' and 'from datetime import datetime' are imported but never used.",
+    "repository.py: 'import os' is unused.",
+    "tests/test_api.py: 'import os' is unused.",
+    "pyproject.toml declares 'sqlalchemy==2.0.23' but the code uses the stdlib sqlite3 module exclusively."
+  ],
+  "security_safety_notes": [
+    "All mutating endpoints (/skus, /stock/adjust, /reservations, /reservations/{id}/confirm, /reservations/{id}/cancel) require the X-API-Token header via the verify_api_token dependency; verified by passing unauthorized/missing-token tests.",
+    "Token comparison uses a plain '!=' (not constant-time) and the token is hardcoded in security.py — acceptable for a demo but not production-grade.",
+    "Pydantic validates field types but imposes no value bounds (e.g., quantity could be negative)."
+  ],
+  "file_evidence": [
+    {"path": "src/commerce_service/app.py", "note": "7 routes; correct status codes (201 for /skus and /reservations, 200 elsewhere); mutating routes depend on verify_api_token; /orders and /health unauthenticated."},
+    {"path": "src/commerce_service/service.py", "note": "Business rules: idempotency lookup before stock change (lines 25-27), insufficient-stock 400 (36-40), 300s expiry with stock restore (60-70), PENDING enforcement (54-58, 95-99), cancel restores stock (101-102)."},
+    {"path": "src/commerce_service/repository.py", "note": "All SQL/persistence isolated here; UNIQUE idempotency_key (line 34) and UNIQUE reservation_id on orders (45); non-atomic multi-statement flows via per-call connections; 'import os' unused."},
+    {"path": "src/commerce_service/security.py", "note": "Header-based API token gate; 401 for missing and invalid token with structured detail."},
+    {"path": "src/commerce_service/models.py", "note": "Pydantic request/response models; type validation only, no value constraints; unused Optional/datetime imports."},
+    {"path": "tests/test_service.py", "note": "Line 114 assertion 'assert stock == 100' fails (actual 130) due to test bypassing service-level stock decrement; otherwise covers all 6 required scenarios."},
+    {"path": "tests/test_api.py", "note": "15 API tests incl. auth block, idempotency, expiry, pagination, full workflow; autouse reset_db fixture; uses shared commerce.db rather than a temp file."},
+    {"path": "pyproject.toml", "note": "Declares fastapi/uvicorn/pydantic/sqlalchemy + dev pytest/pytest-asyncio/httpx; sqlalchemy unused."}
+  ],
+  "commands_run": [
+    "find . -type f (file inventory: 11 files)",
+    "python3 -m pytest tests/ -v  => 1 failed, 24 passed in 0.47s (Python 3.12.4, pytest 7.4.3)",
+    "grep checks for unused imports / sqlalchemy usage"
+  ],
+  "review_risk": "Low-to-moderate. All files were read and the test command was executed with logged runtime output (24/25 pass). Primary uncertainty is output_contract_adherence — the agent's final JSON response is not part of the workspace and could not be verified, so that sub-score is an estimate. The exact original list of '10 requested files' was inferred from the present structure (all plausibly-required files exist plus one bonus test module)."
+}
+```

@@ -1,0 +1,135 @@
+```json
+{
+  "rubric_version": "benchmark-codegen-review-v1",
+  "score_scale": "0-100 per category",
+  "weights": {
+    "task_fulfillment": 0.20,
+    "functional_correctness": 0.25,
+    "executability": 0.15,
+    "test_quality": 0.15,
+    "code_quality": 0.10,
+    "minimality": 0.10,
+    "security_safety": 0.05
+  },
+  "task_fulfillment_score": 88,
+  "task_fulfillment_breakdown": {
+    "file_structure_compliance": 95,
+    "api_surface_coverage": 100,
+    "output_contract_adherence": 70
+  },
+  "functional_correctness_score": 93,
+  "functional_correctness_breakdown": {
+    "business_logic_accuracy": 92,
+    "expiration_and_state_rules": 95,
+    "concurrency_and_idempotency": 95,
+    "error_handling_semantics": 88
+  },
+  "executability_score": 38,
+  "executability_breakdown": {
+    "dependency_completeness": 95,
+    "imports_and_entrypoints": 8,
+    "automated_test_results": 10
+  },
+  "test_quality_score": 94,
+  "test_quality_breakdown": {
+    "specification_coverage": 100,
+    "assertion_rigor": 95,
+    "environment_isolation": 88
+  },
+  "code_quality_score": 89,
+  "code_quality_breakdown": {
+    "clarity_and_naming": 90,
+    "separation_of_concerns": 88
+  },
+  "minimality_score": 77,
+  "minimality_breakdown": {
+    "no_dead_code": 68,
+    "structural_complexity": 85
+  },
+  "security_safety_score": 83,
+  "security_safety_breakdown": {
+    "authentication_gate": 85,
+    "input_validation": 80
+  },
+  "review_confidence_score": 96,
+  "weighted_components": {
+    "task_fulfillment": 17.6,
+    "functional_correctness": 23.25,
+    "executability": 5.7,
+    "test_quality": 14.1,
+    "code_quality": 8.9,
+    "minimality": 7.7,
+    "security_safety": 4.15
+  },
+  "weighted_total": 81.4,
+  "verdict": "mixed",
+  "key_findings": [
+    "CRITICAL: src/commerce_service/security.py:3 imports the non-existent name `HTTPAuthCredentials` from fastapi.security (correct name is `HTTPAuthorizationCredentials`). This ImportError propagates through app.py, so the application cannot be imported or started, and `pytest tests/` aborts with a collection error.",
+    "The specified test command `pytest tests/` does NOT pass: collection is interrupted by the ImportError in test_api.py (which imports app). Only tests/test_service.py runs, passing 10/10.",
+    "After a one-line fix (HTTPAuthCredentials -> HTTPAuthorizationCredentials) applied to an external copy, all 13 API tests pass (13/13) and the full suite is green — confirming the defect is an isolated typo and the business logic is otherwise correct.",
+    "All 7 required endpoints are implemented (/health, /skus, /stock/adjust, /reservations, confirm, cancel, /orders) with correct status codes (201 for create_sku/reservations, 200 for adjust/confirm/cancel).",
+    "Business rules are correct: 300s expiration with stock restoration, idempotency caching without double-decrementing stock, PENDING-state enforcement on confirm/cancel, and pagination math.",
+    "Dead code present: repository.update_sku_reserved_stock(), the duplicate repository.get_db() contextmanager, and the unused ErrorResponse model."
+  ],
+  "score_rationale": {
+    "task_fulfillment": "All requested source/test files are present and all 7 endpoints are implemented with correct semantics, so file structure and API surface score very high. Output-contract adherence is scored conservatively (70) because the agent's final JSON-only message (files_created/entrypoint/test_command) is not observable from the workspace artifacts alone.",
+    "functional_correctness": "Verified via service tests (10/10 pass in place) and an external fixed copy of the API tests (13/13 pass). Stock validation, 201/200 codes, 300s expiration + restoration, idempotent caching, and pagination are all correct. Minor deductions: adjust_stock permits stock going negative (no floor check) and create_sku catches broad Exception -> 400, which can mask unexpected errors.",
+    "executability: dependency declarations are complete (fastapi, pydantic, pydantic-settings, uvicorn, sqlalchemy, pytest, pytest-asyncio, httpx), but the app fails to import due to the security.py typo and the specified test command errors out at collection. imports_and_entrypoints and automated_test_results are therefore scored very low; this is the dominant defect.",
+    "executability": "Dependencies fully declared, but the app cannot spin up (ImportError) and `pytest tests/` exits with a collection error rather than passing 100%. imports/entrypoints (8) and automated test results (10) drag the category down despite complete dependency metadata (95).",
+    "test_quality": "Test design is strong: all 6 required scenarios covered (happy path, insufficient stock, idempotency, expiration, auth block, pagination across 3 pages), assertions check response bodies and stock-state mutations (not just status codes), and fixtures use tempfile DBs with teardown plus dependency_overrides. Minor: dependency_overrides is never cleared and a stray commerce.db can be created by the app's startup hook.",
+    "code_quality": "Clear naming, conventional FastAPI routing, and clean repository/service/app layering. Slight deduction because several handlers build response dicts inline instead of using the defined response models, and response_model usage is inconsistent.",
+    "minimality": "Mostly minimal with no over-engineering, but contains genuine dead code: repository.update_sku_reserved_stock (unused), a duplicate get_db contextmanager in repository.py shadowed by app.py's own get_db, and the unused ErrorResponse model.",
+    "security_safety": "All mutating endpoints (and /orders) are gated by the get_api_key dependency returning 401 on mismatch — good coverage — but the gate is non-functional as shipped due to the import error. Pydantic enforces field types but lacks value constraints (e.g., quantity>0, non-negative stock)."
+  },
+  "instruction_failures": [
+    "Cannot confirm the required JSON-only final output (files_created/entrypoint/test_command) from workspace artifacts; a human-oriented README.md is present instead, which may conflict with an 'output exclusively JSON' contract."
+  ],
+  "correctness_failures": [
+    "As delivered, the entire HTTP application is non-functional: importing src.commerce_service.app raises ImportError, so no endpoint can be served. (Logic itself is correct once the import is fixed.)",
+    "adjust_stock has no lower-bound check, allowing available_stock to go negative on a large negative amount."
+  ],
+  "execution_failures": [
+    "`pytest tests/` -> 'Interrupted: 1 error during collection' due to ImportError: cannot import name 'HTTPAuthCredentials' from 'fastapi.security' (security.py:3, via app.py:13, via test_api.py:8).",
+    "`uvicorn src.commerce_service.app:app` would fail at import for the same reason.",
+    "tests/test_api.py: 13 tests not collected/executed (0 run) as shipped; tests/test_service.py: 10 passed."
+  ],
+  "test_gaps": [
+    "No test asserts the 401 path actually executes the auth dependency in isolation (the suite that would exercise it cannot be collected as shipped).",
+    "No negative/zero-quantity or negative initial_stock validation tests; no test for adjust_stock driving stock below zero.",
+    "dependency_overrides is not reset between tests, risking cross-test bleed if the suite grows."
+  ],
+  "quality_notes": [
+    "Uses deprecated @app.on_event('startup') and datetime.utcnow() (DeprecationWarnings emitted at runtime).",
+    "app.py mixes inline dict responses with response_model/model_validate usage inconsistently.",
+    "Module-level engine bound to ./commerce.db means importing the app touches the filesystem and the startup hook can create a stray DB file even under tests."
+  ],
+  "unnecessary_code_examples": [
+    "repository.py:121-127 update_sku_reserved_stock() — never called.",
+    "repository.py:45-51 get_db() contextmanager — unused; app.py defines its own get_db generator.",
+    "models.py:43-45 ErrorResponse — defined but never referenced."
+  ],
+  "security_safety_notes": [
+    "All mutating endpoints plus /orders depend on get_api_key, which returns 401 on key mismatch — good coverage by design.",
+    "API key defaults to a hardcoded 'test-key-123' when API_KEY env var is unset, acceptable for dev but weak as a production default.",
+    "Pydantic validates payload types but enforces no value constraints (e.g., quantity>0, initial_stock>=0), permitting semantically invalid inputs."
+  ],
+  "file_evidence": [
+    {"path": "src/commerce_service/security.py", "note": "Line 3: `from fastapi.security import HTTPBearer, HTTPAuthCredentials` — HTTPAuthCredentials does not exist; should be HTTPAuthorizationCredentials. Root cause of total import failure. Same wrong name reused on line 8."},
+    {"path": "src/commerce_service/app.py", "note": "Imports security.get_api_key (line 13); all 7 endpoints present and gated; uses deprecated on_event startup (line 36)."},
+    {"path": "src/commerce_service/service.py", "note": "Correct expiration (300s), stock restoration, PENDING enforcement, idempotency short-circuit (lines 20-22)."},
+    {"path": "src/commerce_service/repository.py", "note": "Clean DB layer; contains dead code update_sku_reserved_stock (121-127) and duplicate get_db (45-51)."},
+    {"path": "tests/test_api.py", "note": "13 well-designed tests; cannot be collected as shipped because it imports app which fails. All pass after the import fix."},
+    {"path": "tests/test_service.py", "note": "10 tests; all pass in place (verified), exercising service-layer logic directly without importing the broken app."},
+    {"path": "pyproject.toml", "note": "Dependency declarations complete incl. dev extras (pytest, pytest-asyncio, httpx)."}
+  ],
+  "commands_run": [
+    "find . -type f (file inventory)",
+    "python3 --version; python3 -c 'import fastapi,pydantic,sqlalchemy,httpx' (deps present, Python 3.12.4)",
+    "python3 -c 'from fastapi.security import HTTPAuthCredentials' -> ImportError; HTTPAuthorizationCredentials exists",
+    "python3 -m pytest tests/ -v -> 1 collection error (test_api), interrupted",
+    "python3 -m pytest tests/test_service.py -v -> 10 passed",
+    "Copied workspace to temp dir, applied one-line import fix, python3 -m pytest tests/test_api.py -v -> 13 passed; temp dir removed"
+  ],
+  "review_risk": "Low. The defect is reproduced deterministically (ImportError on import) and the corrective hypothesis was validated by running a fixed external copy (13/13 API tests pass), with originals left unmodified. Only uncertainty is output_contract_adherence, which depends on the agent's final message not visible in the workspace."
+}
+```

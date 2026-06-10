@@ -1,0 +1,9 @@
+All files have been created successfully. Here's the output contract:
+
+```json
+{
+  "files_created": 11,
+  "entrypoint": "src/commerce_service/app.py",
+  "test_command": "pytest tests/"
+}
+```

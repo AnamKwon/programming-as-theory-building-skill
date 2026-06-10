@@ -1,0 +1,135 @@
+I have all evidence needed. The app boots with all 7 endpoints, all 31 tests pass, and I've read every source/test file. Here is my objective evaluation.
+
+```json
+{
+  "rubric_version": "benchmark-codegen-review-v1",
+  "score_scale": "0-100 per category",
+  "weights": {
+    "task_fulfillment": 0.20,
+    "functional_correctness": 0.25,
+    "executability": 0.15,
+    "test_quality": 0.15,
+    "code_quality": 0.10,
+    "minimality": 0.10,
+    "security_safety": 0.05
+  },
+  "task_fulfillment_score": 87,
+  "task_fulfillment_breakdown": {
+    "file_structure_compliance": 100,
+    "api_surface_coverage": 100,
+    "output_contract_adherence": 60
+  },
+  "functional_correctness_score": 88,
+  "functional_correctness_breakdown": {
+    "business_logic_accuracy": 95,
+    "expiration_and_state_rules": 95,
+    "concurrency_and_idempotency": 85,
+    "error_handling_semantics": 78
+  },
+  "executability_score": 98,
+  "executability_breakdown": {
+    "dependency_completeness": 100,
+    "imports_and_entrypoints": 95,
+    "automated_test_results": 100
+  },
+  "test_quality_score": 82,
+  "test_quality_breakdown": {
+    "specification_coverage": 95,
+    "assertion_rigor": 70,
+    "environment_isolation": 80
+  },
+  "code_quality_score": 91,
+  "code_quality_breakdown": {
+    "clarity_and_naming": 90,
+    "separation_of_concerns": 92
+  },
+  "minimality_score": 80,
+  "minimality_breakdown": {
+    "no_dead_code": 72,
+    "structural_complexity": 88
+  },
+  "security_safety_score": 86,
+  "security_safety_breakdown": {
+    "authentication_gate": 100,
+    "input_validation": 72
+  },
+  "review_confidence_score": 95,
+  "weighted_components": {
+    "task_fulfillment": 17.4,
+    "functional_correctness": 22.0,
+    "executability": 14.7,
+    "test_quality": 12.3,
+    "code_quality": 9.1,
+    "minimality": 8.0,
+    "security_safety": 4.3
+  },
+  "weighted_total": 87.8,
+  "verdict": "good",
+  "key_findings": [
+    "All 31 tests pass (16 in test_api.py, 15 in test_service.py); pytest exits 0 in 0.40s.",
+    "All 10 expected files are present and all 7 required endpoints are implemented and routable (verified via app.routes introspection).",
+    "Clean three-layer separation: app.py (routing) -> service.py (business logic) -> repository.py (all SQLite access). Auth isolated in security.py, schemas in models.py.",
+    "Core business rules correct: 201 on create, 200 on confirm/adjust, insufficient-stock -> 400, 300s expiration with stock restoration, idempotency returns cached reservation without double stock deduction.",
+    "Test design weakness: test_api.py re-builds the entire FastAPI app and re-declares every route inside the fixture instead of importing the production app, so app.py's own wiring is never exercised by the API tests.",
+    "Auth status codes are inconsistent: invalid key -> 401 (correct), but missing key -> 403 (FastAPI APIKeyHeader default); spec framing implies 401 for auth failures.",
+    "Minor input-validation gap: quantity/initial_stock/amount have no value constraints (negative/zero accepted)."
+  ],
+  "score_rationale": {
+    "task_fulfillment": "All 10 files and all 7 endpoints present and correct (file_structure=100, api_surface=100). output_contract_adherence scored 60 because the agent's final response message (the required JSON with files_created/entrypoint/test_command) is not recoverable from the workspace artifacts and cannot be objectively verified; README/pyproject confirm entrypoint and test command exist but not the exact output envelope. Average rounds to 87.",
+    "functional_correctness": "Business logic, status codes, pagination math ((page-1)*size, total count), expiration (>300s), state transitions, and idempotent caching are all correct and test-verified. Deducted on concurrency (read-modify-write spans separate sqlite connections with no transaction/locking, so true concurrent calls could race) and error semantics (missing-key 403 vs 401, not-found conditions collapse to generic 400 rather than 404).",
+    "executability": "Dependencies fully declared (fastapi, uvicorn, pydantic; dev: pytest, pytest-asyncio, httpx) and importable (fastapi 0.104.1 present). App imports and boots; uvicorn entrypoint valid. 31/31 tests pass. Minor: import-time DB init writes a commerce.db file as a side effect.",
+    "test_quality": "All 6 required scenarios covered (happy path, insufficient stock, idempotency, expiration+restore, auth block, pagination). Service tests assert real state (stock levels, EXPIRED status, totals). Lowered for assertion_rigor: API tests duplicate the app rather than import it, and test_idempotent_no_double_stock_deduction asserts nothing meaningful. Isolation is achieved via per-fixture :memory: Repository, which is adequate.",
+    "code_quality": "Readable, conventional naming; clear control flow; strong separation of concerns across the five modules. No notable clarity defects.",
+    "minimality": "Generally lean and on-spec. Deducted for dead code: unused 'import time' in test_service.py and the no-op test_idempotent_no_double_stock_deduction (unused response/test_sku/data variables). The dual file/:memory: branch in Repository adds slight justified complexity for testability.",
+    "security_safety": "Every mutating endpoint (and /orders) is gated by Depends(verify_api_key); /health is correctly open. Input validation relies on Pydantic type coercion only, with no min/positive constraints on numeric fields."
+  },
+  "instruction_failures": [
+    "Final-output JSON envelope (files_created/entrypoint/test_command) could not be verified from workspace artifacts; only README/pyproject indirectly attest to entrypoint and test command."
+  ],
+  "correctness_failures": [
+    "Missing API key returns HTTP 403 rather than 401 for auth failures (invalid key correctly returns 401).",
+    "Not-found conditions (reservation/SKU) raise generic ValueError mapped to 400 instead of 404.",
+    "Stock read-modify-write spans separate sqlite connections without a transaction, allowing race conditions under genuine concurrency (untested, single-threaded spec)."
+  ],
+  "execution_failures": [],
+  "test_gaps": [
+    "API-layer tests do not import or exercise the production app object (src.commerce_service.app:app); they re-declare all routes in the fixture, so regressions in app.py wiring would go undetected.",
+    "test_idempotent_no_double_stock_deduction performs no meaningful assertion (creates an unrelated in-memory repo and asserts nothing).",
+    "No test for negative/zero quantity or stock inputs; no test for SKU-not-found on reservation."
+  ],
+  "quality_notes": [
+    "Deprecation: datetime.utcnow() used throughout (repository.py:102,159; service.py:52) — generates DeprecationWarnings on Python 3.12+.",
+    "Persisted file DB (commerce.db) with UNIQUE sku/idempotency_key constraints could cause IntegrityError on repeated real (non-:memory:) runs.",
+    "Clean, idiomatic FastAPI structure with consistent response_model usage and status codes."
+  ],
+  "unnecessary_code_examples": [
+    "tests/test_service.py:3 — 'import time' is never used.",
+    "tests/test_api.py:229-257 — test_idempotent_no_double_stock_deduction builds an unrelated Repository and leaves assertions absent (effectively dead test code).",
+    "tests/test_api.py:22-83 — full duplication of every route definition from app.py inside the fixture."
+  ],
+  "security_safety_notes": [
+    "All mutating endpoints protected by the X-API-Key dependency (verify_api_key); /health correctly unauthenticated; /orders also gated.",
+    "API key is a hardcoded constant ('test-key-123') in security.py — acceptable for the exercise but not configurable via env.",
+    "Numeric payload fields lack value constraints (no Field(gt=0)/ge=0), so negative quantities/stock pass validation."
+  ],
+  "file_evidence": [
+    {"path": "src/commerce_service/app.py", "note": "All 7 endpoints declared with correct status codes (201 create_sku/create_reservation, 200 default elsewhere); every mutating route uses Depends(verify_api_key); /health open."},
+    {"path": "src/commerce_service/service.py", "note": "Business logic: idempotency short-circuit (lines 24-26), insufficient-stock raise (32-33), 300s expiration + stock restore (51-60), PENDING enforcement on confirm/cancel (48,73)."},
+    {"path": "src/commerce_service/repository.py", "note": "All SQLite access isolated here; file/:memory: dual mode; pagination via LIMIT/OFFSET and COUNT(*) (174-189). datetime.utcnow() used (102,159)."},
+    {"path": "src/commerce_service/security.py", "note": "APIKeyHeader; invalid key -> 401 (lines 10-14). Missing header yields FastAPI default 403."},
+    {"path": "src/commerce_service/models.py", "note": "Pydantic v2 schemas with type-only validation; no numeric value constraints."},
+    {"path": "tests/test_api.py", "note": "Re-declares app/routes in fixture instead of importing production app; test_idempotent_no_double_stock_deduction has no meaningful assertion (229-257)."},
+    {"path": "tests/test_service.py", "note": "Strong state assertions (stock 70/100, EXPIRED status, totals); unused 'import time' line 3."},
+    {"path": "pyproject.toml", "note": "Declares fastapi/uvicorn/pydantic and dev deps pytest/pytest-asyncio/httpx; requires-python >=3.9."},
+    {"path": "commerce.db", "note": "Side-effect artifact created at import time by init_db(); tables skus/reservations/orders confirmed present."}
+  ],
+  "commands_run": [
+    "find . -type f (file inventory)",
+    "python3 -c 'import fastapi,pydantic,httpx,pytest' (dependency presence; fastapi 0.104.1)",
+    "python3 -m pytest tests/ -v (result: 31 passed, 127 warnings, 0.40s)",
+    "python3 -c 'from src.commerce_service.app import app; print routes' (all 7 endpoints routable)",
+    "python3 -c sqlite3 inspect commerce.db (tables: skus, reservations, orders)"
+  ],
+  "review_risk": "Low. Findings are grounded in a full read of all source/test files and a verified 31/31 pytest run with line-level citations. The only unverifiable item is the agent's final JSON output envelope (output_contract_adherence), which is not recoverable from workspace artifacts and was scored conservatively; this caps certainty on task_fulfillment but not on functional/executability findings."
+}
+```

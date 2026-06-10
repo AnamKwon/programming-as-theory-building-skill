@@ -1,0 +1,130 @@
+All evidence gathered. 28/28 tests pass, real `app.py` serves all 7 endpoints, unused imports confirmed (3) plus unused `sqlalchemy` dependency and `ErrorResponse` model, and the missing-auth-header case returns 403 (HTTPBearer default) rather than 401.
+
+```json
+{
+  "rubric_version": "benchmark-codegen-review-v1",
+  "score_scale": "0-100 per category",
+  "weights": {
+    "task_fulfillment": 0.20,
+    "functional_correctness": 0.25,
+    "executability": 0.15,
+    "test_quality": 0.15,
+    "code_quality": 0.10,
+    "minimality": 0.10,
+    "security_safety": 0.05
+  },
+  "task_fulfillment_score": 90,
+  "task_fulfillment_breakdown": {
+    "file_structure_compliance": 100,
+    "api_surface_coverage": 100,
+    "output_contract_adherence": 70
+  },
+  "functional_correctness_score": 90,
+  "functional_correctness_breakdown": {
+    "business_logic_accuracy": 95,
+    "expiration_and_state_rules": 95,
+    "concurrency_and_idempotency": 90,
+    "error_handling_semantics": 80
+  },
+  "executability_score": 93,
+  "executability_breakdown": {
+    "dependency_completeness": 85,
+    "imports_and_entrypoints": 95,
+    "automated_test_results": 100
+  },
+  "test_quality_score": 92,
+  "test_quality_breakdown": {
+    "specification_coverage": 100,
+    "assertion_rigor": 85,
+    "environment_isolation": 90
+  },
+  "code_quality_score": 90,
+  "code_quality_breakdown": {
+    "clarity_and_naming": 90,
+    "separation_of_concerns": 90
+  },
+  "minimality_score": 80,
+  "minimality_breakdown": {
+    "no_dead_code": 75,
+    "structural_complexity": 85
+  },
+  "security_safety_score": 95,
+  "security_safety_breakdown": {
+    "authentication_gate": 100,
+    "input_validation": 90
+  },
+  "review_confidence_score": 95,
+  "weighted_components": {
+    "task_fulfillment": 18.0,
+    "functional_correctness": 22.5,
+    "executability": 13.95,
+    "test_quality": 13.8,
+    "code_quality": 9.0,
+    "minimality": 8.0,
+    "security_safety": 4.75
+  },
+  "weighted_total": 90.0,
+  "verdict": "excellent",
+  "key_findings": [
+    "All 28 tests pass (16 API + 12 service) in 0.52s with zero failures; executed via `python3 -m pytest tests/ -v`.",
+    "All 7 required endpoints present and functional on the real app (/health, POST /skus, POST /stock/adjust, POST /reservations, confirm, cancel, GET /orders), verified by importing commerce_service.app and exercising it with TestClient.",
+    "All 10 expected target files present (pyproject.toml, README.md, __init__.py, app.py, models.py, repository.py, security.py, service.py, tests/test_api.py, tests/test_service.py) plus tests/__init__.py.",
+    "Core business rules correct: 201 on create vs 200 on idempotent replay, stock deduction/restoration, 300s expiration (age > 300 → EXPIRED + restore), PENDING-status enforcement, pagination offset = (page-1)*size.",
+    "Minor blemishes: missing-auth-header returns 403 (not 401), several unused imports, unused `sqlalchemy` dependency, unused `ErrorResponse` model, and API tests re-implement the app rather than importing the real app.py."
+  ],
+  "score_rationale": {
+    "task_fulfillment": "Every expected file and all 7 endpoints are present and correctly shaped. output_contract_adherence is scored conservatively (70) because the agent's final message (required JSON with files_created/entrypoint/test_command) is not part of the workspace and cannot be verified from artifacts alone.",
+    "functional_correctness": "Stock validation, 201/200 distinction, idempotency caching (stock deducted exactly once, verified by test), expiration with stock restoration, and pagination are all correct and test-confirmed. Docked for error semantics: missing credentials yield 403 instead of the rubric-specified 401, and broad `except Exception` in create_sku/get_orders maps any internal error to 400. No TOCTOU protection on stock (read-then-write across separate connections), though not required or tested.",
+    "executability": "Package installs with `pip install -e .`, absolute imports resolve, real app.py imports and serves all routes, and 100% of tests pass at runtime. Docked because pyproject declares `sqlalchemy>=2.0.0` which is never used (code uses raw sqlite3).",
+    "test_quality": "All 6 required scenarios covered at both API and service layers with strong assertions on response data and state (stock levels, EXPIRED status, order creation, deduct-once). Isolation via per-test tempfile DB is solid. Docked because test_api.py duplicates the entire route layer (create_test_app) instead of importing the production app, so app.py's own wiring is never under test.",
+    "code_quality": "Clean layering (models/repository/service/security/app), clear naming, readable control flow, and genuine separation of DB access into repository.py and routing into app.py. Minor: module-level Repository()/CommerceService() instantiation with a hardcoded DB path forces the test duplication and triggers commerce.db creation on import.",
+    "minimality": "No speculative abstractions or unrequested features; layering is appropriate. Docked for dead code: unused imports (status in app.py, Optional in models.py, AuthCredentials in security.py), an unused ErrorResponse model, and an unused sqlalchemy dependency.",
+    "security_safety": "All five mutating endpoints are gated by the verify_api_token dependency; reads (/health, /orders) are open per spec. Pydantic models enforce types with gt=0 constraints on initial_stock and quantity. Minor: invalid token correctly returns 401 but a missing header returns 403."
+  },
+  "instruction_failures": [
+    "Cannot confirm the final agent output was exclusively the requested JSON (files_created/entrypoint/test_command) — no transcript available in the workspace; scored conservatively."
+  ],
+  "correctness_failures": [
+    "Missing Authorization header returns HTTP 403 (FastAPI HTTPBearer default) rather than the rubric-specified 401; only an invalid token returns 401."
+  ],
+  "execution_failures": [],
+  "test_gaps": [
+    "API tests exercise a duplicated copy of the route definitions (create_test_app) rather than the deployed commerce_service.app:app, so the production app.py wiring is not directly validated by the suite.",
+    "No test for the 403-vs-401 missing-header case distinction (tests accept either 401 or 403).",
+    "No test for adjusting stock of a nonexistent SKU at the API layer (only at service layer) and no duplicate-SKU-creation conflict test."
+  ],
+  "quality_notes": [
+    "Module-level instantiation of Repository()/CommerceService() in app.py with a hardcoded DATABASE_PATH makes the production app hard to inject a test DB into and creates commerce.db as an import side effect.",
+    "Broad `except Exception -> HTTPException(400)` in create_sku and get_orders can mask unexpected internal errors as client errors."
+  ],
+  "unnecessary_code_examples": [
+    "src/commerce_service/app.py:1 — `status` imported from fastapi but unused (all codes are literals).",
+    "src/commerce_service/models.py:2 — `Optional` imported but unused; `ErrorResponse` model (line 57) defined but never referenced.",
+    "src/commerce_service/security.py:3 — `AuthCredentials` imported from starlette.authentication but unused.",
+    "pyproject.toml:14 — `sqlalchemy>=2.0.0` declared as a runtime dependency but never imported (code uses sqlite3 directly)."
+  ],
+  "security_safety_notes": [
+    "All mutating endpoints (POST /skus, /stock/adjust, /reservations, /reservations/{id}/confirm, /reservations/{id}/cancel) require Depends(verify_api_token); verified that no-auth -> 403 and bad-token -> 401.",
+    "API token is a hardcoded constant ('test-api-key-123') compared with non-constant-time `!=`; acceptable for a demo but not production-grade.",
+    "Pydantic enforces gt=0 on initial_stock and quantity and type-checks all payload fields."
+  ],
+  "file_evidence": [
+    {"path": "src/commerce_service/app.py", "note": "Defines all 7 routes; mutations gated by verify_api_token; 201 on /skus and create-reservation, 200 JSONResponse on idempotent replay; unused `status` import."},
+    {"path": "src/commerce_service/service.py", "note": "Business logic: idempotency check first, insufficient-stock ValueError, 300s expiration with stock restore + EXPIRED, PENDING enforcement, order creation on confirm."},
+    {"path": "src/commerce_service/repository.py", "note": "Pure sqlite3 data layer; schema for skus/reservations/orders; pagination via LIMIT/OFFSET = (page-1)*size; hardcoded DATABASE_PATH."},
+    {"path": "src/commerce_service/security.py", "note": "HTTPBearer dependency; invalid token -> 401; missing header -> 403 (default); unused AuthCredentials import."},
+    {"path": "src/commerce_service/models.py", "note": "Pydantic v2 models with Field(gt=0) on initial_stock/quantity; unused Optional import and unused ErrorResponse model."},
+    {"path": "tests/test_api.py", "note": "16 tests covering all 6 spec criteria; re-implements the app via create_test_app rather than importing production app; per-test tempfile DB isolation."},
+    {"path": "tests/test_service.py", "note": "12 service-layer tests with state assertions (stock deduct/restore, EXPIRED, order count); isolated tempfile DB fixtures."},
+    {"path": "pyproject.toml", "note": "Declares fastapi/pydantic/uvicorn deps and pytest/httpx dev extras; sqlalchemy listed but unused at runtime."}
+  ],
+  "commands_run": [
+    "find . -type f (excluding caches) — enumerated 10 target files + tests/__init__.py + egg-info",
+    "python3 --version (3.12.4); pip install -e .; import check (fastapi 0.104.1, pydantic 2.5.0, pytest 7.4.3)",
+    "python3 -m pytest tests/ -v  ->  28 passed in 0.52s",
+    "python3 inline TestClient against real commerce_service.app:app  ->  health 200, no-auth 403, bad-token 401, all 7 routes present",
+    "python3 -m pyflakes src/commerce_service/*.py  ->  3 unused imports reported"
+  ],
+  "review_risk": "Low. Findings are grounded in a full runtime test pass (28/28) and direct exercise of the production app plus static unused-import detection. The only unverifiable item is output_contract_adherence (the agent's final JSON message is outside the workspace), which was scored conservatively rather than assumed; the weighted_total sits exactly at the 90.0 excellent boundary, so minor scoring shifts could move the verdict to 'good'."
+}
+```

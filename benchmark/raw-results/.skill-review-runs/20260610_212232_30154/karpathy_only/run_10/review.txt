@@ -1,0 +1,134 @@
+All 7 endpoints are present, the app boots, and all 38 tests pass. I have enough evidence to score.
+
+Verified findings:
+- **10 files all present**: pyproject.toml, README.md, `__init__.py`, app.py, models.py, repository.py, security.py, service.py, tests/test_api.py, tests/test_service.py.
+- **38/38 tests pass** (20 API + 18 service).
+- **All 7 endpoints** route correctly.
+- **Dead code**: `from datetime import datetime` in repository.py:2 is unused; `sqlalchemy` declared in pyproject.toml but the repo uses raw `sqlite3`; `pytest-asyncio` declared but tests are synchronous.
+- Auth gates all mutating endpoints; `/orders` (read-only) is intentionally open.
+
+```json
+{
+  "rubric_version": "benchmark-codegen-review-v1",
+  "score_scale": "0-100 per category",
+  "weights": {
+    "task_fulfillment": 0.20,
+    "functional_correctness": 0.25,
+    "executability": 0.15,
+    "test_quality": 0.15,
+    "code_quality": 0.10,
+    "minimality": 0.10,
+    "security_safety": 0.05
+  },
+  "task_fulfillment_score": 93,
+  "task_fulfillment_breakdown": {
+    "file_structure_compliance": 100,
+    "api_surface_coverage": 100,
+    "output_contract_adherence": 80
+  },
+  "functional_correctness_score": 92,
+  "functional_correctness_breakdown": {
+    "business_logic_accuracy": 95,
+    "expiration_and_state_rules": 92,
+    "concurrency_and_idempotency": 90,
+    "error_handling_semantics": 92
+  },
+  "executability_score": 98,
+  "executability_breakdown": {
+    "dependency_completeness": 95,
+    "imports_and_entrypoints": 100,
+    "automated_test_results": 100
+  },
+  "test_quality_score": 92,
+  "test_quality_breakdown": {
+    "specification_coverage": 100,
+    "assertion_rigor": 92,
+    "environment_isolation": 85
+  },
+  "code_quality_score": 94,
+  "code_quality_breakdown": {
+    "clarity_and_naming": 92,
+    "separation_of_concerns": 95
+  },
+  "minimality_score": 81,
+  "minimality_breakdown": {
+    "no_dead_code": 80,
+    "structural_complexity": 82
+  },
+  "security_safety_score": 94,
+  "security_safety_breakdown": {
+    "authentication_gate": 95,
+    "input_validation": 92
+  },
+  "review_confidence_score": 95,
+  "weighted_components": {
+    "task_fulfillment": 18.6,
+    "functional_correctness": 23.0,
+    "executability": 14.7,
+    "test_quality": 13.8,
+    "code_quality": 9.4,
+    "minimality": 8.1,
+    "security_safety": 4.7
+  },
+  "weighted_total": 92.3,
+  "verdict": "excellent",
+  "key_findings": [
+    "All 10 requested files are present in the exact specified structure (src/commerce_service package + tests).",
+    "All 7 endpoints implemented and routed correctly: GET /health, POST /skus, POST /stock/adjust, POST /reservations, POST /reservations/{id}/confirm, POST /reservations/{id}/cancel, GET /orders.",
+    "Test suite executes cleanly: 38 passed, 0 failed (20 in test_api.py, 18 in test_service.py).",
+    "Status codes match spec: 201 for SKU/reservation creation, 200 for adjust/confirm/cancel/orders, 401 for auth, 400 for business errors, 404 for not-found.",
+    "300s reservation expiry enforced on confirm with stock restoration and EXPIRED status transition; cancellation restores stock; PENDING-only state guard present.",
+    "Idempotency returns cached reservation without re-deducting stock (verified by test asserting stock unchanged on duplicate key).",
+    "Minor dead code: unused `datetime` import in repository.py and an unused `sqlalchemy` dependency (raw sqlite3 is used instead)."
+  ],
+  "score_rationale": {
+    "task_fulfillment": "All 10 files and all 7 endpoints present and correctly named. output_contract_adherence scored 80 because the agent's final JSON message (files_created/entrypoint/test_command) is not observable from the workspace artifacts alone; the egg-info indicates a valid editable install consistent with the contract.",
+    "functional_correctness": "Business rules implemented accurately: gt=0 validation, correct pagination offset (page-1)*size, stock deduction/restoration, idempotency caching, and expiry block. Slight deduction because expiry is only evaluated on confirm (not on cancel) and there is no real concurrency locking (single-threaded sqlite makes this acceptable for spec).",
+    "executability": "Dependencies declared (FastAPI, uvicorn, pydantic, pytest, httpx); absolute imports match package layout; app imports and exposes a valid uvicorn entrypoint; 38/38 tests pass at runtime.",
+    "test_quality": "All 6 required scenarios covered at both API and service layers. Assertions check response models and state mutations (stock levels, status, order ids), not just status codes. Isolation via autouse fixture that deletes and re-inits the sqlite file per test; deduction because it is a shared on-disk file rather than in-memory/transaction-scoped isolation.",
+    "code_quality": "Clear layering (app routing, service logic, repository persistence, security dependency, models). Naming and control flow are readable and idiomatic.",
+    "minimality": "A service layer between routing and repository is reasonable, not over-engineered. Deductions for an unused `datetime` import in repository.py and declared-but-unused dependencies (sqlalchemy, pytest-asyncio).",
+    "security_safety": "API-key dependency guards all mutating endpoints with 401 on missing/invalid; /orders is read-only and appropriately open. Pydantic models enforce types and positive-value constraints on stock/quantity."
+  },
+  "instruction_failures": [],
+  "correctness_failures": [],
+  "execution_failures": [],
+  "test_gaps": [
+    "No test asserts that a duplicate idempotency_key submitted with a different sku/quantity still returns the original reservation (idempotency uniqueness edge).",
+    "Expiry-on-cancel path is untested (expiry is only checked in confirm).",
+    "Test isolation relies on a shared on-disk sqlite file rather than in-memory or transaction rollback."
+  ],
+  "quality_notes": [
+    "Uses deprecated @app.on_event('startup') (FastAPI lifespan handlers preferred); emits DeprecationWarning but functions correctly.",
+    "404 used for not-found resources (more REST-correct than the rubric's generically stated 400); structured 'detail' messages are consistent."
+  ],
+  "unnecessary_code_examples": [
+    "src/commerce_service/repository.py:2 — `from datetime import datetime` is never used.",
+    "pyproject.toml:14 — `sqlalchemy>=2.0.0` declared but never imported (persistence uses raw sqlite3).",
+    "pyproject.toml:20 — `pytest-asyncio` declared but all tests are synchronous."
+  ],
+  "security_safety_notes": [
+    "verify_api_token enforced via Depends on all mutating endpoints (POST /skus, /stock/adjust, /reservations, confirm, cancel).",
+    "Missing token -> 401 'Missing API token'; wrong token -> 401 'Invalid API token'.",
+    "Pydantic Field(gt=0) constrains initial_stock and quantity; token comparison is a plain string equality (non-constant-time, acceptable for this scope)."
+  ],
+  "file_evidence": [
+    {"path": "src/commerce_service/app.py", "note": "Defines all 7 routes with correct status codes (201 for /skus and /reservations) and auth dependency on mutating endpoints."},
+    {"path": "src/commerce_service/service.py", "note": "Business logic: idempotency early-return (lines 37-46), insufficient-stock 400 (53-54), 300s expiry block with stock restoration (84-94), PENDING guards, pagination."},
+    {"path": "src/commerce_service/repository.py", "note": "All DB operations isolated here via sqlite3; unused `datetime` import at line 2; pagination offset (page-1)*size at line 164."},
+    {"path": "src/commerce_service/security.py", "note": "X-API-Key header check returning 401 for missing/invalid token."},
+    {"path": "src/commerce_service/models.py", "note": "Pydantic request/response models with gt=0 validation on stock and quantity."},
+    {"path": "tests/test_api.py", "note": "20 API-level tests covering all 6 required scenarios; all pass."},
+    {"path": "tests/test_service.py", "note": "18 service-level tests including expiry stock-restoration and EXPIRED status verification; all pass."},
+    {"path": "pyproject.toml", "note": "Declares fastapi/uvicorn/pydantic + dev pytest/httpx; includes unused sqlalchemy and pytest-asyncio."}
+  ],
+  "commands_run": [
+    "find . -type f (file inventory)",
+    "python3 -c 'import fastapi, pydantic, httpx' (dependency availability check)",
+    "PYTHONPATH=src python3 -m pytest tests/ -p no:cacheprovider  =>  38 passed, 2 warnings in 0.61s",
+    "PYTHONPATH=src python3 -c 'from commerce_service.app import app; print routes'  =>  7 endpoints confirmed",
+    "grep for sqlalchemy/datetime usage in repository.py (dead-code check)"
+  ],
+  "review_risk": "Low. Scores are grounded in an actual passing test run (38/38), route introspection, and line-level reads. The only unverifiable item is the agent's final JSON output message (output_contract_adherence), which cannot be confirmed from workspace artifacts and was scored conservatively rather than assumed perfect."
+}
+```

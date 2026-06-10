@@ -1,0 +1,134 @@
+I have complete evidence. The service layer logic is correct (12/12 service tests pass), but the API integration suite fails 13/16 due to a misconfigured in-memory SQLite test engine (uses `SingletonThreadPool` without `StaticPool`/`check_same_thread=False`, so the table-creation connection differs from the request connection → "no such table: skus"). The app itself runs fine with the file-backed DB.
+
+```json
+{
+  "rubric_version": "benchmark-codegen-review-v1",
+  "score_scale": "0-100 per category",
+  "weights": {
+    "task_fulfillment": 0.20,
+    "functional_correctness": 0.25,
+    "executability": 0.15,
+    "test_quality": 0.15,
+    "code_quality": 0.10,
+    "minimality": 0.10,
+    "security_safety": 0.05
+  },
+  "task_fulfillment_score": 87,
+  "task_fulfillment_breakdown": {
+    "file_structure_compliance": 95,
+    "api_surface_coverage": 100,
+    "output_contract_adherence": 65
+  },
+  "functional_correctness_score": 87,
+  "functional_correctness_breakdown": {
+    "business_logic_accuracy": 90,
+    "expiration_and_state_rules": 92,
+    "concurrency_and_idempotency": 88,
+    "error_handling_semantics": 76
+  },
+  "executability_score": 72,
+  "executability_breakdown": {
+    "dependency_completeness": 95,
+    "imports_and_entrypoints": 90,
+    "automated_test_results": 30
+  },
+  "test_quality_score": 77,
+  "test_quality_breakdown": {
+    "specification_coverage": 90,
+    "assertion_rigor": 85,
+    "environment_isolation": 55
+  },
+  "code_quality_score": 86,
+  "code_quality_breakdown": {
+    "clarity_and_naming": 88,
+    "separation_of_concerns": 84
+  },
+  "minimality_score": 82,
+  "minimality_breakdown": {
+    "no_dead_code": 78,
+    "structural_complexity": 85
+  },
+  "security_safety_score": 91,
+  "security_safety_breakdown": {
+    "authentication_gate": 92,
+    "input_validation": 90
+  },
+  "review_confidence_score": 93,
+  "weighted_components": {
+    "task_fulfillment": 17.4,
+    "functional_correctness": 21.75,
+    "executability": 10.8,
+    "test_quality": 11.55,
+    "code_quality": 8.6,
+    "minimality": 8.2,
+    "security_safety": 4.55
+  },
+  "weighted_total": 82.9,
+  "verdict": "good",
+  "key_findings": [
+    "All 7 specified endpoints implemented (/health, /skus, /stock/adjust, /reservations, confirm, cancel, /orders) across the 10 expected files with clean repository/service/app layering.",
+    "CRITICAL: the mandated `pytest tests/` run fails 13 of 28 tests. Root cause is a misconfigured in-memory SQLite test engine in tests/test_api.py:13 (default SingletonThreadPool, no StaticPool / check_same_thread=False), so the connection that creates tables differs from the request-handling connection -> 'sqlalchemy.exc.OperationalError: no such table: skus'.",
+    "Service-layer logic is sound and fully verified: 12/12 tests in tests/test_service.py pass, covering stock decrement, insufficient-stock rejection, idempotency, 300s expiry+stock restoration, confirm/cancel state rules.",
+    "Runtime app is genuinely usable: importing commerce_service.app and calling GET /health returns {'status':'ok'} and creates commerce.db; the failure is isolated to the test harness, not production code.",
+    "Auth deviation: missing X-API-Token header returns HTTP 422 (FastAPI required-Header validation), not 401/403; only an explicitly wrong token returns 401. test_create_sku_missing_token even asserts 403 and fails (assert 422 == 403)."
+  ],
+  "score_rationale": {
+    "task_fulfillment": "File structure and API surface are complete: 6 source modules + 3 test files + pyproject.toml are present and all 7 endpoints exist with correct routing. output_contract_adherence cannot be verified from artifacts alone (no agent transcript; a README.md is also present), so that sub-item is scored conservatively.",
+    "functional_correctness": "Business rules are implemented correctly and proven by the passing service-layer suite: 201 on create, 200 on adjust, insufficient-stock -> 400 'Insufficient stock', idempotent replay returns cached reservation without re-decrementing stock, 300s expiry sets EXPIRED and restores stock, confirm/cancel enforce PENDING. Pagination math (total+size-1)//size is correct. Docked mainly for error_handling_semantics: missing-auth yields 422 rather than a 401/403 auth response.",
+    "executability": "Dependencies are fully declared and the app imports and serves /health. However the project's own required test command fails 13/28 tests at runtime due to the in-memory DB pool misconfiguration, so automated_test_results is scored very low and dominates this category.",
+    "test_quality": "Tests cover all six required scenarios (happy path, insufficient stock, idempotency, expiration, auth block, pagination) with rigorous assertions on data, stock levels, and statuses. Environment isolation is the weak point: the autouse drop/create fixture is defeated by the pool config, and one test hard-codes a wrong expected status (403).",
+    "code_quality": "Clear naming, conventional FastAPI routing, and proper separation: DB access confined to repository.py, business logic in service.py, routing in app.py. Minor leak: GET /orders reaches through service.repo rather than a service method.",
+    "minimality": "No unrequested features or speculative abstraction; structure fits the spec. Small blemishes: unused imports in models.py (create_engine, Session), an f-string with no placeholders, and confirm/cancel return-type hints saying Optional[dict] while returning Pydantic models.",
+    "security_safety": "All five mutating endpoints are gated by the verify_api_token dependency; /health and /orders are intentionally open per spec. Pydantic models enforce types and constraints (min_length, ge/gt), giving solid input validation."
+  },
+  "instruction_failures": [
+    "output_contract_adherence (agent emitting only the required JSON) is not verifiable from the delivered files; a README.md exists beyond core modules but may have been requested."
+  ],
+  "correctness_failures": [
+    "Missing X-API-Token header returns 422 instead of an authentication status (401/403); spec error semantics for auth failure are only partially met.",
+    "adjust_stock applies any signed amount with no floor, so stock can be driven negative (no explicit guard); not exercised by tests."
+  ],
+  "execution_failures": [
+    "tests/test_api.py: 13/16 tests raise 'sqlalchemy.exc.OperationalError: (sqlite3.OperationalError) no such table: skus' because the test engine create_engine('sqlite:///:memory:') uses SingletonThreadPool without poolclass=StaticPool/check_same_thread=False (tests/test_api.py:12-15).",
+    "tests/test_api.py::test_create_sku_missing_token fails with 'assert 422 == 403' — wrong expected status for a missing required header.",
+    "Overall mandated run: 13 failed, 15 passed in tests/ — not 100% pass."
+  ],
+  "test_gaps": [
+    "No test asserts the 401 path for an invalid token at the API level passes correctly in combination with DB state (the auth tests that pass don't touch the DB).",
+    "No negative test for adjusting a non-existent SKU at the API layer reaching the 400 'SKU not found' branch (only covered at service layer).",
+    "Test isolation relies on a shared module-level engine whose pool defeats per-test drop/create; no StaticPool means cross-connection state is unreliable."
+  ],
+  "quality_notes": [
+    "GET /orders handler reaches through service.repo.get_orders_paginated, slightly breaking the service abstraction (app.py:120).",
+    "confirm_reservation/cancel_reservation type hints declare tuple[Optional[dict], ...] but return ReservationResponse/OrderResponse objects (service.py:59,91).",
+    "datetime.utcnow() default triggers DeprecationWarning under Python 3.12 (models.py:21,32,42)."
+  ],
+  "unnecessary_code_examples": [
+    "models.py imports create_engine and Session that are never used (models.py:7-8).",
+    "f-string without placeholders: f\"Reservation is not in PENDING state\" in service.py:64 and service.py:96."
+  ],
+  "security_safety_notes": [
+    "All mutating endpoints (/skus, /stock/adjust, /reservations, /reservations/{id}/confirm, /reservations/{id}/cancel) require verify_api_token; read-only /health and /orders are open per spec.",
+    "API token is a hard-coded constant (security.py:5) rather than env-configured; acceptable for the exercise but not production-grade.",
+    "Pydantic request models enforce min_length and ge/gt constraints, preventing empty SKUs and non-positive reservation quantities."
+  ],
+  "file_evidence": [
+    {"path": "src/commerce_service/app.py", "note": "All 7 routes; correct 201 on create_sku/create_reservation, 200 on adjust/confirm/cancel; auth dependency on all mutating routes; pagination pages computed at line 121."},
+    {"path": "src/commerce_service/service.py", "note": "Business logic correct: idempotency replay (28-39), insufficient-stock 400 (42-43), 300s expiry + stock restore (66-73), cancel restore (98-99); return-type hints inaccurate (59,91)."},
+    {"path": "src/commerce_service/repository.py", "note": "DB access cleanly isolated; pagination offset/limit and count correct (80-92)."},
+    {"path": "src/commerce_service/security.py", "note": "verify_api_token raises 401 on bad token; missing header yields FastAPI 422 (8-13)."},
+    {"path": "src/commerce_service/models.py", "note": "SQLAlchemy + Pydantic models with validation constraints; unused create_engine/Session imports at line 7-8."},
+    {"path": "tests/test_api.py", "note": "Root-cause of 13 failures: in-memory engine without StaticPool (12-15); also asserts 403 for missing token (64)."},
+    {"path": "tests/test_service.py", "note": "12 well-targeted service tests, all pass; covers every required state/expiry/idempotency rule."},
+    {"path": "pyproject.toml", "note": "Declares fastapi, uvicorn, pydantic, sqlalchemy and dev deps pytest, pytest-asyncio, httpx — complete."}
+  ],
+  "commands_run": [
+    "find . -type f (file inventory)",
+    "python3 --version (3.12.4); python3 -c import fastapi,pydantic,sqlalchemy,httpx,pytest (deps ok)",
+    "pip install -e .[dev]; PYTHONPATH=src python3 -m pytest tests/ -v  -> 13 failed, 15 passed",
+    "PYTHONPATH=src python3 -c inspect pool -> SingletonThreadPool; TestClient GET /health -> {'status':'ok'}, commerce.db created",
+    "pytest tests/test_service.py -q -> 12 passed; pytest tests/test_api.py -q -> 3 passed, 13 failed"
+  ],
+  "review_risk": "Low. Failures are reproduced and root-caused via direct test execution and pool inspection; the exact original task spec (precise file list and the agent's final JSON output) was not provided, so file_structure exactness and output_contract_adherence are inferred rather than verified. Functional correctness is grounded in the passing service suite and a manual runtime smoke test of the live app."
+}
+```

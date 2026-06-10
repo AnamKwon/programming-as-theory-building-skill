@@ -1,0 +1,139 @@
+I have all evidence needed. The implementation is complete and functional, with all 18 tests passing. Key findings: a status-code contract defect (idempotent replays return 201 instead of the documented 200 — the `status_code` from the service is computed then discarded), the documented bare `pytest tests/` command fails without the install step, the README run command references an inconsistent module path, and there are a few dead imports/variables.
+
+```json
+{
+  "rubric_version": "benchmark-codegen-review-v1",
+  "score_scale": "0-100 per category",
+  "weights": {
+    "task_fulfillment": 0.20,
+    "functional_correctness": 0.25,
+    "executability": 0.15,
+    "test_quality": 0.15,
+    "code_quality": 0.10,
+    "minimality": 0.10,
+    "security_safety": 0.05
+  },
+  "task_fulfillment_score": 90,
+  "task_fulfillment_breakdown": {
+    "file_structure_compliance": 100,
+    "api_surface_coverage": 100,
+    "output_contract_adherence": 70
+  },
+  "functional_correctness_score": 83,
+  "functional_correctness_breakdown": {
+    "business_logic_accuracy": 78,
+    "expiration_and_state_rules": 95,
+    "concurrency_and_idempotency": 80,
+    "error_handling_semantics": 78
+  },
+  "executability_score": 92,
+  "executability_breakdown": {
+    "dependency_completeness": 100,
+    "imports_and_entrypoints": 85,
+    "automated_test_results": 90
+  },
+  "test_quality_score": 88,
+  "test_quality_breakdown": {
+    "specification_coverage": 100,
+    "assertion_rigor": 80,
+    "environment_isolation": 85
+  },
+  "code_quality_score": 91,
+  "code_quality_breakdown": {
+    "clarity_and_naming": 90,
+    "separation_of_concerns": 92
+  },
+  "minimality_score": 79,
+  "minimality_breakdown": {
+    "no_dead_code": 70,
+    "structural_complexity": 88
+  },
+  "security_safety_score": 87,
+  "security_safety_breakdown": {
+    "authentication_gate": 95,
+    "input_validation": 78
+  },
+  "review_confidence_score": 93,
+  "weighted_components": {
+    "task_fulfillment": 18.0,
+    "functional_correctness": 20.75,
+    "executability": 13.8,
+    "test_quality": 13.2,
+    "code_quality": 9.1,
+    "minimality": 7.9,
+    "security_safety": 4.35
+  },
+  "weighted_total": 87.1,
+  "verdict": "good",
+  "key_findings": [
+    "All 10 target files present and all 7 endpoints implemented; 18/18 tests pass (verified by execution).",
+    "Idempotent reservation replay returns HTTP 201 instead of the documented 200: service.reserve_stock returns status_code 200 (service.py:22) but app.py:40 hardcodes status_code=201 in the route decorator and discards the unpacked status_code (app.py:43).",
+    "Documented test command `pytest tests/` fails out-of-the-box with ModuleNotFoundError: no [tool.setuptools] / pytest pythonpath config; requires the README's `pip install -e .` step (editable install works via setuptools 82 src-layout auto-discovery).",
+    "README run command `uvicorn src.commerce_service.app:app` is inconsistent with internal absolute imports (`commerce_service.*`); the package installs as `commerce_service`, not `src.commerce_service`.",
+    "Clean layering: routing in app.py, business logic in service.py, all DB access in repository.py, auth in security.py.",
+    "Expiration (300s), stock restoration on expire/cancel, and PENDING-status enforcement are correctly implemented."
+  ],
+  "score_rationale": {
+    "task_fulfillment": "All 10 files and all 7 endpoints present (file_structure=100, api_surface=100). output_contract_adherence scored 70 because the agent's final JSON message (files_created/entrypoint/test_command) is not present in the workspace and cannot be verified from artifacts alone.",
+    "functional_correctness": "Core flows correct: insufficient-stock 400, pagination offset math, expiration/restoration, PENDING enforcement. Deductions for idempotent replay returning 201 not 200 (computed status_code discarded), missing-API-key yielding 422 rather than 401, and not-found reservations returning 400 rather than 404.",
+    "executability": "All deps declared; tests pass 100% once the package is on path. Bare documented `pytest tests/` fails without the install step (no pythonpath config), and the README uvicorn path is inconsistent with the package name, hence deductions on imports/entrypoints and automated_test_results.",
+    "test_quality": "All 6 required scenarios covered plus cancel; assertions inspect response data and state. Rigor docked because the idempotency test asserts 201 (codifying the status-code bug) and does not assert stock is unchanged on replay; test_api mutates app module globals without restoring them.",
+    "code_quality": "Readable naming, clear route handlers, and strong separation of concerns across app/service/repository/security/models.",
+    "minimality": "No over-engineering or unrequested features, but dead code present: unused `status` and `timezone` imports in app.py, unused `Depends` import in security.py, and the discarded `status_code` variable in create_reservation.",
+    "security_safety": "All mutating endpoints gated by verify_api_key dependency (GET /orders intentionally open). Input validation relies on Pydantic types only — no constraints (e.g., negative quantity/initial_stock are accepted), lowering input_validation."
+  },
+  "instruction_failures": [
+    "Cannot confirm the final output was exclusively the requested JSON object (files_created, entrypoint, test_command) — no such artifact exists in the workspace to verify against."
+  ],
+  "correctness_failures": [
+    "Idempotent reservation replay returns 201 instead of 200: app.py:43 unpacks status_code from service but the @app.post decorator fixes status_code=201, so the cached-response code path never returns 200 as README/spec describes.",
+    "Missing X-API-Key header returns 422 (Header(...) required) rather than 401 for unauthenticated mutating requests; only a wrong key returns 401 (security.py:7-12).",
+    "Confirm/cancel on a non-existent reservation raises ValueError mapped to 400, not 404 (app.py:68-73, service.py:37-38)."
+  ],
+  "execution_failures": [
+    "Documented `pytest tests/` from repo root fails: ModuleNotFoundError: No module named 'commerce_service' (no [tool.setuptools.packages.find] where=['src'] and no pytest pythonpath/conftest); requires `pip install -e .` first.",
+    "README server command `uvicorn src.commerce_service.app:app` mismatches internal `commerce_service.*` imports and the installed package name `commerce_service`."
+  ],
+  "test_gaps": [
+    "Idempotency test asserts status 201 (the buggy value) instead of catching the 200-vs-201 contract requirement.",
+    "No test asserts that stock level is unchanged when an idempotent reservation is replayed.",
+    "No test for missing-header auth distinctly asserting 401 (test accepts 403 or 422, passing on 422).",
+    "No test for duplicate SKU creation, negative-quantity reservation, or adjust on a non-existent SKU.",
+    "test_api.py reassigns app module globals (db/service) without restoring them after the test."
+  ],
+  "quality_notes": [
+    "Strong, conventional layering and clear naming throughout.",
+    "service.reserve_stock returns a (dict, status_code) tuple but the HTTP layer ignores the status_code, indicating an unfinished idempotency contract.",
+    "Lazy expiration only (checked at confirm); acceptable for the spec but means an expired PENDING reservation can still be cancelled."
+  ],
+  "unnecessary_code_examples": [
+    "app.py:1 imports `status` from fastapi but it is never used (literals 201/200/400 used instead).",
+    "app.py:9 imports `timezone` but only `datetime` is used.",
+    "app.py:43 `reservation, status_code = service.reserve_stock(...)` — status_code is assigned but never used (dead variable).",
+    "security.py:1 imports `Depends` which is unused in that module."
+  ],
+  "security_safety_notes": [
+    "All mutating endpoints (POST /skus, /stock/adjust, /reservations, /reservations/{id}/confirm, /reservations/{id}/cancel) require the verify_api_key dependency.",
+    "GET /orders and GET /health are unauthenticated (read-only) — acceptable.",
+    "Pydantic models validate types but impose no value constraints; negative quantity/initial_stock and zero values are accepted (no Field(gt=0) bounds)."
+  ],
+  "file_evidence": [
+    {"path": "src/commerce_service/app.py", "note": "Routing + auth deps; line 43 discards service status_code; decorator fixes 201 for reservations; unused status/timezone imports."},
+    {"path": "src/commerce_service/service.py", "note": "Business logic; reserve_stock returns 200 for idempotent replay (line 22); 300s expiration + stock restoration (45-48); PENDING enforcement (40,59)."},
+    {"path": "src/commerce_service/repository.py", "note": "All SQLite DB access isolated here; pagination offset=(page-1)*size with COUNT(*) total (141-149)."},
+    {"path": "src/commerce_service/security.py", "note": "verify_api_key returns 401 on wrong key; missing header yields 422 via Header(...)."},
+    {"path": "src/commerce_service/models.py", "note": "Pydantic v2 models with type-only validation, no value constraints."},
+    {"path": "tests/test_api.py", "note": "10 endpoint tests incl. expiration via DB time backdating; idempotency test asserts 201 (line 107)."},
+    {"path": "tests/test_service.py", "note": "8 service-layer tests with isolated per-function sqlite fixtures."},
+    {"path": "pyproject.toml", "note": "All deps declared; no [tool.setuptools] src config and no pytest pythonpath, so bare pytest fails pre-install."}
+  ],
+  "commands_run": [
+    "find . -type f (10 source files enumerated)",
+    "python3 --version (3.12.4); import fastapi/pydantic/httpx (present)",
+    "PYTHONPATH=src python3 -m pytest -v  ->  18 passed in 0.37s",
+    "python3 -m pytest tests/  ->  2 collection errors: ModuleNotFoundError: No module named 'commerce_service'",
+    "setuptools find_packages: [] from root, ['commerce_service'] where=src; auto-discovery resolves package_dir {'':'src'} (setuptools 82.0.1)"
+  ],
+  "review_risk": "Low. Tests were executed directly (18/18 pass with src on path; documented bare command reproduced as failing) and findings are line-cited. Only uncertainty is output_contract_adherence, since the agent's final JSON message is not part of the inspectable workspace."
+}
+```

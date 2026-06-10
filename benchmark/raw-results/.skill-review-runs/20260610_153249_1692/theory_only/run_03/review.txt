@@ -1,0 +1,135 @@
+I have all evidence needed. The root cause is confirmed: every `_get_connection()` opens a fresh `sqlite3.connect(":memory:")`, which is a distinct in-memory database, so the schema created in `_init_db()` is invisible to all subsequent operations. This collapses 23 of 27 tests.
+
+```json
+{
+  "rubric_version": "benchmark-codegen-review-v1",
+  "score_scale": "0-100 per category",
+  "weights": {
+    "task_fulfillment": 0.20,
+    "functional_correctness": 0.25,
+    "executability": 0.15,
+    "test_quality": 0.15,
+    "code_quality": 0.10,
+    "minimality": 0.10,
+    "security_safety": 0.05
+  },
+  "task_fulfillment_score": 82,
+  "task_fulfillment_breakdown": {
+    "file_structure_compliance": 95,
+    "api_surface_coverage": 100,
+    "output_contract_adherence": 50
+  },
+  "functional_correctness_score": 43,
+  "functional_correctness_breakdown": {
+    "business_logic_accuracy": 42,
+    "expiration_and_state_rules": 40,
+    "concurrency_and_idempotency": 42,
+    "error_handling_semantics": 48
+  },
+  "executability_score": 60,
+  "executability_breakdown": {
+    "dependency_completeness": 85,
+    "imports_and_entrypoints": 80,
+    "automated_test_results": 15
+  },
+  "test_quality_score": 88,
+  "test_quality_breakdown": {
+    "specification_coverage": 95,
+    "assertion_rigor": 88,
+    "environment_isolation": 82
+  },
+  "code_quality_score": 88,
+  "code_quality_breakdown": {
+    "clarity_and_naming": 85,
+    "separation_of_concerns": 90
+  },
+  "minimality_score": 80,
+  "minimality_breakdown": {
+    "no_dead_code": 75,
+    "structural_complexity": 85
+  },
+  "security_safety_score": 58,
+  "security_safety_breakdown": {
+    "authentication_gate": 45,
+    "input_validation": 70
+  },
+  "review_confidence_score": 93,
+  "weighted_components": {
+    "task_fulfillment": 16.4,
+    "functional_correctness": 10.75,
+    "executability": 9.0,
+    "test_quality": 13.2,
+    "code_quality": 8.8,
+    "minimality": 8.0,
+    "security_safety": 2.9
+  },
+  "weighted_total": 69.1,
+  "verdict": "mixed",
+  "key_findings": [
+    "CRITICAL runtime defect: Repository opens a new sqlite3.connect(':memory:') per operation (repository.py:12). Each in-memory connection is a separate database, so the schema built in _init_db() (repository.py:16-51) is invisible to every later call. Confirmed via isolated repro and via the suite.",
+    "Test execution result: 23 failed, 4 passed (PYTHONPATH=src python3 -m pytest). Only DB-free tests pass: test_health and three auth-rejection tests. Every business operation raises sqlite3.OperationalError: no such table: skus.",
+    "All 7 specified endpoints are present and all 6 required test scenarios are written, but the persistence bug makes the service non-functional at runtime.",
+    "Three mutating endpoints are NOT auth-protected: POST /reservations (app.py:38), confirm (app.py:62), cancel (app.py:84) lack Depends(verify_api_key); only /skus and /stock/adjust are gated.",
+    "Business logic, expiration (300s), stock restore, idempotency, and pagination are correctly expressed in source but cannot be verified to function due to the connection defect."
+  ],
+  "score_rationale": {
+    "task_fulfillment": "All requested modules and both test files exist with clean app/repository separation; all 7 endpoints implemented. output_contract_adherence scored neutral (50) because no agent JSON output artifact (files_created/entrypoint/test_command) exists in the workspace to verify.",
+    "functional_correctness": "Logic for status codes (201 vs 200), pagination offset, stock validation, 300s expiration with restore, PENDING enforcement, and idempotent replay is correctly written, but the :memory: connection defect means zero business operations succeed at runtime. Scored low because correctness must reflect actual runtime behavior, not just source intent.",
+    "executability": "App imports cleanly and /health serves (entrypoint valid); dependencies are declared (fastapi, pydantic, uvicorn, sqlalchemy, pytest, pytest-asyncio, httpx). Score is dragged down by automated_test_results: only 4/27 tests pass (~15%).",
+    "test_quality": "Tests cover all six required scenarios with rigorous assertions on response bodies and on stock-state mutations, plus per-test isolation fixtures (autouse reset_db; fresh repo). Well-designed; their failures stem from the implementation bug, not test design.",
+    "code_quality": "Readable naming, clear status-string return convention from service layer, and strong separation of concerns: repository.py (DB), service.py (rules), app.py (routing), models.py, security.py.",
+    "minimality": "Largely minimal and free of speculative abstraction. Minor dead code: unused `status` import and unused ErrorResponse import in app.py, unused `import time` in test_service.py, and sqlalchemy declared as a dependency though the code uses sqlite3 directly.",
+    "security_safety": "API-key dependency exists and gates /skus and /stock/adjust, but reservation create/confirm/cancel mutations are unprotected, violating the all-mutating-endpoints-gated requirement. Pydantic enforces field types but lacks value constraints (e.g., positive quantity/stock)."
+  },
+  "instruction_failures": [
+    "output_contract_adherence could not be confirmed: no JSON deliverable (files_created/entrypoint/test_command) is present in the workspace, only the code repository."
+  ],
+  "correctness_failures": [
+    "repository.py:12 — sqlite3.connect(':memory:') per call creates isolated DBs; schema from _init_db() never persists, so create_sku/adjust_stock/reservations/orders all fail with 'no such table'.",
+    "create_sku catches only sqlite3.IntegrityError (repository.py:63); the actual OperationalError propagates uncaught, surfacing as a 500-equivalent crash rather than the intended 400.",
+    "Idempotent replay always returns HTTP 201 (app.py:38 fixed status_code=201) for both 'created' and 'idempotent' results; a replay arguably should return 200."
+  ],
+  "execution_failures": [
+    "pytest: 23 failed, 4 passed. Representative error: sqlite3.OperationalError: no such table: skus at repository.py:57.",
+    "Failing suites include all of test_service.py (business logic) and all DB-touching cases in test_api.py (create/adjust/reserve/confirm/cancel/orders/expiry)."
+  ],
+  "test_gaps": [
+    "No test asserts that reservation create/confirm/cancel require authentication — which is why the missing auth gate on those mutating endpoints went uncaught.",
+    "No negative test for adjusting/reserving a non-existent SKU at the API layer (sku_not_found path of app.py:44 is unexercised).",
+    "No test for input-validation rejection (e.g., negative quantity or non-integer stock returning 422)."
+  ],
+  "quality_notes": [
+    "Service layer's (result, status_string) tuple convention is clear and keeps HTTP concerns in app.py.",
+    "get_orders performs COUNT then paginated SELECT correctly (repository.py:194-209); offset math (page-1)*size is correct.",
+    "Endpoint reads (GET /orders, /health) are appropriately unauthenticated."
+  ],
+  "unnecessary_code_examples": [
+    "app.py:1 imports `status` from fastapi but never uses it (literals 201/400/500 used instead).",
+    "app.py:5 imports ErrorResponse but it is never used as a response_model or elsewhere.",
+    "tests/test_service.py:4 `import time` is unused.",
+    "pyproject.toml:14 declares sqlalchemy>=2.0.0 though repository.py uses the stdlib sqlite3 directly."
+  ],
+  "security_safety_notes": [
+    "Mutating endpoints POST /reservations, /reservations/{id}/confirm, /reservations/{id}/cancel are not protected by verify_api_key (app.py:38,62,84).",
+    "verify_api_key correctly returns 401 on missing/invalid X-API-Key (security.py:8-13) and uses a constant comparison, though the comparison is not constant-time.",
+    "Pydantic models validate types but impose no value constraints; negative quantity or initial_stock would be accepted by the schema."
+  ],
+  "file_evidence": [
+    {"path": "src/commerce_service/repository.py", "note": "Line 12: sqlite3.connect(self.db_path) with default ':memory:' opens a fresh isolated DB per call — root cause of 23 test failures."},
+    {"path": "src/commerce_service/service.py", "note": "Lines 39-63: confirm logic implements 300s expiration, stock restore, PENDING enforcement, order creation — correct in source."},
+    {"path": "src/commerce_service/app.py", "note": "Lines 38,62,84: reservation mutating endpoints lack Depends(verify_api_key); lines 1,5: unused status/ErrorResponse imports."},
+    {"path": "src/commerce_service/security.py", "note": "Lines 8-13: API-key header check returning 401; correct but applied to only 2 of 5 mutating endpoints."},
+    {"path": "tests/test_api.py", "note": "Covers all 6 required scenarios with state-level assertions (e.g., line 344 stock restored to 100); fails at runtime due to repo defect."},
+    {"path": "tests/test_service.py", "note": "Line 4 unused `import time`; otherwise rigorous unit coverage of service rules."},
+    {"path": "pyproject.toml", "note": "Line 14 declares unused sqlalchemy; dev extras include pytest/httpx/pytest-asyncio."}
+  ],
+  "commands_run": [
+    "find . -type f | sort",
+    "python3 --version; python3 -c \"import fastapi, pydantic, httpx, pytest\"",
+    "PYTHONPATH=src python3 -m pytest -q (result: 23 failed, 4 passed)",
+    "PYTHONPATH=src python3 -m pytest -v (identified the 4 passing DB-free tests)",
+    "python3 repro of sqlite3 ':memory:' per-connection isolation (CONFIRMED defect: no such table)"
+  ],
+  "review_risk": "Low. Findings are grounded in actual test execution (23 failed / 4 passed), a direct reproduction of the sqlite ':memory:' defect, and specific line citations. Only uncertainty is output_contract_adherence, which is unverifiable from the code workspace and was scored neutrally rather than penalized."
+}
+```

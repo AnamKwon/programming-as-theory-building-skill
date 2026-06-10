@@ -1,0 +1,134 @@
+```json
+{
+  "rubric_version": "benchmark-codegen-review-v1",
+  "score_scale": "0-100 per category",
+  "weights": {
+    "task_fulfillment": 0.20,
+    "functional_correctness": 0.25,
+    "executability": 0.15,
+    "test_quality": 0.15,
+    "code_quality": 0.10,
+    "minimality": 0.10,
+    "security_safety": 0.05
+  },
+  "task_fulfillment_score": 82,
+  "task_fulfillment_breakdown": {
+    "file_structure_compliance": 95,
+    "api_surface_coverage": 100,
+    "output_contract_adherence": 50
+  },
+  "functional_correctness_score": 87,
+  "functional_correctness_breakdown": {
+    "business_logic_accuracy": 90,
+    "expiration_and_state_rules": 92,
+    "concurrency_and_idempotency": 78,
+    "error_handling_semantics": 88
+  },
+  "executability_score": 75,
+  "executability_breakdown": {
+    "dependency_completeness": 90,
+    "imports_and_entrypoints": 95,
+    "automated_test_results": 40
+  },
+  "test_quality_score": 77,
+  "test_quality_breakdown": {
+    "specification_coverage": 95,
+    "assertion_rigor": 90,
+    "environment_isolation": 45
+  },
+  "code_quality_score": 91,
+  "code_quality_breakdown": {
+    "clarity_and_naming": 90,
+    "separation_of_concerns": 92
+  },
+  "minimality_score": 80,
+  "minimality_breakdown": {
+    "no_dead_code": 75,
+    "structural_complexity": 85
+  },
+  "security_safety_score": 86,
+  "security_safety_breakdown": {
+    "authentication_gate": 95,
+    "input_validation": 77
+  },
+  "review_confidence_score": 93,
+  "weighted_components": {
+    "task_fulfillment": 16.4,
+    "functional_correctness": 21.75,
+    "executability": 11.25,
+    "test_quality": 11.55,
+    "code_quality": 9.1,
+    "minimality": 8.0,
+    "security_safety": 4.3
+  },
+  "weighted_total": 82.4,
+  "verdict": "good",
+  "key_findings": [
+    "Full test suite does NOT pass: 21 passed, 17 failed, 17 errors. All 21 tests/test_api.py pass; all 17 tests/test_service.py fail.",
+    "Root cause of test_service failures: Repository(':memory:') combined with a connection-per-call design — each _get_connection() opens a brand-new in-memory SQLite DB, so tables created in _init_db() are gone by the next call ('sqlite3.OperationalError: no such table: skus'). The file-backed default DB used by test_api.py works fine.",
+    "All 7 required endpoints are present and correctly routed (/health, /skus, /stock/adjust, /reservations, /reservations/{id}/confirm, /reservations/{id}/cancel, /orders).",
+    "Business rules are correct where exercisable: stock deducted at reservation, restored on cancel and on lazy expiration (300s TTL), PENDING-status enforcement, idempotency returns cached reservation without re-deducting stock, pagination math correct.",
+    "Clean three-layer separation (app.py routing / service.py logic / repository.py persistence) and consistent auth gating on every mutating endpoint via Depends(validate_api_token).",
+    "The running service (file DB) is fully usable; the defect is confined to the unit-test harness, not the application."
+  ],
+  "score_rationale": {
+    "task_fulfillment": "All expected source/test/config files present and the full 7-endpoint surface is implemented (95, 100). output_contract_adherence scored 50 because the agent's terminal JSON output (files_created/entrypoint/test_command) is not observable from the workspace — no such artifact exists on disk, so the contract can be neither confirmed nor refuted.",
+    "functional_correctness": "Stock validation, 201/200 status choices, pagination, expiration+restoration, PENDING enforcement, and idempotency are all implemented correctly and verified by the passing test_api suite. Marked down on concurrency (unguarded check-then-act in create_reservation; SQLite default isolation) and minor error-handling gaps.",
+    "executability": "Dependencies declared (FastAPI, Pydantic, uvicorn, pytest, httpx) and imports/entrypoints are correct; app imports and serves cleanly. automated_test_results scored 40 because the suite as a whole does not pass 100% — only 21/38 (55%) succeed; tests/test_service.py is entirely broken at runtime.",
+    "test_quality": "All 6 required scenarios (happy path, insufficient stock, idempotency, expiration, auth block, pagination) are covered with rigorous data/state assertions (stock levels, status transitions). environment_isolation scored 45 because the test_service ':memory:' isolation strategy is fundamentally broken with this repository design, causing every unit test plus its teardown to error.",
+    "code_quality": "Readable naming, clear control flow, idiomatic FastAPI routing, and textbook separation of concerns across app/service/repository/security/models.",
+    "minimality": "No major over-engineering. Minor dead weight: unused 'import time' in test_service.py, and unused declared dependencies sqlalchemy==2.0.23 and pytest-asyncio==0.21.1 (the project uses raw sqlite3 and synchronous tests).",
+    "security_safety": "Every mutating endpoint (and /orders) is gated by the X-API-Token dependency returning 401 on missing/invalid token. Input validation relies on Pydantic type checks only — no value constraints (negative quantity/stock and zero quantities are accepted), hence 77 on input_validation."
+  },
+  "instruction_failures": [
+    "Cannot confirm the required final JSON output contract (files_created, entrypoint, test_command) — no such artifact is present in the delivered workspace; only source files exist."
+  ],
+  "correctness_failures": [
+    "tests/test_service.py is non-functional: Repository(':memory:') opens a new empty in-memory database on every _get_connection() call, so all 17 service-layer tests fail with 'no such table: skus' and their clear_db teardown errors as well.",
+    "create_reservation performs an unsynchronized get_sku_stock() then adjust_stock() (check-then-act), leaving a race window under concurrent requests; no transactional guard or row lock."
+  ],
+  "execution_failures": [
+    "Full `pytest tests/` run: 17 failed, 17 errors, 21 passed (does not reach 100% pass).",
+    "`pytest tests/test_service.py`: 17 failed + 17 errors (sqlite3.OperationalError: no such table: skus).",
+    "Numerous DeprecationWarnings for datetime.utcnow() and the sqlite3 default datetime adapter (Python 3.12) — non-fatal but noisy."
+  ],
+  "test_gaps": [
+    "No test asserts stock is correctly RESTORED after a /reservations/{id}/cancel at the API layer (only the service-layer test, which does not run, checks restoration).",
+    "No negative/zero quantity or negative initial_stock validation tests (and the code does not enforce these).",
+    "No test for confirm/cancel against a non-existent reservation id at the API layer (404 path) — only covered in the broken service tests.",
+    "Concurrency / double-reservation race conditions are untested."
+  ],
+  "quality_notes": [
+    "service.py cleanly mediates between routing and persistence; HTTPException usage centralizes error semantics.",
+    "Two f-strings without placeholders: service.py:64 and service.py:96 (f\"Reservation is not in PENDING status\") — harmless but unnecessary.",
+    "Uses deprecated datetime.utcnow() throughout; will warn on 3.12 and break on future Python."
+  ],
+  "unnecessary_code_examples": [
+    "tests/test_service.py:2 `import time` is never used.",
+    "pyproject.toml:14 declares sqlalchemy==2.0.23 though persistence uses the raw sqlite3 module exclusively.",
+    "pyproject.toml:20 declares pytest-asyncio==0.21.1 though all tests are synchronous TestClient calls."
+  ],
+  "security_safety_notes": [
+    "All mutating endpoints (/skus, /stock/adjust, /reservations, confirm, cancel) and /orders require X-API-Token via Depends(validate_api_token); missing token -> 401, invalid token -> 401 (verified by passing auth tests).",
+    "Valid token is a hardcoded set {'test-token-12345'} in security.py — acceptable for a demo but not externally configurable.",
+    "Pydantic enforces field types but no value bounds; negative or zero quantity/stock pass validation, allowing logically invalid reservations/adjustments."
+  ],
+  "file_evidence": [
+    {"path": "src/commerce_service/repository.py", "note": "Lines 11-14 open a fresh sqlite3 connection per call; with db_path=':memory:' (test_service fixture) each call gets a new empty DB, so _init_db tables never persist — root cause of all 17 service-test failures."},
+    {"path": "tests/test_service.py", "note": "Line 11 Repository(':memory:') triggers the connection-per-call defect; lines 116-124 manipulate created_at to test 300s expiration. All tests error at runtime."},
+    {"path": "tests/test_api.py", "note": "21 tests, all passing; covers all 6 required scenarios using the default file-backed repo with autouse reset_db fixture (lines 7-11)."},
+    {"path": "src/commerce_service/service.py", "note": "Lines 27-51 idempotency + stock check + deduction; lines 53-83 confirm with 300s TTL expiration (67-75) restoring stock; lines 85-107 cancel restores stock; PENDING enforcement at 61 and 93."},
+    {"path": "src/commerce_service/app.py", "note": "All 7 endpoints present; every mutating route and /orders use Depends(validate_api_token); /skus and /reservations return 201."},
+    {"path": "src/commerce_service/security.py", "note": "API-token gate: 401 on missing (lines 8-12) and invalid (13-17) token."},
+    {"path": "pyproject.toml", "note": "Lines 14 and 20 declare sqlalchemy and pytest-asyncio that are never imported/used."}
+  ],
+  "commands_run": [
+    "python3 --version  (Python 3.12.4)",
+    "python3 -c 'import fastapi, pydantic, httpx, pytest'  (all importable)",
+    "python3 -m pytest tests/ -v  -> 17 failed, 21 passed, 17 errors",
+    "python3 -m pytest tests/test_api.py -q  -> 21 passed",
+    "python3 -m pytest tests/test_service.py -q  -> 17 failed, 17 errors"
+  ],
+  "review_risk": "Low. Findings are grounded in actual pytest runs (full suite and per-file) and specific line citations; the test failure root cause was reproduced and explained. Main uncertainty: output_contract_adherence cannot be assessed from the filesystem alone (no transcript of the agent's final JSON message was available), so that single sub-item is scored conservatively as indeterminate."
+}
+```

@@ -1,0 +1,132 @@
+All 35 tests pass; static analysis confirms 6 unused imports and 2 placeholderless f-strings. I have enough evidence to score.
+
+```json
+{
+  "rubric_version": "benchmark-codegen-review-v1",
+  "score_scale": "0-100 per category",
+  "weights": {
+    "task_fulfillment": 0.20,
+    "functional_correctness": 0.25,
+    "executability": 0.15,
+    "test_quality": 0.15,
+    "code_quality": 0.10,
+    "minimality": 0.10,
+    "security_safety": 0.05
+  },
+  "task_fulfillment_score": 88,
+  "task_fulfillment_breakdown": {
+    "file_structure_compliance": 95,
+    "api_surface_coverage": 100,
+    "output_contract_adherence": 70
+  },
+  "functional_correctness_score": 87,
+  "functional_correctness_breakdown": {
+    "business_logic_accuracy": 92,
+    "expiration_and_state_rules": 92,
+    "concurrency_and_idempotency": 82,
+    "error_handling_semantics": 80
+  },
+  "executability_score": 94,
+  "executability_breakdown": {
+    "dependency_completeness": 95,
+    "imports_and_entrypoints": 88,
+    "automated_test_results": 100
+  },
+  "test_quality_score": 92,
+  "test_quality_breakdown": {
+    "specification_coverage": 100,
+    "assertion_rigor": 90,
+    "environment_isolation": 85
+  },
+  "code_quality_score": 87,
+  "code_quality_breakdown": {
+    "clarity_and_naming": 82,
+    "separation_of_concerns": 92
+  },
+  "minimality_score": 81,
+  "minimality_breakdown": {
+    "no_dead_code": 72,
+    "structural_complexity": 90
+  },
+  "security_safety_score": 90,
+  "security_safety_breakdown": {
+    "authentication_gate": 95,
+    "input_validation": 85
+  },
+  "review_confidence_score": 92,
+  "weighted_components": {
+    "task_fulfillment": 17.6,
+    "functional_correctness": 21.75,
+    "executability": 14.1,
+    "test_quality": 13.8,
+    "code_quality": 8.7,
+    "minimality": 8.1,
+    "security_safety": 4.5
+  },
+  "weighted_total": 88.6,
+  "verdict": "good",
+  "key_findings": [
+    "All 35 tests pass on a live pytest run (19 API tests + 16 service tests), 0.64s, zero failures.",
+    "All 7 required endpoints are present and correctly wired: /health (open), /skus (201), /stock/adjust (200), /reservations (201/200), /reservations/{id}/confirm, /reservations/{id}/cancel, /orders (paginated).",
+    "Core business rules implemented correctly: 201-vs-200 idempotency distinction, insufficient-stock 400, 300s TTL expiration with stock restoration, PENDING-state enforcement on confirm/cancel, and offset pagination ((page-1)*size).",
+    "Clean layering matches the requested file structure: repository.py owns all SQLite access, service.py owns business logic, app.py owns routing, security.py owns the API-key gate.",
+    "Six unused imports (status, Optional, datetime, os, Depends, List) and two f-strings without placeholders detected by pyflakes — minor dead-code/minimality deductions.",
+    "Mutation endpoints are uniformly protected by the verify_api_key dependency; invalid/missing key returns 401; bad payloads return Pydantic 422."
+  ],
+  "score_rationale": {
+    "task_fulfillment": "All expected source/test/config files are present and every one of the 7 endpoints is implemented and behaves per spec. output_contract_adherence is scored at 70 because the agent's final terminal message (the required JSON with files_created/entrypoint/test_command) is not observable from the artifacts alone — the on-disk evidence is consistent with the contract but cannot be directly confirmed.",
+    "functional_correctness": "Business logic, expiration/restoration, idempotent caching, and 400/401 error semantics are all correct and verified by passing tests. Deductions: stock check-then-deduct is non-atomic across separate per-call SQLite connections (no real concurrency protection beyond idempotency-key dedup), adjust_stock permits stock to go negative with no guard, not-found cases return 400 rather than 404, and a broad `except Exception -> 400` can mask genuine server errors as client errors.",
+    "executability": "pyproject declares fastapi/uvicorn/pydantic/pydantic-settings plus dev deps pytest/pytest-asyncio/httpx; TestClient runs cleanly. 35/35 tests pass. Minor: tests import via `src.commerce_service` (repo-root path) while README/entrypoint use the installed `commerce_service` name — both resolve in their contexts but the path convention is inconsistent.",
+    "test_quality": "All six required scenarios are covered at both the service and HTTP layers, with strict assertions on response fields and re-queried stock state (not just status codes). Slight deduction: tests share a single on-disk SQLite file at a fixed path rather than an isolated tmp/in-memory DB; an autouse fixture deletes it before and after each test so isolation holds serially but would be fragile under parallel execution.",
+    "code_quality": "Naming, routing, and control flow are clear and separation of concerns is strong. The main smell is the repeated broad `except Exception` blanket-mapping to HTTP 400 in app.py, which conflates client and server faults.",
+    "minimality": "No unused functions or unreachable branches, and the layered architecture is justified because repository.py/service.py were requested files (not speculative). Deductions are limited to six unused imports and two placeholderless f-strings.",
+    "security_safety": "Every mutating endpoint and the orders listing are gated by the API-key dependency; /health is intentionally open. Pydantic enforces types and gt=0 constraints. The API key is a hardcoded constant (\"test-token\") rather than configurable/secret, which is acceptable for the spec but not production-grade."
+  },
+  "instruction_failures": [
+    "Agent's final structured JSON output (files_created/entrypoint/test_command) could not be verified from the workspace artifacts alone."
+  ],
+  "correctness_failures": [],
+  "execution_failures": [],
+  "test_gaps": [
+    "No test for adjusting stock below zero (adjust_stock currently allows negative stock with no validation).",
+    "No test for creating a duplicate SKU (UNIQUE constraint path -> generic 400).",
+    "No test asserting idempotency behavior when the same key is reused with a different sku/quantity payload.",
+    "No concurrency/race test for simultaneous reservations against limited stock (the implementation is non-atomic)."
+  ],
+  "quality_notes": [
+    "Broad `except Exception -> HTTPException(400)` in every app.py route masks server-side faults as client errors.",
+    "String-matching on exception messages (e.g. 'Insufficient stock', 'expired', 'not in PENDING state') to choose status/detail is brittle; typed exceptions would be cleaner.",
+    "Each repository call opens and closes its own SQLite connection, so multi-step service operations (stock check + deduct + insert) are not transactional.",
+    "Deprecated FastAPI `@app.on_event('startup')` used (DeprecationWarning emitted at runtime)."
+  ],
+  "unnecessary_code_examples": [
+    "src/commerce_service/app.py: `status` imported from fastapi but unused.",
+    "src/commerce_service/security.py: `Depends` imported but unused.",
+    "src/commerce_service/repository.py: `import os` and `from datetime import datetime` both unused.",
+    "src/commerce_service/service.py: `Optional` and `List` imported from typing but unused; lines 59 and 87 use f-strings with no placeholders.",
+    "pydantic-settings declared as a dependency but never used in the codebase."
+  ],
+  "security_safety_notes": [
+    "All mutating endpoints (/skus, /stock/adjust, /reservations, confirm, cancel) and /orders enforce verify_api_key; /health is correctly unauthenticated.",
+    "API key is a hardcoded module constant ('test-token') with no environment/secret configuration.",
+    "Pydantic models constrain types and enforce gt=0 on initial_stock and quantity; SQL uses parameterized queries throughout (no injection)."
+  ],
+  "file_evidence": [
+    {"path": "src/commerce_service/app.py", "note": "All 7 routes defined; reservation returns JSONResponse 200 on idempotent retry vs 201 on create (lines 49-69); blanket except->400 in every handler."},
+    {"path": "src/commerce_service/service.py", "note": "300s TTL via RESERVATION_TTL_SECONDS; expiration restores stock and sets EXPIRED (lines 66-70); PENDING enforced on confirm/cancel; idempotency short-circuit returns cached reservation with status 200 (lines 34-36)."},
+    {"path": "src/commerce_service/repository.py", "note": "All SQLite access isolated here; parameterized queries; pagination offset=(page-1)*size (line 223). Unused os/datetime imports at top."},
+    {"path": "src/commerce_service/security.py", "note": "verify_api_key Header dependency raises 401 on missing/invalid key; unused Depends import."},
+    {"path": "tests/test_api.py", "note": "19 HTTP-level tests incl. auth block, insufficient stock, idempotent retry/no-double-deduct, expiration+restore, pagination across 3 pages; autouse fixture resets DB file."},
+    {"path": "tests/test_service.py", "note": "16 service-level tests asserting field values and re-queried stock state; covers all 6 required criteria."},
+    {"path": "pyproject.toml", "note": "Declares fastapi/uvicorn/pydantic/pydantic-settings + dev pytest/pytest-asyncio/httpx; setuptools src layout."}
+  ],
+  "commands_run": [
+    "find . -type f (file inventory)",
+    "wc -l on all source/test files",
+    "python3 -c 'import fastapi, pydantic, httpx' (env check: fastapi 0.109.0, pydantic 2.5.3, Python 3.12.4)",
+    "python3 -m pytest tests/ -v (result: 35 passed, 2 warnings in 0.64s)",
+    "python3 -m pyflakes src/commerce_service/*.py (6 unused imports + 2 f-string warnings)"
+  ],
+  "review_risk": "Low. Tests were executed live and all 35 pass; scores are grounded in runtime results, line-level inspection, and static analysis. The only unverifiable item is the agent's final terminal JSON output contract, since only on-disk artifacts were available — this was scored conservatively rather than assumed compliant."
+}
+```

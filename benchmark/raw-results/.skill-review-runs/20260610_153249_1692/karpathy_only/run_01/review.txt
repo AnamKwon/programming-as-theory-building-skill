@@ -1,0 +1,135 @@
+All 27 tests pass (exit 0) after the README-documented `pip install -e .`. I also confirmed three reproducible unhandled paths returning HTTP 500 (uncaught `AttributeError`/`IntegrityError`): reserving or adjusting a nonexistent SKU, and creating a duplicate SKU. These are real error-handling gaps in untested edge cases.
+
+```json
+{
+  "rubric_version": "benchmark-codegen-review-v1",
+  "score_scale": "0-100 per category",
+  "weights": {
+    "task_fulfillment": 0.20,
+    "functional_correctness": 0.25,
+    "executability": 0.15,
+    "test_quality": 0.15,
+    "code_quality": 0.10,
+    "minimality": 0.10,
+    "security_safety": 0.05
+  },
+  "task_fulfillment_score": 93,
+  "task_fulfillment_breakdown": {
+    "file_structure_compliance": 100,
+    "api_surface_coverage": 100,
+    "output_contract_adherence": 80
+  },
+  "functional_correctness_score": 86,
+  "functional_correctness_breakdown": {
+    "business_logic_accuracy": 95,
+    "expiration_and_state_rules": 95,
+    "concurrency_and_idempotency": 90,
+    "error_handling_semantics": 62
+  },
+  "executability_score": 95,
+  "executability_breakdown": {
+    "dependency_completeness": 100,
+    "imports_and_entrypoints": 90,
+    "automated_test_results": 95
+  },
+  "test_quality_score": 92,
+  "test_quality_breakdown": {
+    "specification_coverage": 95,
+    "assertion_rigor": 90,
+    "environment_isolation": 90
+  },
+  "code_quality_score": 89,
+  "code_quality_breakdown": {
+    "clarity_and_naming": 88,
+    "separation_of_concerns": 90
+  },
+  "minimality_score": 86,
+  "minimality_breakdown": {
+    "no_dead_code": 80,
+    "structural_complexity": 92
+  },
+  "security_safety_score": 90,
+  "security_safety_breakdown": {
+    "authentication_gate": 90,
+    "input_validation": 90
+  },
+  "review_confidence_score": 95,
+  "weighted_components": {
+    "task_fulfillment": 18.6,
+    "functional_correctness": 21.5,
+    "executability": 14.25,
+    "test_quality": 13.8,
+    "code_quality": 8.9,
+    "minimality": 8.6,
+    "security_safety": 4.5
+  },
+  "weighted_total": 90.2,
+  "verdict": "good",
+  "key_findings": [
+    "All 10 target files present and all 7 endpoints implemented; clean app/service/repository/models/security layering.",
+    "27/27 tests pass (pytest exit 0) after the README-documented `pip install -e .`; src-layout package is not importable without that install step.",
+    "Correct core business logic: 201 vs 200 status codes, insufficient-stock 400, 300s expiration block with stock restoration, idempotency-key caching that does not double-decrement stock, and correct pagination math.",
+    "Three reproducible HTTP 500 crashes on unhandled edge cases: reserving a nonexistent SKU, adjusting a nonexistent SKU, and creating a duplicate SKU (uncaught AttributeError/IntegrityError).",
+    "Two dead imports (`select` in repository.py, `timedelta` in service.py) and 4x duplicated ReservationResponse construction.",
+    "Mutating endpoints are all gated by the X-API-Key dependency; Pydantic field constraints validate inputs."
+  ],
+  "score_rationale": {
+    "task_fulfillment": "All 10 files and all 7 endpoints are present exactly as specified (file_structure 100, api_surface 100). The final agent JSON output (files_created/entrypoint/test_command) cannot be verified from the workspace artifacts alone, so output_contract_adherence is scored conservatively at 80.",
+    "functional_correctness": "Core spec behavior is accurate: stock validation, 201/200 distinction, 300-second expiration with stock restoration, PENDING enforcement, idempotency caching without altered stock, and pagination are all correct and test-verified. Lowered by error_handling_semantics: nonexistent-SKU reservation/adjust and duplicate-SKU creation produce uncaught 500s instead of structured 4xx responses (empirically confirmed).",
+    "executability": "Dependencies in pyproject.toml are complete (fastapi, uvicorn, pydantic, sqlalchemy, pytest, pytest-asyncio, httpx). Absolute imports and app object are correct and the suite passes 100%, but the src-layout package requires the documented `pip install -e .` (no pytest pythonpath config), so it does not run from a bare checkout.",
+    "test_quality": "All 6 required scenarios covered across unit (test_service) and API (test_api) levels: happy path, insufficient stock, idempotency, expiration, auth block, pagination. Assertions inspect response data and state (stock levels, order creation), not just status codes. Isolation uses per-test temp sqlite files with teardown and original-repo restoration.",
+    "code_quality": "Clear naming and routing, clean separation of DB ops in repository.py and routing in app.py with a service layer in between. Minor: ReservationResponse construction is duplicated four times in service.py and deprecated datetime.utcnow() is used throughout.",
+    "minimality": "No over-engineering or unrequested features; layering matches the spec. Deductions for two unused imports and redundant denormalized sku_id storage alongside sku string.",
+    "security_safety": "Every mutating endpoint (skus, stock/adjust, reservations, confirm, cancel) is protected by verify_api_key; Pydantic models enforce min_length/ge/gt constraints. Minor: hardcoded API key and non-constant-time comparison, acceptable for the spec scope."
+  },
+  "instruction_failures": [
+    "Test suite does not execute from a bare checkout: tests/ import `commerce_service` which requires the README-documented `pip install -e .` (no [tool.pytest.ini_options] pythonpath/conftest fallback)."
+  ],
+  "correctness_failures": [
+    "POST /reservations with a nonexistent SKU returns HTTP 500 (service.py:49 dereferences None from get_sku_by_name).",
+    "POST /stock/adjust with a nonexistent SKU returns HTTP 500 (update_sku_stock returns None, then AdjustStockResponse accesses None.sku).",
+    "POST /skus with a duplicate SKU returns HTTP 500 (unique-constraint IntegrityError not caught)."
+  ],
+  "execution_failures": [
+    "Initial `pytest tests/` collection failed with ModuleNotFoundError: No module named 'commerce_service' until `pip install -e .` was run (per README); after install, 27 passed, 0 failed."
+  ],
+  "test_gaps": [
+    "No tests for nonexistent-SKU reservation/adjust or duplicate-SKU creation — the exact paths that 500.",
+    "No test asserting reservation 404 for an unknown reservation_id on confirm/cancel (handler exists but is unexercised).",
+    "API-level expiration path (300s block via HTTP) is not tested; expiration is only covered at the service layer by mutating created_at."
+  ],
+  "quality_notes": [
+    "ReservationResponse is constructed identically in four places in service.py; a from_orm-style helper would remove the duplication.",
+    "datetime.utcnow() is deprecated on Python 3.12 (214 deprecation warnings emitted during the run).",
+    "Repository combines ORM model definitions (SKU/Reservation/Order) and data-access in repository.py; acceptable but mixes two concerns in one module."
+  ],
+  "unnecessary_code_examples": [
+    "repository.py:3 imports `select` from sqlalchemy but only session.query is used.",
+    "service.py:1 imports `timedelta` which is never referenced in that module.",
+    "Reservation and Order store both sku_id (int) and sku (string), a redundant denormalization for this scope."
+  ],
+  "security_safety_notes": [
+    "All mutating endpoints enforce the X-API-Key dependency; GET /orders and /health are unauthenticated (acceptable for read/health).",
+    "API key is hardcoded ('test-api-key') and compared with a non-constant-time `!=` — fine for a benchmark but not production-grade.",
+    "Pydantic Field constraints (min_length, ge, gt) provide solid input-type validation against malformed payloads."
+  ],
+  "file_evidence": [
+    {"path": "src/commerce_service/app.py", "note": "7 routes; create_sku/create_reservation return 201, adjust_stock 200; verify_api_key gates all mutations; reservation 404 handling present."},
+    {"path": "src/commerce_service/service.py", "note": "Idempotency lookup before stock decrement (line 36); 300s expiration with stock restoration (lines 75-79); cancel restores stock (line 104); error_handling gap at line 49 (None deref on missing SKU)."},
+    {"path": "src/commerce_service/repository.py", "note": "Session-per-call with try/finally close; pagination offset=(page-1)*size with total count (lines 143-149); unused `select` import line 3; update_sku_stock returns None for unknown SKU (lines 69-79)."},
+    {"path": "src/commerce_service/models.py", "note": "Pydantic v2 models with Field constraints; ReservationResponse status Literal enforces the 4 valid states."},
+    {"path": "src/commerce_service/security.py", "note": "verify_api_key raises 401 on missing/invalid key; hardcoded API_KEY."},
+    {"path": "tests/test_service.py", "note": "Covers happy path, insufficient stock, idempotency (asserts stock==50), expiration (asserts EXPIRED + stock restored), cancel, pagination; per-test temp db."},
+    {"path": "tests/test_api.py", "note": "Covers auth 401, 201/200 codes, idempotency id equality, pagination totals; autouse temp_db fixture patches and restores app repository."},
+    {"path": "pyproject.toml", "note": "Declares fastapi/uvicorn/pydantic/sqlalchemy + dev extras pytest/pytest-asyncio/httpx; src-layout build, no pytest pythonpath config."}
+  ],
+  "commands_run": [
+    "find . -type f (file inventory: 10 target files confirmed)",
+    "python3 -m pytest tests/ -v (initial: 2 collection errors, ModuleNotFoundError: commerce_service)",
+    "pip install -e . -q (exit 0)",
+    "python3 -m pytest tests/ -v (27 passed, 0 failed, 214 warnings, exit 0)",
+    "python3 edge-probe via TestClient(raise_server_exceptions=False): reserve nonexistent SKU->500, adjust nonexistent SKU->500, duplicate SKU->201 then 500"
+  ],
+  "review_risk": "weighted_total (90.2) lands in the excellent numeric band, but the verdict is held at 'good' because the excellent tier requires zero functional failures and three HTTP 500 crashes on invalid input were empirically reproduced — matching the good-tier descriptor 'fully usable with minor edge cases unhandled.' Confidence is high: tests were actually executed (27/27 pass) and edge-case 500s were directly observed. The one unverifiable item is output_contract_adherence, since the agent's final JSON message is not part of the workspace artifacts."
+}
+```

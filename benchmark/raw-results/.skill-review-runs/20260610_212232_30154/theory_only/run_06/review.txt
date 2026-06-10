@@ -1,0 +1,135 @@
+Both edge cases confirmed: negative quantity reservation succeeds and *increases* stock (110), and duplicate SKU raises an uncaught `IntegrityError` (would surface as 500). Unused imports confirmed. I have enough evidence to finalize.
+
+```json
+{
+  "rubric_version": "benchmark-codegen-review-v1",
+  "score_scale": "0-100 per category",
+  "weights": {
+    "task_fulfillment": 0.20,
+    "functional_correctness": 0.25,
+    "executability": 0.15,
+    "test_quality": 0.15,
+    "code_quality": 0.10,
+    "minimality": 0.10,
+    "security_safety": 0.05
+  },
+  "task_fulfillment_score": 85,
+  "task_fulfillment_breakdown": {
+    "file_structure_compliance": 95,
+    "api_surface_coverage": 100,
+    "output_contract_adherence": 60
+  },
+  "functional_correctness_score": 86,
+  "functional_correctness_breakdown": {
+    "business_logic_accuracy": 85,
+    "expiration_and_state_rules": 92,
+    "concurrency_and_idempotency": 80,
+    "error_handling_semantics": 85
+  },
+  "executability_score": 100,
+  "executability_breakdown": {
+    "dependency_completeness": 100,
+    "imports_and_entrypoints": 100,
+    "automated_test_results": 100
+  },
+  "test_quality_score": 95,
+  "test_quality_breakdown": {
+    "specification_coverage": 98,
+    "assertion_rigor": 95,
+    "environment_isolation": 92
+  },
+  "code_quality_score": 88,
+  "code_quality_breakdown": {
+    "clarity_and_naming": 90,
+    "separation_of_concerns": 85
+  },
+  "minimality_score": 82,
+  "minimality_breakdown": {
+    "no_dead_code": 75,
+    "structural_complexity": 88
+  },
+  "security_safety_score": 83,
+  "security_safety_breakdown": {
+    "authentication_gate": 95,
+    "input_validation": 70
+  },
+  "review_confidence_score": 90,
+  "weighted_components": {
+    "task_fulfillment": 17.0,
+    "functional_correctness": 21.5,
+    "executability": 15.0,
+    "test_quality": 14.3,
+    "code_quality": 8.8,
+    "minimality": 8.2,
+    "security_safety": 4.2
+  },
+  "weighted_total": 88.9,
+  "verdict": "good",
+  "key_findings": [
+    "All 27 tests pass (16 API + 11 service) in 0.55s with no failures; suite is fully executable under Python 3.12.4 with declared deps satisfied.",
+    "All 7 specified endpoints implemented (/health, /skus, /stock/adjust, /reservations, confirm, cancel, /orders) with clean layering: security.py (auth), repository.py (DB), service.py (logic), app.py (routing), models.py (schemas).",
+    "Core domain rules correct: insufficient-stock 400, 201 on creation, 300s lazy expiration with stock restoration, PENDING enforcement on confirm/cancel, idempotency via UNIQUE key returning cached reservation without re-deducting stock.",
+    "Input-validation gap: negative quantity reservation is accepted (status 201) and INCREASES stock to 110 — no Pydantic value constraints (gt=0 / ge=0).",
+    "Duplicate SKU creation raises an uncaught sqlite3.IntegrityError (would surface as HTTP 500); not handled or tested.",
+    "Three unused imports (datetime in models.py:4, datetime in repository.py:4, Path in repository.py:5)."
+  ],
+  "score_rationale": {
+    "task_fulfillment": "All expected source/test files present and all 7 endpoints implemented (file_structure 95, api_surface 100). output_contract_adherence scored 60 because the agent's final terminal message (the required files_created/entrypoint/test_command JSON) is not part of the inspectable artifacts and cannot be verified from files alone.",
+    "functional_correctness": "Stock validation, status codes, pagination offset math, expiration+restoration, and idempotency-without-double-deduction are all correct and test-verified. Deductions for non-atomic multi-connection operations (TOCTOU between idempotency check/insert and reservation/deduct), negative-quantity acceptance, and unhandled duplicate-SKU path.",
+    "executability": "pyproject declares fastapi, pydantic, uvicorn, pytest, pytest-asyncio, httpx; imports resolve against the src layout; uvicorn entrypoint valid; 27/27 tests pass at runtime.",
+    "test_quality": "All 6 required scenarios covered (happy path, insufficient stock, idempotency, expiration, auth block, pagination) across both API and service layers. Assertions check response data, state changes (stock levels, order creation, status transitions), not just status codes. Isolation via tempfile mkstemp fixture, dependency_overrides, and teardown cleanup.",
+    "code_quality": "Clear naming and well-separated layers. Minor concern: the service layer returns (dict, http_status_code) tuples, leaking HTTP transport semantics (400/404/200) into business logic.",
+    "minimality": "No major dead code, but three unused imports and three identical reservation response models (Reservation/Confirm/Cancel) that could collapse to one. No unrequested architectural over-engineering.",
+    "security_safety": "All mutating endpoints (and /orders) gated by the X-API-Key dependency; /health open as intended. Input validation limited to type checking — missing value constraints allows negative quantity/amount abuse. API key is hardcoded in source."
+  },
+  "instruction_failures": [
+    "Cannot confirm the final agent output was exclusively the required JSON (files_created/entrypoint/test_command) — not present among inspectable artifacts; scored conservatively rather than as verified pass."
+  ],
+  "correctness_failures": [
+    "Negative quantity in POST /reservations is accepted and increases available stock (probe: quantity=-10 -> 201, stock 100->110).",
+    "Duplicate SKU creation raises uncaught sqlite3.IntegrityError (would return HTTP 500 rather than a structured 400/409).",
+    "adjust_stock on a nonexistent SKU silently no-ops and returns available_stock=0 instead of an error.",
+    "Reservation creation deducts stock in a separate connection/transaction from the insert and idempotency check is not atomic — vulnerable to races under real concurrency (single-threaded tests do not exercise this)."
+  ],
+  "execution_failures": [],
+  "test_gaps": [
+    "No test for negative/zero quantity or negative initial_stock inputs (the exact case that is mishandled).",
+    "No test for duplicate SKU creation.",
+    "No test for reserving/confirming a non-existent SKU or confirming a non-existent reservation id (404 path untested).",
+    "Expiration restoration tested only via confirm path; cancel does not re-check expiration (no test either way)."
+  ],
+  "quality_notes": [
+    "Service layer returns HTTP status codes (200/400/404) in tuples, coupling business logic to transport concerns.",
+    "ReservationResponse, ConfirmReservationResponse, and CancelReservationResponse are structurally identical and could be unified.",
+    "Missing-key requests return 403 (FastAPI APIKeyHeader default) while invalid keys return 401; rubric framing expects 401 for auth failures — behavior is reasonable but inconsistent."
+  ],
+  "unnecessary_code_examples": [
+    "models.py:4 `from datetime import datetime` — unused (all timestamps are str).",
+    "repository.py:4 `from datetime import datetime` — unused.",
+    "repository.py:5 `from pathlib import Path` — unused.",
+    "repository.get_order_by_id is used only by tests, not by application code paths."
+  ],
+  "security_safety_notes": [
+    "All mutating endpoints (POST /skus, /stock/adjust, /reservations, confirm, cancel) and GET /orders enforce verify_api_key; /health is intentionally unprotected.",
+    "Pydantic models validate types only — no value constraints (e.g., Field(gt=0)) permits negative quantity/amount, enabling stock inflation.",
+    "VALID_API_KEY is hardcoded (security.py:8); acceptable for a demo but not for production secrets handling."
+  ],
+  "file_evidence": [
+    {"path": "src/commerce_service/app.py", "note": "All 7 routes defined; verify_api_key dependency on every mutating route and /orders; 201 status_code on /skus and /reservations."},
+    {"path": "src/commerce_service/service.py", "note": "300s expiration check (line 54) with EXPIRED+restore_stock; PENDING enforcement on confirm/cancel; idempotency returns cached reservation at 201 without re-deduction (lines 21-29)."},
+    {"path": "src/commerce_service/repository.py", "note": "SQLite layer with UNIQUE idempotency_key constraint; create_reservation/deduct_stock in separate transactions; unused datetime/Path imports at lines 4-5."},
+    {"path": "src/commerce_service/security.py", "note": "APIKeyHeader gate; invalid key -> 401; hardcoded VALID_API_KEY."},
+    {"path": "src/commerce_service/models.py", "note": "Pydantic request/response models with type-only validation, no value bounds; unused datetime import line 4."},
+    {"path": "tests/test_api.py", "note": "16 endpoint tests incl. expiration (manually backdates created_at to 301s), idempotency, pagination 25->10/10/5, auth (403/401)."},
+    {"path": "tests/test_service.py", "note": "11 service tests asserting state (stock restoration, order creation, EXPIRED status); temp_db isolation."}
+  ],
+  "commands_run": [
+    "find . -type f (file inventory)",
+    "python3 --version (3.12.4) and dep import check (fastapi, pydantic, httpx, pytest -> ok)",
+    "python3 -m pytest tests/ -v (27 passed in 0.55s)",
+    "python3 inline probe: negative-qty reservation -> 201, stock 100->110; duplicate SKU -> IntegrityError",
+    "grep -n datetime/Path in models.py & repository.py (confirmed unused imports)"
+  ],
+  "review_risk": "Low. Full test suite executed and passed (27/27); edge-case claims (negative quantity, duplicate SKU, unused imports) were directly verified by runtime probe and grep. Main residual uncertainty is output_contract_adherence, which depends on the agent's final terminal message that is not part of the inspectable file artifacts."
+}
+```

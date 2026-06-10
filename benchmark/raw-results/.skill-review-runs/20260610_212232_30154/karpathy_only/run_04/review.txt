@@ -1,0 +1,142 @@
+Evidence gathered. Both root causes confirmed: (1) `assert 150 == 100` — a real application bug where `cancel`/`expire` call `adjust_stock(+quantity)` to restore stock that was never physically deducted at reservation time (reservations only reduce *computed availability* via the PENDING sum), inflating inventory; (2) `test_service.py:109` is broken garbage code; and (3) all `test_api.py` DB-touching tests fail because the test fixture's in-memory SQLite engine omits `check_same_thread=False`/`StaticPool`, so async endpoints run on a different thread than the connection was created on.
+
+```json
+{
+  "rubric_version": "benchmark-codegen-review-v1",
+  "score_scale": "0-100 per category",
+  "weights": {
+    "task_fulfillment": 0.20,
+    "functional_correctness": 0.25,
+    "executability": 0.15,
+    "test_quality": 0.15,
+    "code_quality": 0.10,
+    "minimality": 0.10,
+    "security_safety": 0.05
+  },
+  "task_fulfillment_score": 90,
+  "task_fulfillment_breakdown": {
+    "file_structure_compliance": 100,
+    "api_surface_coverage": 100,
+    "output_contract_adherence": 70
+  },
+  "functional_correctness_score": 74,
+  "functional_correctness_breakdown": {
+    "business_logic_accuracy": 62,
+    "expiration_and_state_rules": 55,
+    "concurrency_and_idempotency": 90,
+    "error_handling_semantics": 90
+  },
+  "executability_score": 83,
+  "executability_breakdown": {
+    "dependency_completeness": 100,
+    "imports_and_entrypoints": 95,
+    "automated_test_results": 54
+  },
+  "test_quality_score": 68,
+  "test_quality_breakdown": {
+    "specification_coverage": 90,
+    "assertion_rigor": 70,
+    "environment_isolation": 45
+  },
+  "code_quality_score": 89,
+  "code_quality_breakdown": {
+    "clarity_and_naming": 88,
+    "separation_of_concerns": 90
+  },
+  "minimality_score": 77,
+  "minimality_breakdown": {
+    "no_dead_code": 65,
+    "structural_complexity": 88
+  },
+  "security_safety_score": 93,
+  "security_safety_breakdown": {
+    "authentication_gate": 100,
+    "input_validation": 85
+  },
+  "review_confidence_score": 93,
+  "weighted_components": {
+    "task_fulfillment": 18.0,
+    "functional_correctness": 18.5,
+    "executability": 12.45,
+    "test_quality": 10.2,
+    "code_quality": 8.9,
+    "minimality": 7.7,
+    "security_safety": 4.65
+  },
+  "weighted_total": 80.4,
+  "verdict": "mixed",
+  "key_findings": [
+    "Test suite does NOT pass on a fresh run: 13 failed, 15 passed (28 total) via `python3 -m pytest`.",
+    "Real application bug: cancel_reservation and expired-confirm call repo.adjust_stock(+quantity) to 'restore' stock, but reservations never deduct the physical stock column (availability is computed as stock minus PENDING sum). This double-counts and inflates inventory on every cancel/expire — proven by test_service.py:133 failing with `assert 150 == 100`.",
+    "All 10 DB-touching test_api.py tests fail with sqlalchemy ProgrammingError: the test fixture's in-memory engine omits check_same_thread=False / StaticPool, so async endpoints execute on a worker thread that cannot use the connection created in the test thread.",
+    "Broken/garbage test line at test_service.py:109 (`repo.session.query(repo.session.query.from_statement(...))`) raises AttributeError, failing test_confirm_reservation_happy_path after its real assertions already passed.",
+    "Core happy-path flow (create SKU -> reserve -> confirm -> order, with idempotency and pagination) is logically correct at the service layer; the bulk of failures stem from a test-harness misconfiguration plus the cancel/expire stock bug.",
+    "All 7 endpoints and all requested files are present; mutating endpoints are uniformly auth-gated.",
+    "Output-contract adherence (final agent JSON with files_created/entrypoint/test_command) is not observable from the workspace artifacts and is scored with uncertainty."
+  ],
+  "score_rationale": {
+    "task_fulfillment": "All 7 endpoints implemented (app.py:36-97) and the full file layout is present (src/commerce_service/* and tests/*). Marked down only on output_contract_adherence, which cannot be verified from the delivered artifacts (no captured final agent message).",
+    "functional_correctness": "Idempotency (service.py:34-45) and error semantics (400/401/404/409 with structured details) are correct, and pagination math is right. However the inventory accounting is wrong: reservations reduce only computed availability while cancel/expire add physical stock back (service.py:84,118; repository.py:31-37), inflating stock — a confirmed business-logic defect.",
+    "executability": "Dependencies are complete (pyproject.toml:10-22) and imports/entrypoint are valid (app boots, uvicorn target correct). But automated_test_results is low: only 15/28 tests pass on a clean run.",
+    "test_quality": "All six required scenarios are covered (happy path, insufficient stock, idempotency, expiration, auth block, pagination) and assertions inspect data models/state, not just status codes. Isolation is poor: the test_api fixture is misconfigured for SQLite threading (every API test errors), and test_api.py:193-208 spins up a rogue second in-memory engine disconnected from the app's session.",
+    "code_quality": "Clear naming and a clean three-layer split — routing in app.py, business rules in service.py, persistence in repository.py — with readable control flow.",
+    "minimality": "Architecture is appropriately scoped with no over-engineering, but there is dead code: unused imports (models.py:2 Optional, models.py:4 Float; security.py:1 Depends) and a non-functional query expression at test_service.py:109.",
+    "security_safety": "Every mutating endpoint depends on verify_api_key (app.py:41-96) returning 401 on missing/invalid keys; Pydantic request models enforce field types. Minor gap: no value-level validation (e.g. non-negative quantity/stock)."
+  },
+  "instruction_failures": [
+    "Output-contract JSON (files_created/entrypoint/test_command) could not be confirmed from the workspace; not verifiable as 'exclusively the requested JSON format'."
+  ],
+  "correctness_failures": [
+    "Inventory double-counting: cancel_reservation (service.py:117-118) and expired confirm (service.py:83-84) add quantity back to physical stock that was never deducted, raising stock above its true value (observed 150 vs expected 100).",
+    "Physical stock column is never decremented on confirm/order; the model relies entirely on PENDING-sum availability, which is internally inconsistent with the explicit stock-restoration calls."
+  ],
+  "execution_failures": [
+    "tests/test_api.py: all 10 endpoint-exercising tests fail with sqlalchemy.exc.ProgrammingError 'SQLite objects created in a thread can only be used in that same thread' — fixture engine (test_api.py:14) lacks connect_args={'check_same_thread': False} and StaticPool.",
+    "tests/test_service.py:109 raises AttributeError ('function' object has no attribute 'from_statement') — invalid query construction.",
+    "tests/test_service.py:133 fails assert 150 == 100 (stock bug).",
+    "tests/test_service.py:166-167 confirm-expired stock assertion fails for the same stock-restoration bug.",
+    "Aggregate: 13 failed, 15 passed."
+  ],
+  "test_gaps": [
+    "No negative/invalid-quantity or negative-stock validation tests.",
+    "test_api.py cancel test (line 218) only asserts status == CANCELLED and never checks stock, so it masks the inventory double-counting bug at the API layer.",
+    "test_api.py confirm-expired test creates an unrelated second engine instead of mutating the app's DB, so even absent the threading bug it would not exercise the intended path.",
+    "No test asserts the 201-vs-200 status distinction at the service layer (only HTTP layer, which is failing)."
+  ],
+  "quality_notes": [
+    "Clean separation of concerns: repository.py owns all SQLAlchemy access, service.py owns rules, app.py owns routing.",
+    "Uses deprecated @app.on_event('startup') (app.py:17) instead of lifespan handlers; functional but emits deprecation warnings.",
+    "ReservationResponse construction is duplicated verbatim 4 times in service.py; a helper would reduce repetition."
+  ],
+  "unnecessary_code_examples": [
+    "models.py:2 'from typing import Optional' — unused.",
+    "models.py:4 'Float' imported from sqlalchemy — unused.",
+    "security.py:1 'Depends' imported — unused.",
+    "tests/test_service.py:109 dead/broken statement performing a meaningless nested query."
+  ],
+  "security_safety_notes": [
+    "All mutating endpoints (/skus, /stock/adjust, /reservations, confirm, cancel) and /orders require X-API-Key via verify_api_key; /health is intentionally open.",
+    "API key compared with plain != (security.py:8) rather than a constant-time compare — minor timing-side-channel consideration only.",
+    "Pydantic v2 models enforce field types on all request bodies; no value-range validation."
+  ],
+  "file_evidence": [
+    {"path": "src/commerce_service/service.py", "note": "Lines 117-118 and 83-84 add stock back on cancel/expire though it was never deducted — root inventory bug."},
+    {"path": "src/commerce_service/repository.py", "note": "get_available_stock (39-50) computes stock minus PENDING; create_reservation (52-61) never decrements stock — inconsistent with restoration logic."},
+    {"path": "src/commerce_service/app.py", "note": "All 7 endpoints present; mutating ones gated by verify_api_key; correct 201 vs 200 status codes."},
+    {"path": "src/commerce_service/security.py", "note": "X-API-Key header check returns 401 on missing/invalid; 'Depends' import unused."},
+    {"path": "tests/test_api.py", "note": "Fixture engine line 14 lacks check_same_thread/StaticPool -> all 10 DB tests error; lines 193-208 create a disconnected engine."},
+    {"path": "tests/test_service.py", "note": "Line 109 broken query (AttributeError); lines 133 & 166 fail on the stock bug."},
+    {"path": "pyproject.toml", "note": "Complete deps incl. fastapi, uvicorn, pydantic, sqlalchemy, pytest, pytest-asyncio, httpx."},
+    {"path": "src/commerce_service/models.py", "note": "Pydantic + SQLAlchemy models defined; unused imports Optional (line 2) and Float (line 4)."}
+  ],
+  "commands_run": [
+    "find . -type f ... | sort",
+    "python3 -c 'import fastapi, sqlalchemy, pydantic, httpx, pytest'",
+    "pip install -e '.[dev]' -q",
+    "python3 -m pytest -v",
+    "python3 -m pytest --no-header -q --tb=no",
+    "python3 -m pytest tests/test_service.py::test_cancel_reservation_restores_stock tests/test_service.py::test_confirm_reservation_happy_path -q --tb=line"
+  ],
+  "review_risk": "Low-to-moderate. Test results are directly observed (13 failed / 15 passed) with cited failure lines. The inventory double-counting defect and the test-fixture threading misconfiguration are confirmed by tracebacks. The only unverifiable rubric item is output_contract_adherence (the agent's final JSON message is not part of the workspace), which is scored with explicit uncertainty. Verdict is 'mixed' because, despite a weighted_total of 80.4, the deliverable requires immediate manual code fixes (test fixture threading, stock-restoration logic, and a broken test line) before the suite passes and inventory behaves correctly."
+}
+```

@@ -1,0 +1,143 @@
+Confirmed dead code: `SKUResponse`/`StockAdjustmentResponse` models are never used (app builds dicts inline), and `Optional` is imported but unused in both `models.py` and `service.py`.
+
+```json
+{
+  "rubric_version": "benchmark-codegen-review-v1",
+  "score_scale": "0-100 per category",
+  "weights": {
+    "task_fulfillment": 0.20,
+    "functional_correctness": 0.25,
+    "executability": 0.15,
+    "test_quality": 0.15,
+    "code_quality": 0.10,
+    "minimality": 0.10,
+    "security_safety": 0.05
+  },
+  "task_fulfillment_score": 85,
+  "task_fulfillment_breakdown": {
+    "file_structure_compliance": 95,
+    "api_surface_coverage": 100,
+    "output_contract_adherence": 60
+  },
+  "functional_correctness_score": 90,
+  "functional_correctness_breakdown": {
+    "business_logic_accuracy": 95,
+    "expiration_and_state_rules": 95,
+    "concurrency_and_idempotency": 90,
+    "error_handling_semantics": 80
+  },
+  "executability_score": 67,
+  "executability_breakdown": {
+    "dependency_completeness": 95,
+    "imports_and_entrypoints": 95,
+    "automated_test_results": 12
+  },
+  "test_quality_score": 63,
+  "test_quality_breakdown": {
+    "specification_coverage": 90,
+    "assertion_rigor": 85,
+    "environment_isolation": 15
+  },
+  "code_quality_score": 90,
+  "code_quality_breakdown": {
+    "clarity_and_naming": 90,
+    "separation_of_concerns": 90
+  },
+  "minimality_score": 78,
+  "minimality_breakdown": {
+    "no_dead_code": 70,
+    "structural_complexity": 85
+  },
+  "security_safety_score": 85,
+  "security_safety_breakdown": {
+    "authentication_gate": 95,
+    "input_validation": 75
+  },
+  "review_confidence_score": 92,
+  "weighted_components": {
+    "task_fulfillment": 17.0,
+    "functional_correctness": 22.5,
+    "executability": 10.05,
+    "test_quality": 9.45,
+    "code_quality": 9.0,
+    "minimality": 7.8,
+    "security_safety": 4.25
+  },
+  "weighted_total": 80.1,
+  "verdict": "good",
+  "key_findings": [
+    "Application logic is fully correct under manual TestClient verification: every endpoint and business rule (201/200 codes, stock validation, idempotency, 300s expiration with restoration, cancel restoration, PENDING enforcement, pagination) behaves to spec.",
+    "The delivered test suite does NOT pass: pytest reports 3 passed / 10 failed / 11 errors out of 24. All failures are caused by defective test fixtures, not by the service code.",
+    "tests/test_service.py:20 raises AttributeError ('sessionmaker' type object has no attribute 'kw'), aborting all 11 service-layer tests at fixture setup.",
+    "tests/test_api.py shares a single in-memory SQLite connection across threads without StaticPool/check_same_thread=False, causing sqlite3.ProgrammingError; the app's broad 'except Exception' then masks it as HTTP 400, failing 10 of 13 API tests.",
+    "All 7 endpoints and all 10 target files are present; layering (app/service/repository) is clean.",
+    "Dead code present: unused SKUResponse and StockAdjustmentResponse Pydantic models and unused Optional imports."
+  ],
+  "score_rationale": {
+    "task_fulfillment": "All 10 target files present and all 7 endpoints implemented (/health, /skus, /stock/adjust, /reservations, confirm, cancel, /orders). output_contract_adherence is scored moderate (60) because the agent's final JSON message (files_created/entrypoint/test_command) is not present in the workspace artifact and cannot be verified; the extra README.md is the only non-requested file.",
+    "functional_correctness": "Scored from direct runtime verification (manual TestClient with a correct connection pool, plus direct service calls). Confirmed: insufficient-stock and confirm-after-expiry produce 400; idempotent retry returns the same reservation id and does not re-decrement stock (110->80, not ->50); expiry sets EXPIRED and restores stock (60->100); cancel restores stock; not-pending returns 400; pagination math is correct. Deduction in error_handling: a missing API key returns FastAPI's default 403 rather than 401, and endpoints wrap all errors in a broad except.",
+    "executability": "Dependencies are fully declared and importable; the app spins up and serves requests correctly (manual smoke test passed). However automated_test_results is near-zero: the mandated `pytest` run passes only 3/24 due to broken fixtures, dragging the category down.",
+    "test_quality": "Tests are written for all six required scenarios with rigorous assertions on data and state (stock levels, statuses, ids). But environment_isolation is fundamentally broken: the service-test fixture throws at setup, the api-test fixture is not thread-safe, and app.dependency_overrides is never cleared between tests. The suite cannot actually execute as delivered.",
+    "code_quality": "Clear naming, readable routing, and clean separation: repository.py isolates all DB queries, service.py holds business logic, app.py holds routing/HTTP mapping.",
+    "minimality": "Architecture (repository+service) is appropriate and not over-engineered. Points deducted for dead code: two unused response models and unused Optional imports in models.py and service.py.",
+    "security_safety": "All mutating endpoints (/skus, /stock/adjust, /reservations, confirm, cancel) are gated by the X-API-Key dependency; read endpoints (/health, /orders) are intentionally open. Pydantic enforces types, but there are no value constraints (e.g., negative quantity/initial_stock are accepted)."
+  },
+  "instruction_failures": [
+    "Agent final-output JSON contract (files_created/entrypoint/test_command) is not present in the delivered workspace and could not be verified.",
+    "An extra README.md was produced beyond the 10 specified target files."
+  ],
+  "correctness_failures": [
+    "Missing API key header returns HTTP 403 (FastAPI APIKeyHeader default) instead of the 401 implied for auth failures; only an explicitly invalid key returns 401.",
+    "No value-level validation: negative quantity or negative initial_stock would be accepted by the Pydantic models."
+  ],
+  "execution_failures": [
+    "pytest result: 10 failed, 3 passed, 11 errors (24 total) — only test_health_check, test_create_sku_unauthorized, test_create_sku_invalid_api_key pass.",
+    "tests/test_service.py:20 AttributeError: type object 'sessionmaker' has no attribute 'kw' — errors all 11 service tests at fixture setup.",
+    "tests/test_api.py: sqlite3.ProgrammingError 'SQLite objects created in a thread can only be used in that same thread' from sharing one in-memory connection across threads without StaticPool; surfaces as PendingRollbackError / HTTP 400 assertion failures."
+  ],
+  "test_gaps": [
+    "Despite covering all six scenarios on paper, the suite does not execute, so it provides no real regression protection as delivered.",
+    "No teardown clearing app.dependency_overrides between api tests; relies on each fixture re-setting it.",
+    "No test for the cancel-then-confirm / not-pending-cancel state via the HTTP layer beyond the service layer.",
+    "No negative/zero-quantity input-rejection tests."
+  ],
+  "quality_notes": [
+    "Clean three-layer separation (app -> service -> repository); repository fully encapsulates SQLAlchemy queries.",
+    "Endpoints use a broad 'except Exception -> 400' in create_sku/adjust_stock which can mask infrastructure errors (this is precisely what hid the test fixture's threading error as a 400).",
+    "Datetime handling stores naive UTC and re-applies tzinfo on read; functional but slightly fragile.",
+    "@app.on_event('startup') is deprecated (DeprecationWarning emitted); lifespan handlers are the current idiom."
+  ],
+  "unnecessary_code_examples": [
+    "models.py:44 SKUResponse — defined but never referenced (app builds the dict inline).",
+    "models.py:55 StockAdjustmentResponse — defined but never referenced.",
+    "models.py:2 and service.py:2 `from typing import Optional` — imported but unused.",
+    "repository.py OrderRepository.get_by_id — defined but never called.",
+    "README.md — extra deliverable beyond the specified file set."
+  ],
+  "security_safety_notes": [
+    "All mutating endpoints enforce verify_api_key via Depends; GET /orders and /health are intentionally unauthenticated per spec.",
+    "Invalid API key correctly yields 401; missing key yields 403 (framework default).",
+    "Pydantic validates field types but applies no constraints (no gt=0 on quantity/amount/initial_stock), allowing semantically invalid negative values."
+  ],
+  "file_evidence": [
+    {"path": "src/commerce_service/app.py", "note": "All 7 endpoints present; correct 201 on /skus and /reservations, 200 on confirm/cancel; broad except->400 masks infra errors."},
+    {"path": "src/commerce_service/service.py", "note": "Correct business logic: idempotency short-circuit, insufficient-stock guard, >300s expiry with EXPIRED+restore, cancel restore, PENDING-only transitions."},
+    {"path": "src/commerce_service/repository.py", "note": "DB access fully isolated here; clean SKU/Reservation/Order repositories with pagination offset math."},
+    {"path": "src/commerce_service/security.py", "note": "APIKeyHeader dependency; invalid key -> 401. Missing key -> framework default 403."},
+    {"path": "src/commerce_service/models.py", "note": "ORM + Pydantic models; SKUResponse/StockAdjustmentResponse and Optional import are unused."},
+    {"path": "tests/test_api.py", "note": "Fixture line 13-25 uses non-thread-safe in-memory SQLite (no StaticPool/check_same_thread), causing 10 cross-thread failures; override never cleared."},
+    {"path": "tests/test_service.py", "note": "Fixture line 20 calls get_session_factory(...).__class__.kw['bind'] -> AttributeError, erroring all 11 service tests at setup."},
+    {"path": "pyproject.toml", "note": "Declares fastapi, uvicorn, pydantic, sqlalchemy and dev deps pytest/pytest-asyncio/httpx; asyncio_mode=auto."},
+    {"path": "tests/__init__.py", "note": "Empty (1 line); package marker only."}
+  ],
+  "commands_run": [
+    "find . -type f | sort",
+    "python3 --version; version checks for fastapi/sqlalchemy/pydantic/httpx/pytest/pytest_asyncio",
+    "pip install -e '.[dev]' --quiet",
+    "python3 -m pytest tests/ -v  (result: 10 failed, 3 passed, 11 errors)",
+    "Manual TestClient smoke test with StaticPool override (health/create/adjust/reserve/idempotent/insufficient/confirm/orders/not-pending)",
+    "Manual service-level test of cancel + expiry stock restoration and status transitions"
+  ],
+  "review_risk": "Low. Findings are grounded in the mandated pytest execution (3/24 passing) plus independent runtime verification that isolates the failures to the test fixtures rather than the service. The only unverifiable item is the agent's final JSON output contract, which is not present in the workspace; output_contract_adherence is scored conservatively to reflect that uncertainty."
+}
+```

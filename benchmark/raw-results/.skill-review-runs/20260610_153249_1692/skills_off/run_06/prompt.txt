@@ -1,0 +1,156 @@
+You are evaluating generated code from an automated software engineering experiment.
+Your analysis must be strictly objective, factual, and independent of any specific coding philosophy.
+
+Evaluation Procedure:
+1. List all project files in the current working directory.
+2. Read the contents of the core implementation and test files.
+3. MANDATORY: Execute the test command specified in the project (e.g., `pytest`) using your available environment tools. You must base your executability and correctness scores on actual runtime test results.
+4. Do not modify any files.
+
+Calculate scores using a 0-100 integer scale for each breakdown item. The top-level category score is the mathematically rounded average of its breakdown items. Compute the final `weighted_total` using the exact weights provided below.
+
+Weighted Total Formula:
+weighted_total =
+  task_fulfillment_score * 0.20 +
+  functional_correctness_score * 0.25 +
+  executability_score * 0.15 +
+  test_quality_score * 0.15 +
+  code_quality_score * 0.10 +
+  minimality_score * 0.10 +
+  security_safety_score * 0.05
+
+Round `weighted_total` to exactly one decimal place. Category weights sum to 1.00.
+
+Verdict Thresholds:
+- excellent: weighted_total 90.0-100.0 and zero functional failures.
+- good: weighted_total 75.0-89.9 and the service is fully usable with minor edge cases unhandled.
+- mixed: weighted_total 55.0-74.9 or requires immediate manual code fixes to function properly.
+- poor: weighted_total 30.0-54.9 with critical specification omissions or structural defects.
+- failed: weighted_total 0.0-29.9, syntactic/runtime collapse, or missing core files.
+
+Objective Evaluation Rubric:
+
+- task_fulfillment_score (Weight: 0.20):
+  - file_structure_compliance: Verifies presence of all 10 requested target files exactly as specified.
+  - api_surface_coverage: Verifies implementation of all 7 specified endpoints (/health, /skus, /stock/adjust, /reservations, confirm, cancel, /orders).
+  - output_contract_adherence: Verifies if the final agent output was exclusively the requested JSON format containing files_created, entrypoint, and test_command.
+
+- functional_correctness_score (Weight: 0.25):
+  - business_logic_accuracy: Evaluates compliance with exact specifications (e.g., stock validation rules, status 201 vs 200, pagination calculation).
+  - expiration_and_state_rules: Validates if the 300-second reservation expiration block, stock restoration on expiration/cancellation, and PENDING status enforcement are implemented correctly.
+  - concurrency_and_idempotency: Evaluates whether duplicate idempotency_key requests return cached data correctly without altering stock levels.
+  - error_handling_semantics: Verifies appropriate HTTP exception status codes (400 for errors, 401 for auth failures) and structured error messages.
+
+- executability_score (Weight: 0.15):
+  - dependency_completeness: Validates pyproject.toml package declarations (FastAPI, Pydantic, pytest, etc.).
+  - imports_and_entrypoints: Verifies absolute/relative imports match the directory structure and the app is ready to spin up.
+  - automated_test_results: Checks if the test execution suite successfully executes and passes 100% of its runs.
+
+- test_quality_score (Weight: 0.15):
+  - specification_coverage: Checks if tests exist for all 6 required criteria (happy path, insufficient stock, idempotency, expiration, auth block, pagination).
+  - assertion_rigor: Verifies tests make strict assertions on actual response data models and state modifications, not just response status codes.
+  - environment_isolation: Verifies database sessions or mock instances are properly teardown/isolated between tests.
+
+- code_quality_score (Weight: 0.10):
+  - clarity_and_naming: Evaluates readability of naming conventions, routing structures, and clear control flows.
+  - separation_of_concerns: Verifies complete isolation of database operations inside `repository.py` and application routing inside `app.py`.
+
+- minimality_score (Weight: 0.10):
+  - no_dead_code: Checks for completely unused imports, duplicate functions, or unreachable conditional branches.
+  - structural_complexity: Deducts points if unnecessary software architectures, patterns, or unrequested features outside the specification are present.
+
+- security_safety_score (Weight: 0.05):
+  - authentication_gate: Verifies all mutating endpoints are strictly protected by the API-key dependency checker.
+  - input_validation: Ensures Pydantic models strictly validate payload types to avoid malicious ambient inputs.
+
+- review_confidence_score (Meta score, excluded from weighted_total):
+  - evidence_grounding: Scores depth based on log outputs, specific line citations, and test command execution verification.
+
+Return JSON ONLY matching this exact schema:
+{
+  "rubric_version": "benchmark-codegen-review-v1",
+  "score_scale": "0-100 per category",
+  "weights": {
+    "task_fulfillment": 0.20,
+    "functional_correctness": 0.25,
+    "executability": 0.15,
+    "test_quality": 0.15,
+    "code_quality": 0.10,
+    "minimality": 0.10,
+    "security_safety": 0.05
+  },
+  "task_fulfillment_score": 0,
+  "task_fulfillment_breakdown": {
+    "file_structure_compliance": 0,
+    "api_surface_coverage": 0,
+    "output_contract_adherence": 0
+  },
+  "functional_correctness_score": 0,
+  "functional_correctness_breakdown": {
+    "business_logic_accuracy": 0,
+    "expiration_and_state_rules": 0,
+    "concurrency_and_idempotency": 0,
+    "error_handling_semantics": 0
+  },
+  "executability_score": 0,
+  "executability_breakdown": {
+    "dependency_completeness": 0,
+    "imports_and_entrypoints": 0,
+    "automated_test_results": 0
+  },
+  "test_quality_score": 0,
+  "test_quality_breakdown": {
+    "specification_coverage": 0,
+    "assertion_rigor": 0,
+    "environment_isolation": 0
+  },
+  "code_quality_score": 0,
+  "code_quality_breakdown": {
+    "clarity_and_naming": 0,
+    "separation_of_concerns": 0
+  },
+  "minimality_score": 0,
+  "minimality_breakdown": {
+    "no_dead_code": 0,
+    "structural_complexity": 0
+  },
+  "security_safety_score": 0,
+  "security_safety_breakdown": {
+    "authentication_gate": 0,
+    "input_validation": 0
+  },
+  "review_confidence_score": 0,
+  "weighted_components": {
+    "task_fulfillment": 0.0,
+    "functional_correctness": 0.0,
+    "executability": 0.0,
+    "test_quality": 0.0,
+    "code_quality": 0.0,
+    "minimality": 0.0,
+    "security_safety": 0.0
+  },
+  "weighted_total": 0.0,
+  "verdict": "excellent|good|mixed|poor|failed",
+  "key_findings": [""],
+  "score_rationale": {
+    "task_fulfillment": "",
+    "functional_correctness": "",
+    "executability": "",
+    "test_quality": "",
+    "code_quality": "",
+    "minimality": "",
+    "security_safety": ""
+  },
+  "instruction_failures": [""],
+  "correctness_failures": [""],
+  "execution_failures": [""],
+  "test_gaps": [""],
+  "quality_notes": [""],
+  "unnecessary_code_examples": [""],
+  "security_safety_notes": [""],
+  "file_evidence": [
+    {"path": "", "note": ""}
+  ],
+  "commands_run": [""],
+  "review_risk": ""
+}

@@ -1,0 +1,135 @@
+```json
+{
+  "rubric_version": "benchmark-codegen-review-v1",
+  "score_scale": "0-100 per category",
+  "weights": {
+    "task_fulfillment": 0.20,
+    "functional_correctness": 0.25,
+    "executability": 0.15,
+    "test_quality": 0.15,
+    "code_quality": 0.10,
+    "minimality": 0.10,
+    "security_safety": 0.05
+  },
+  "task_fulfillment_score": 83,
+  "task_fulfillment_breakdown": {
+    "file_structure_compliance": 90,
+    "api_surface_coverage": 100,
+    "output_contract_adherence": 60
+  },
+  "functional_correctness_score": 48,
+  "functional_correctness_breakdown": {
+    "business_logic_accuracy": 48,
+    "expiration_and_state_rules": 45,
+    "concurrency_and_idempotency": 45,
+    "error_handling_semantics": 55
+  },
+  "executability_score": 52,
+  "executability_breakdown": {
+    "dependency_completeness": 95,
+    "imports_and_entrypoints": 50,
+    "automated_test_results": 12
+  },
+  "test_quality_score": 72,
+  "test_quality_breakdown": {
+    "specification_coverage": 95,
+    "assertion_rigor": 90,
+    "environment_isolation": 30
+  },
+  "code_quality_score": 85,
+  "code_quality_breakdown": {
+    "clarity_and_naming": 85,
+    "separation_of_concerns": 85
+  },
+  "minimality_score": 83,
+  "minimality_breakdown": {
+    "no_dead_code": 80,
+    "structural_complexity": 85
+  },
+  "security_safety_score": 81,
+  "security_safety_breakdown": {
+    "authentication_gate": 90,
+    "input_validation": 72
+  },
+  "review_confidence_score": 93,
+  "weighted_components": {
+    "task_fulfillment": 16.6,
+    "functional_correctness": 12.0,
+    "executability": 7.8,
+    "test_quality": 10.8,
+    "code_quality": 8.5,
+    "minimality": 8.3,
+    "security_safety": 4.05
+  },
+  "weighted_total": 68.1,
+  "verdict": "mixed",
+  "key_findings": [
+    "FATAL RUNTIME DEFECT: init_db() opens a ':memory:' SQLite connection, creates tables, then closes it (commerce_service/__init__.py:7-41). Closing destroys the in-memory database. The repository (repository.py:7-12) opens a SEPARATE thread-local ':memory:' connection, which is a fresh empty DB with no tables. Every DB-touching endpoint raises sqlite3.OperationalError: no such table.",
+    "Test execution result: 21 failed, 3 passed (12.5% pass rate). Only health, no_token, and invalid_token pass because they never query the database.",
+    "All 7 specified endpoints are present (/health, /skus, /stock/adjust, /reservations, /reservations/{id}/confirm, /reservations/{id}/cancel, /orders) and routing/business logic is correctly shaped on paper.",
+    "Test isolation is broken at the root: the setup_db fixture patches os.environ['DB_PATH'] AFTER the module-level DB_PATH constant was already evaluated at import (__init__.py:5), so the patch is a no-op; combined with the ':memory:' close-on-init bug, no fixture can ever supply working tables.",
+    "Spec-level design is largely correct (300s expiry, stock restore on cancel/expire, PENDING enforcement, idempotency cache, (page-1)*size pagination), but none of it executes successfully at runtime."
+  ],
+  "score_rationale": {
+    "task_fulfillment": "All 7 endpoints implemented and file layout (app/models/repository/security/service/__main__ + tests + pyproject) is complete and well-organized. Lowered by inability to verify the final agent JSON output contract (files_created/entrypoint/test_command) — no agent message is available in the workspace, only artifacts.",
+    "functional_correctness": "Business rules are correctly expressed in source (insufficient-stock 400, 201-vs-200 codes, stock decrement/restore, expiry block, idempotency lookup), but the database lifecycle bug means the service is non-functional at runtime: 21/24 tests fail with 'no such table'. Score reflects correct intent severely undercut by zero working data-path behavior.",
+    "executability": "Dependencies are fully and pinned-correctly declared (fastapi/uvicorn/pydantic + dev: pytest/pytest-asyncio/httpx). The package imports and the ASGI app instantiates, but the automated suite passes only 3 of 24 tests, and a real `python -m commerce_service` run would also fail on every DB operation.",
+    "test_quality": "Tests cover all 6 required scenarios (happy path, insufficient stock, idempotency, expiration via time.time mock, auth block, pagination) with rigorous assertions on response bodies and persisted state (stock levels, reservation status). Heavily penalized because environment isolation is fundamentally broken — the DB_PATH patch never takes effect and ':memory:' tables do not survive init_db, which is the direct cause of the mass failure.",
+    "code_quality": "Clear naming, conventional FastAPI routing, and clean separation: repository.py isolates all SQL, service.py holds business logic, app.py holds routing, security.py holds the auth dependency. Minor smell: DB_PATH/init_db living in __init__.py contributes to the import-time-constant bug.",
+    "minimality": "No unrequested architecture or speculative abstraction; threading.local connection caching is reasonable. Minor dead code: models.py imports Optional and datetime that are never used.",
+    "security_safety": "All mutating endpoints (POST /skus, /stock/adjust, /reservations, confirm, cancel) are gated by the verify_api_token Header dependency returning 401; GET endpoints correctly unprotected. Input validation relies on Pydantic type coercion only — no bounds (e.g., negative quantity/initial_stock are accepted), so validation is basic rather than strict."
+  },
+  "instruction_failures": [
+    "Final agent output contract (exclusive JSON with files_created/entrypoint/test_command) could not be verified — no agent response is present in the workspace, only the produced files."
+  ],
+  "correctness_failures": [
+    "init_db() closes the ':memory:' connection, destroying all tables before any request is served (__init__.py:8-41).",
+    "Repository thread-local connection (repository.py:7-12) targets a distinct ':memory:' database from init_db, guaranteeing 'no such table' at runtime.",
+    "create_reservation/adjust_stock would operate on empty schema in production run — entire write/read path is non-functional.",
+    "No validation prevents negative quantity in /reservations or negative initial_stock in /skus (models.py:5-16)."
+  ],
+  "execution_failures": [
+    "pytest tests/ => 21 failed, 3 passed (sqlite3.OperationalError: no such table: skus / reservations / orders).",
+    "test_create_sku_success, test_adjust_stock, test_create_reservation_*, test_confirm_reservation, test_cancel_reservation, test_expired_reservation, test_get_orders_pagination, test_happy_path_workflow all fail at the first DB write.",
+    "All 11 service-layer tests in test_service.py fail identically on the missing-table error."
+  ],
+  "test_gaps": [
+    "Environment isolation is not actually achieved: setup_db patches os.environ after DB_PATH is already bound at import, so the fixture has no effect and provides no usable schema.",
+    "No test uses a file-backed or shared-cache DB to make ':memory:' persistence work across connections, so the suite cannot pass as written.",
+    "No teardown/reset of the SKU/reservation tables between tests beyond reliance on the broken in-memory assumption."
+  ],
+  "quality_notes": [
+    "Clean three-layer separation (app -> service -> repository) with a dedicated security module.",
+    "Endpoint status codes set explicitly (201 for create_sku/create_reservation, 200 otherwise).",
+    "DeprecationWarning: @app.on_event('startup') is deprecated in favor of lifespan handlers (app.py:14).",
+    "Depends(verify_api_token) given a `= None` default is unconventional though harmless."
+  ],
+  "unnecessary_code_examples": [
+    "models.py:2 `from typing import Optional` — unused.",
+    "models.py:3 `from datetime import datetime` — unused.",
+    "__main__.py uses reload=True for the production entrypoint, which is a dev-only flag."
+  ],
+  "security_safety_notes": [
+    "All mutating endpoints enforce the X-API-Token gate returning 401 on missing/invalid token (security.py:6-12); verified passing via test_create_sku_no_token and test_create_sku_invalid_token.",
+    "Static hardcoded token constant VALID_API_TOKEN = 'test-api-key-12345' (security.py:4) — acceptable for a demo but not configurable/secret-managed.",
+    "Pydantic enforces field types but no value constraints (negative or zero quantities/stock accepted)."
+  ],
+  "file_evidence": [
+    {"path": "src/commerce_service/__init__.py", "note": "init_db opens ':memory:' conn, creates tables, then conn.close() (line 41) destroys the DB — root cause of all runtime failures."},
+    {"path": "src/commerce_service/repository.py", "note": "get_connection (7-12) creates a separate thread-local ':memory:' connection with no tables; all SQL runs against an empty schema."},
+    {"path": "src/commerce_service/service.py", "note": "Business logic correct on paper: insufficient-stock 400 (31-35), expiry restore (63-71), cancel restore (97-98), idempotency cache (21-23)."},
+    {"path": "src/commerce_service/app.py", "note": "All 7 endpoints present; mutating routes gated by Depends(verify_api_token); deprecated on_event startup at line 14."},
+    {"path": "src/commerce_service/security.py", "note": "API-token Header check returns 401 — functions correctly (only auth tests pass)."},
+    {"path": "tests/test_api.py", "note": "setup_db fixture (10-14) patches DB_PATH after import; ineffective. Strong assertions otherwise; 10/13 fail at runtime."},
+    {"path": "tests/test_service.py", "note": "11 rigorous service tests asserting state (stock, status); all fail on no-such-table."},
+    {"path": "pyproject.toml", "note": "Complete pinned deps incl dev extras (pytest, pytest-asyncio, httpx); src layout configured correctly."}
+  ],
+  "commands_run": [
+    "find . -type f (file inventory)",
+    "python3 -m venv .venv && pip install -e '.[dev]' (install — succeeded)",
+    "python -m pytest tests/ -v (result: 21 failed, 3 passed, 2 warnings in 1.58s)",
+    "python -m pytest tests/ (confirmation: 21 failed, 3 passed)"
+  ],
+  "review_risk": "Low. Tests were actually executed in a clean venv and the failure mode was traced to a specific, reproducible code defect with line citations. The only unverifiable item is the agent's final JSON output contract, which is not present in the workspace; this affects one breakdown item (output_contract_adherence) but not the executability/correctness conclusions, which are grounded in real test runs."
+}
+```

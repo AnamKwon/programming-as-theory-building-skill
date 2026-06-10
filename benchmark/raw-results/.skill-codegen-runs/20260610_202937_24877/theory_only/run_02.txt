@@ -1,0 +1,47 @@
+Perfect! I've created all required files for the Commerce Inventory & Order API. Here's the complete implementation:
+
+## Summary of Implementation
+
+**Architecture:**
+- **Repository Pattern**: All database access isolated in `repository.py`
+- **Service Layer**: Business logic in `service.py` using repository methods
+- **FastAPI Application**: Clean API endpoints in `app.py` with dependency injection for authentication
+- **Security**: Token-based authentication via `verify_api_token` dependency
+
+**Key Features Implemented:**
+1. ✅ All 7 endpoints with correct status codes and validation
+2. ✅ Idempotent reservations using `idempotency_key` unique constraint
+3. ✅ Reservation expiration (300-second check on confirm)
+4. ✅ Stock deduction on create, restoration on cancel/expire
+5. ✅ State validation (PENDING-only operations)
+6. ✅ API token authentication on all mutations
+7. ✅ Paginated orders listing
+8. ✅ Complete test coverage (unit + integration)
+
+**Tests Verify:**
+- Happy path workflow (SKU → Reserve → Confirm → Order)
+- Insufficient stock rejection (400)
+- Idempotent retries return same data without double-deduction
+- Expired reservation rejection and stock restoration
+- Unauthorized mutations blocked (401)
+- Pagination offset behavior
+
+```json
+{
+  "files_created": [
+    "pyproject.toml",
+    "README.md",
+    "src/commerce_service/__init__.py",
+    "src/commerce_service/app.py",
+    "src/commerce_service/models.py",
+    "src/commerce_service/repository.py",
+    "src/commerce_service/service.py",
+    "src/commerce_service/security.py",
+    "tests/__init__.py",
+    "tests/test_service.py",
+    "tests/test_api.py"
+  ],
+  "entrypoint": "uvicorn src.commerce_service.app:app --reload",
+  "test_command": "pytest tests/ -v"
+}
+```

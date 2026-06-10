@@ -1,0 +1,137 @@
+```json
+{
+  "rubric_version": "benchmark-codegen-review-v1",
+  "score_scale": "0-100 per category",
+  "weights": {
+    "task_fulfillment": 0.20,
+    "functional_correctness": 0.25,
+    "executability": 0.15,
+    "test_quality": 0.15,
+    "code_quality": 0.10,
+    "minimality": 0.10,
+    "security_safety": 0.05
+  },
+  "task_fulfillment_score": 83,
+  "task_fulfillment_breakdown": {
+    "file_structure_compliance": 95,
+    "api_surface_coverage": 100,
+    "output_contract_adherence": 55
+  },
+  "functional_correctness_score": 74,
+  "functional_correctness_breakdown": {
+    "business_logic_accuracy": 85,
+    "expiration_and_state_rules": 90,
+    "concurrency_and_idempotency": 78,
+    "error_handling_semantics": 42
+  },
+  "executability_score": 69,
+  "executability_breakdown": {
+    "dependency_completeness": 95,
+    "imports_and_entrypoints": 88,
+    "automated_test_results": 25
+  },
+  "test_quality_score": 71,
+  "test_quality_breakdown": {
+    "specification_coverage": 95,
+    "assertion_rigor": 85,
+    "environment_isolation": 32
+  },
+  "code_quality_score": 84,
+  "code_quality_breakdown": {
+    "clarity_and_naming": 86,
+    "separation_of_concerns": 82
+  },
+  "minimality_score": 81,
+  "minimality_breakdown": {
+    "no_dead_code": 80,
+    "structural_complexity": 82
+  },
+  "security_safety_score": 89,
+  "security_safety_breakdown": {
+    "authentication_gate": 90,
+    "input_validation": 88
+  },
+  "review_confidence_score": 93,
+  "weighted_components": {
+    "task_fulfillment": 16.6,
+    "functional_correctness": 18.5,
+    "executability": 10.35,
+    "test_quality": 10.65,
+    "code_quality": 8.4,
+    "minimality": 8.1,
+    "security_safety": 4.45
+  },
+  "weighted_total": 77.0,
+  "verdict": "mixed",
+  "key_findings": [
+    "Test suite executes but fails: 19 failed / 21 passed (pytest tests/ -v). All 19 service-layer tests pass; 19 of 21 API integration tests fail.",
+    "Critical SQLite thread-affinity defect: connection in repository.py:13 uses default check_same_thread=True, so it raises sqlite3.ProgrammingError when accessed from the TestClient/threadpool worker thread, breaking all DB-backed API endpoints under the official test command.",
+    "Auth contract violation: a missing API key returns HTTP 403 (FastAPI APIKeyHeader default auto_error), not the spec-required 401. Confirmed on both TestClient and a live uvicorn server.",
+    "test_api.py has no database isolation: it shares the module-level db with no per-test reset/teardown, causing cross-test contamination (reused idempotency_key and duplicate SKU inserts).",
+    "Broad 'except Exception -> 400' handlers in app.py mask genuine 500-class failures (the sqlite ProgrammingError is swallowed into a 400).",
+    "Business logic itself is correct and complete: stock validation, 201/200 status separation, 300s expiration with stock restoration, PENDING enforcement, and idempotency caching all pass at the service layer.",
+    "All 7 endpoints and the requested file layout are present; live server serves /health, authed /skus, and /orders correctly for the happy path."
+  ],
+  "score_rationale": {
+    "task_fulfillment": "All requested files present and all 7 endpoints implemented (/health, /skus, /stock/adjust, /reservations, confirm, cancel, /orders). Output-contract adherence (exclusive JSON with files_created/entrypoint/test_command) could not be verified because no agent final-output artifact exists in the workspace; scored neutrally.",
+    "functional_correctness": "Service-layer business rules are accurate and fully verified by 19 passing unit tests (expiration restore, PENDING enforcement, pagination, idempotency). Marked down sharply on error-handling semantics: missing-key returns 403 instead of the spec-required 401, and broad exception handlers convert real errors into 400s.",
+    "executability": "Dependencies are complete and the app boots and serves happy-path requests under single-worker uvicorn. However the official test command yields 19/40 failures, so automated_test_results is heavily penalized.",
+    "test_quality": "Coverage spans all six required scenarios with reasonably strict assertions on data and state. Environment isolation is the weak point: test_service.py isolates correctly via per-test in-memory DB fixtures, but test_api.py shares a module-level DB with no teardown, which itself causes cascading failures.",
+    "code_quality": "Clear naming and clean layering (models/repository/service/security/app). Minor leak: app.py calls the private service._reservation_to_response and re-queries the repo in the duplicate-key path.",
+    "minimality": "Largely minimal and on-spec; minor dead code (unused 'import time' in test, unused exception alias 'e' in app.py) and a redundant re-query in the idempotency handler.",
+    "security_safety": "All mutating endpoints are gated by the API-key dependency; Pydantic models enforce types and constraints (min_length, ge, gt). Auth gate works for wrong keys but mis-statuses missing keys (403 vs 401)."
+  },
+  "instruction_failures": [
+    "Authentication failures do not return 401 for a missing API key (returns 403), violating the specified 401-for-auth-failure contract.",
+    "Output-contract (exclusive JSON response) not verifiable from the delivered workspace."
+  ],
+  "correctness_failures": [
+    "SQLite connection created without check_same_thread=False; raises ProgrammingError under threaded serving (TestClient), making DB-backed endpoints non-functional in that mode.",
+    "Missing-API-key path returns 403 instead of 401.",
+    "Broad 'except Exception' in app.py converts unexpected 500-class errors (including the sqlite threading error) into 400 responses, hiding real faults."
+  ],
+  "execution_failures": [
+    "pytest tests/ -v => 19 failed, 21 passed.",
+    "tests/test_api.py: 19/21 fail (sqlite3.ProgrammingError thread error on DB endpoints; 403!=401 on missing-key tests).",
+    "tests/test_service.py: 19/19 pass."
+  ],
+  "test_gaps": [
+    "test_api.py lacks any per-test reset of the module-level database, so tests are order-dependent and contaminate each other (duplicate SKU inserts, reused idempotency_key='key-1').",
+    "No test covers the actual served-via-uvicorn path versus the TestClient threading path, so the thread-affinity defect is not isolated to a clear failure message.",
+    "No test asserts that a duplicate idempotency_key leaves stock unchanged (only that a cached reservation is returned)."
+  ],
+  "quality_notes": [
+    "app.py reaches into service._reservation_to_response (private) and re-queries repo in the duplicate-idempotency branch — leaks layering responsibility into the router.",
+    "Endpoints are 'async def' but call blocking sqlite synchronously, which would block the event loop under load.",
+    "datetime.utcnow() is deprecated (158 DeprecationWarnings during the run)."
+  ],
+  "unnecessary_code_examples": [
+    "tests/test_service.py:107 'import time' is unused.",
+    "app.py:85 'except DuplicateIdempotencyKeyError as e' binds 'e' but never uses it.",
+    "repository.get_order_by_id is used only in tests; borderline but acceptable."
+  ],
+  "security_safety_notes": [
+    "All mutating endpoints (skus, stock/adjust, reservations, confirm, cancel) require verify_api_key; /orders is read-only and unauthenticated, which is acceptable.",
+    "Pydantic models enforce min_length/ge/gt constraints on inputs.",
+    "API key is compared with a plain '!=' (not constant-time) and defaults to a hardcoded 'test-key' fallback — low risk for this scope but worth noting."
+  ],
+  "file_evidence": [
+    {"path": "src/commerce_service/repository.py", "note": "Line 13: sqlite3.connect(self.db_path) without check_same_thread=False -> ProgrammingError under TestClient/threaded serving (confirmed at repository.py:63 in stack trace)."},
+    {"path": "src/commerce_service/security.py", "note": "APIKeyHeader(name='X-API-Key') with default auto_error=True returns 403 for a missing header; only wrong keys reach the custom 401 path."},
+    {"path": "src/commerce_service/app.py", "note": "Broad 'except Exception -> HTTP 400' on create_sku/adjust/reservation masks runtime errors; duplicate-idempotency branch calls private service._reservation_to_response."},
+    {"path": "src/commerce_service/service.py", "note": "Correct business logic: 300s EXPIRATION_SECONDS, stock restoration on expire/cancel, PENDING enforcement, idempotency check before stock deduction. Verified by passing service tests."},
+    {"path": "tests/test_api.py", "note": "Uses module-level app.db with no per-test reset; reused idempotency_key and duplicate SKU inserts cause cross-test contamination."},
+    {"path": "tests/test_service.py", "note": "Proper isolation via per-test in-memory Database fixture; all 19 tests pass."},
+    {"path": "pyproject.toml", "note": "Complete deps: fastapi, pydantic, pydantic-settings, uvicorn; dev: pytest, pytest-asyncio, httpx."}
+  ],
+  "commands_run": [
+    "find . -type f (project file listing)",
+    "python3 --version (3.12.4); python3 -c 'import fastapi,pydantic,httpx,pytest' (deps ok)",
+    "PYTHONPATH=src python3 -m pytest tests/ -v  => 19 failed, 21 passed",
+    "PYTHONPATH=src python3 -m pytest tests/test_api.py -v  => 2 passed, 19 failed",
+    "PYTHONPATH=src python3 -m pytest tests/test_service.py -q  => 19 passed",
+    "Live uvicorn on :8137 + curl /health (200), POST /skus authed (201), GET /orders (200), POST /skus no-key (403)"
+  ],
+  "review_risk": "Low. Findings are grounded in actual test execution, stack traces, and a live server smoke test with cited line numbers. Main uncertainty is output_contract_adherence, which cannot be assessed because no agent final-output JSON artifact is present in the workspace; the thread-affinity bug also manifests only under threaded serving (TestClient), not single-worker uvicorn, which is noted explicitly."
+}
+```

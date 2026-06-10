@@ -1,0 +1,139 @@
+Tests are deterministic: **2 failed, 35 passed**. Both failures are in the expiration tests, and both stem from **test-code defects**, not implementation bugs:
+
+- `test_api.py::test_confirm_reservation_expired` connects to a hardcoded `"commerce.db"` to age the row, but the app is bound to a `temp_db`, so the reservation is never aged → app returns `200 CONFIRMED`, assert expects `400`.
+- `test_service.py::test_confirm_reservation_expired` opens two **separate** connections — the `UPDATE` runs on one connection that is never committed, and `.commit()` runs on a different one — leaving an uncommitted write lock → `sqlite3.OperationalError: database is locked`.
+
+The production expiration logic in `service.py:51-58` is itself correct. I also note `commerce.db` is written into the working directory as an import-time side effect (state-pollution risk).
+
+Here is my objective evaluation:
+
+```json
+{
+  "rubric_version": "benchmark-codegen-review-v1",
+  "score_scale": "0-100 per category",
+  "weights": {
+    "task_fulfillment": 0.20,
+    "functional_correctness": 0.25,
+    "executability": 0.15,
+    "test_quality": 0.15,
+    "code_quality": 0.10,
+    "minimality": 0.10,
+    "security_safety": 0.05
+  },
+  "task_fulfillment_score": 90,
+  "task_fulfillment_breakdown": {
+    "file_structure_compliance": 100,
+    "api_surface_coverage": 100,
+    "output_contract_adherence": 70
+  },
+  "functional_correctness_score": 91,
+  "functional_correctness_breakdown": {
+    "business_logic_accuracy": 95,
+    "expiration_and_state_rules": 85,
+    "concurrency_and_idempotency": 95,
+    "error_handling_semantics": 90
+  },
+  "executability_score": 80,
+  "executability_breakdown": {
+    "dependency_completeness": 100,
+    "imports_and_entrypoints": 95,
+    "automated_test_results": 45
+  },
+  "test_quality_score": 73,
+  "test_quality_breakdown": {
+    "specification_coverage": 95,
+    "assertion_rigor": 85,
+    "environment_isolation": 40
+  },
+  "code_quality_score": 90,
+  "code_quality_breakdown": {
+    "clarity_and_naming": 90,
+    "separation_of_concerns": 90
+  },
+  "minimality_score": 90,
+  "minimality_breakdown": {
+    "no_dead_code": 85,
+    "structural_complexity": 95
+  },
+  "security_safety_score": 90,
+  "security_safety_breakdown": {
+    "authentication_gate": 100,
+    "input_validation": 80
+  },
+  "review_confidence_score": 95,
+  "weighted_components": {
+    "task_fulfillment": 18.0,
+    "functional_correctness": 22.75,
+    "executability": 12.0,
+    "test_quality": 10.95,
+    "code_quality": 9.0,
+    "minimality": 9.0,
+    "security_safety": 4.5
+  },
+  "weighted_total": 86.2,
+  "verdict": "good",
+  "key_findings": [
+    "All 10 target files present and all 7 specified endpoints implemented exactly (/health, /skus, /stock/adjust, /reservations, confirm, cancel, /orders).",
+    "Test suite executes cleanly but does NOT pass 100%: 2 failed, 35 passed (deterministic across two runs).",
+    "Both failures are caused by defective TEST code (DB isolation), not by the implementation; the production expiration logic at service.py:51-58 is correct.",
+    "test_service.py expiration test opens two separate sqlite connections; the UPDATE is never committed on its own connection, triggering 'database is locked'.",
+    "test_api.py expiration test writes to hardcoded 'commerce.db' while the app under test is bound to a temp DB, so the row is never aged (200 vs expected 400).",
+    "Clean separation of concerns: repository.py owns all SQL, service.py owns business rules, app.py owns routing; auth gate covers every mutating endpoint.",
+    "Repository default DB_PATH writes commerce.db into the working directory at import time (state pollution / non-isolation)."
+  ],
+  "score_rationale": {
+    "task_fulfillment": "Full file-structure and API-surface compliance (10/10 files, 7/7 endpoints). output_contract_adherence reduced to 70 because the agent's final JSON message (files_created/entrypoint/test_command) is not present as an artifact in the workspace and cannot be runtime-verified.",
+    "functional_correctness": "Stock validation, 201-vs-200 status codes, pagination offset math, PENDING enforcement, stock restoration on cancel, and idempotent caching (no stock re-deduction) are all correct and most are confirmed by passing tests. Expiration restoration logic is correct on inspection but its dedicated tests fail due to test bugs, so it is not runtime-confirmed (scored 85).",
+    "executability": "Dependencies fully declared (fastapi, pydantic, uvicorn, pytest, pytest-asyncio, httpx); imports/entrypoints resolve and the suite collects/runs. automated_test_results scored 45 because the suite does not pass 100% (35/37).",
+    "test_quality": "All six required scenarios have tests and assertions inspect data models and stock state, not just status codes. environment_isolation scored 40: two expiration tests have broken DB-isolation mechanics (hardcoded path; uncommitted dual-connection) and the production layer writes a shared commerce.db in cwd.",
+    "code_quality": "Readable naming, clear control flow, and clean layering (repository/service/app). Minor: confirm/cancel endpoints return ad-hoc dicts without a declared response_model.",
+    "minimality": "No over-engineering or speculative abstraction. Minor dead code: 'from datetime import datetime' is unused in models.py.",
+    "security_safety": "Every mutating endpoint (and /orders) is gated by the X-API-Token dependency; /health is open as expected. input_validation scored 80: Pydantic enforces field types but no value constraints (negative quantity / negative initial_stock are accepted)."
+  },
+  "instruction_failures": [],
+  "correctness_failures": [
+    "No value-level input validation: CreateReservationRequest.quantity and CreateSKURequest.initial_stock accept negatives/zero with no guard.",
+    "adjust_stock allows stock to go negative (UPDATE adds amount with no floor check)."
+  ],
+  "execution_failures": [
+    "tests/test_service.py::test_confirm_reservation_expired -> sqlite3.OperationalError: database is locked (uncommitted write on a throwaway connection while confirm tries to write).",
+    "tests/test_api.py::test_confirm_reservation_expired -> assert 200 == 400 (test aged a hardcoded commerce.db, not the temp DB the app uses)."
+  ],
+  "test_gaps": [
+    "Expiration behavior is effectively unverified at runtime because both expiration tests are broken.",
+    "No test asserts stock is NOT decremented on insufficient-stock failure.",
+    "No test for adjusting/reserving a non-existent SKU via the HTTP layer (404 path only covered at service level).",
+    "No negative/invalid-payload validation tests (e.g., negative quantity)."
+  ],
+  "quality_notes": [
+    "confirm_reservation and cancel_reservation return un-modeled dicts; no response_model declared for those routes.",
+    "Repeated open/commit/close connection boilerplate in every repository method (acceptable but verbose).",
+    "datetime.utcnow() is deprecated (166 DeprecationWarnings emitted)."
+  ],
+  "unnecessary_code_examples": [
+    "models.py line 1: 'from datetime import datetime' is imported but never used."
+  ],
+  "security_safety_notes": [
+    "All mutating endpoints (/skus, /stock/adjust, /reservations, /reservations/{id}/confirm, /reservations/{id}/cancel) plus /orders are protected by verify_api_token; /health is intentionally public.",
+    "API token compared with plain '!=' (not constant-time); minor timing-side-channel consideration only.",
+    "Pydantic validates types but not value ranges, so semantically invalid inputs (negative quantities) pass schema validation."
+  ],
+  "file_evidence": [
+    {"path": "src/commerce_service/service.py", "note": "Lines 51-58 implement the 300s expiration block with stock restoration and 400 response; logic is correct on inspection."},
+    {"path": "src/commerce_service/service.py", "note": "Lines 19-41 implement idempotency (cached return before stock deduction) and insufficient-stock 400; confirmed by passing tests."},
+    {"path": "src/commerce_service/app.py", "note": "All 7 endpoints present; /skus and /reservations return status_code=201, mutations gated by Depends(verify_api_token)."},
+    {"path": "src/commerce_service/repository.py", "note": "Line 6 DB_PATH='commerce.db' writes into cwd at import time; pagination offset math at lines 199-203 is correct."},
+    {"path": "src/commerce_service/security.py", "note": "Lines 8-11 enforce 401 on missing/invalid X-API-Token."},
+    {"path": "tests/test_service.py", "note": "Lines 121-125: dual-connection uncommitted UPDATE causes 'database is locked' failure."},
+    {"path": "tests/test_api.py", "note": "Lines 251-257: writes to hardcoded 'commerce.db' instead of the temp DB the app is bound to, so confirm returns 200 not 400."},
+    {"path": "src/commerce_service/models.py", "note": "Line 1 unused datetime import; response models present for reservations/orders/health."}
+  ],
+  "commands_run": [
+    "python3 --version (Python 3.12.4)",
+    "python3 -c \"import fastapi, pydantic, pytest, httpx\" (deps ok)",
+    "python3 -m pytest tests/ -v (2 failed, 35 passed, 166 warnings)",
+    "python3 -m pytest tests/ -q (re-run: 2 failed, 35 passed — deterministic)"
+  ],
+  "review_risk": "Low. Scores grounded in two deterministic full test runs with cited failing lines and source line references. Main subjectivity is output_contract_adherence, which cannot be verified because the agent's final JSON message is not part of the workspace artifacts; it was scored conservatively (70) rather than failed."
+}
+```

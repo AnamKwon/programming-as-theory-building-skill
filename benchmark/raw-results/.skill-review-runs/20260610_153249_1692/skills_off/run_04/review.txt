@@ -1,0 +1,141 @@
+I have complete evidence. Test execution: **18 passed, 22 failed (45% pass rate)**, with a reproduced production defect in the confirm/order flow. Here is the objective evaluation.
+
+```json
+{
+  "rubric_version": "benchmark-codegen-review-v1",
+  "score_scale": "0-100 per category",
+  "weights": {
+    "task_fulfillment": 0.20,
+    "functional_correctness": 0.25,
+    "executability": 0.15,
+    "test_quality": 0.15,
+    "code_quality": 0.10,
+    "minimality": 0.10,
+    "security_safety": 0.05
+  },
+  "task_fulfillment_score": 82,
+  "task_fulfillment_breakdown": {
+    "file_structure_compliance": 95,
+    "api_surface_coverage": 100,
+    "output_contract_adherence": 50
+  },
+  "functional_correctness_score": 71,
+  "functional_correctness_breakdown": {
+    "business_logic_accuracy": 70,
+    "expiration_and_state_rules": 45,
+    "concurrency_and_idempotency": 90,
+    "error_handling_semantics": 80
+  },
+  "executability_score": 63,
+  "executability_breakdown": {
+    "dependency_completeness": 95,
+    "imports_and_entrypoints": 80,
+    "automated_test_results": 15
+  },
+  "test_quality_score": 65,
+  "test_quality_breakdown": {
+    "specification_coverage": 90,
+    "assertion_rigor": 60,
+    "environment_isolation": 45
+  },
+  "code_quality_score": 90,
+  "code_quality_breakdown": {
+    "clarity_and_naming": 88,
+    "separation_of_concerns": 92
+  },
+  "minimality_score": 84,
+  "minimality_breakdown": {
+    "no_dead_code": 80,
+    "structural_complexity": 88
+  },
+  "security_safety_score": 88,
+  "security_safety_breakdown": {
+    "authentication_gate": 95,
+    "input_validation": 80
+  },
+  "review_confidence_score": 95,
+  "weighted_components": {
+    "task_fulfillment": 16.4,
+    "functional_correctness": 17.75,
+    "executability": 9.45,
+    "test_quality": 9.75,
+    "code_quality": 9.0,
+    "minimality": 8.4,
+    "security_safety": 4.4
+  },
+  "weighted_total": 75.2,
+  "verdict": "mixed",
+  "key_findings": [
+    "Test suite does NOT pass: 18 passed / 22 failed (45%) under pytest 7.4.3, SQLAlchemy 2.0.23, FastAPI 0.104.1, Python 3.12.4.",
+    "CRITICAL production defect: confirm_reservation (service.py:104) subtracts a tz-aware datetime.now(timezone.utc) from reservation.created_at, which SQLite stores/returns as naive -> 'can't subtract offset-naive and offset-aware datetimes'. Reproduced live on a file-based DB: POST /reservations/{id}/confirm raises TypeError. The entire confirm -> order-creation and expiration flow is broken in production, not just in tests.",
+    "All 13 DB-touching tests in test_api.py fail with 'no such table: skus' because the fixture builds sqlite:///:memory: without StaticPool/shared cache, so each pooled connection gets a separate empty in-memory DB.",
+    "Several test assertions are unsound: test_service uses str(HTTPException(...)) which returns '' (so 'Insufficient stock'/'non-PENDING' substring checks can never pass), and expiration tests call db.execute('UPDATE ...') with a raw string + tuple params, illegal in SQLAlchemy 2.0 (ArgumentError: must use text()).",
+    "What works (verified by passing tests): SKU creation (201), stock adjustment with negative-floor validation (400), reservation creation with stock deduction, idempotency (cached response, no double deduction), cancellation with stock restoration, pagination math.",
+    "Clean layered architecture (app/service/repository/security/models) with all 7 endpoints present and mutating endpoints gated by X-API-Key."
+  ],
+  "score_rationale": {
+    "task_fulfillment": "All core implementation and test files present (12 files incl. package __init__s) and all 7 specified endpoints implemented with correct 201/200 status codes. Penalized only because the agent's required final JSON contract output (files_created/entrypoint/test_command) is not observable from the workspace artifacts, so adherence could not be verified.",
+    "functional_correctness": "Idempotency, stock deduction/restoration, and pagination are correct and test-proven. Error codes are largely correct (400/401/404). But the confirm and expiration paths crash at runtime due to the tz-aware/naive datetime bug, so order creation and the 300s expiration block never execute correctly in production — a core-flow failure that caps this category.",
+    "executability": "Dependencies are complete and the app boots (health/sku/reserve return 201/200 live). However the automated suite fails 22/40, far from the required 100%, and a core endpoint 500s, so executability is materially compromised.",
+    "test_quality": "Coverage spans all six required scenarios, but rigor and isolation are undermined by a non-functional in-memory DB fixture (no StaticPool) and assertions that inspect str(HTTPException) (always '') and raw-string SQL invalid under SQLAlchemy 2.0.",
+    "code_quality": "Strong, readable separation of concerns: repository.py owns all DB access, service.py holds business rules, app.py only routes, security.py isolates auth. Clear naming and control flow.",
+    "minimality": "No speculative features or over-engineering; layering is proportional to the spec. Minor dead code: unused imports Optional (service.py), Session and Literal (models.py).",
+    "security_safety": "Every mutating endpoint depends on verify_api_key; read endpoints (/health, /orders) are appropriately open. Pydantic enforces field types, though no value constraints (e.g., quantity>0) are declared."
+  },
+  "instruction_failures": [
+    "Final structured JSON output contract (files_created, entrypoint, test_command) is not present as an artifact in the workspace and could not be verified.",
+    "Spec calls for 401 on auth failure; a missing X-API-Key header returns 403 (FastAPI APIKeyHeader default), only an invalid key returns 401."
+  ],
+  "correctness_failures": [
+    "service.py:103-104 — datetime.now(timezone.utc) minus naive SQLite-stored created_at raises TypeError; confirm_reservation always 500s (reproduced on file DB). Breaks order creation and the 300s expiration check entirely.",
+    "Because confirm is broken, stock restoration on EXPIRED reservations is unreachable at runtime despite being coded (service.py:106-117)."
+  ],
+  "execution_failures": [
+    "pytest result: 22 failed, 18 passed, 2 warnings.",
+    "test_api.py (13 failures): sqlite3.OperationalError 'no such table: skus' — in-memory engine fixture lacks StaticPool so create_all and session use different connections/databases.",
+    "test_service.py confirm/order tests (test_confirm_reservation_success, test_confirm_creates_order, test_confirm_non_pending_reservation_fails, test_cancel_non_pending_fails, test_get_orders_pagination_default/offset): TypeError from the datetime subtraction bug.",
+    "test_service.py expiration tests (test_reservation_expiration, test_expiration_restores_stock): sqlalchemy.exc.ArgumentError — raw textual SQL not wrapped in text().",
+    "test_service.py::test_create_reservation_insufficient_stock: AssertionError — correct HTTPException raised but str(exc) is '' so substring assertion fails (test defect, not app defect)."
+  ],
+  "test_gaps": [
+    "API-layer fixture is non-functional, so there is effectively zero working end-to-end HTTP coverage of the DB paths.",
+    "Expiration is only asserted via str(exc) ('expired') which works, but other negative-path assertions rely on str(HTTPException) and silently never validate the message.",
+    "No test exercises the expiration path through the HTTP/API layer (only the broken service layer).",
+    "No test for duplicate SKU creation at the API layer, nor for invalid payload type rejection (422)."
+  ],
+  "quality_notes": [
+    "Clean repository/service/app/security separation; routing is thin and delegates to CommerceService.",
+    "Reservation stores both sku_id and sku_code (mild redundancy) but simplifies restoration lookups.",
+    "Pagination clamps page/size to sane minimums in service.get_orders."
+  ],
+  "unnecessary_code_examples": [
+    "service.py:2 — 'from typing import Optional' is imported but never used.",
+    "models.py:6 — 'Session' imported from sqlalchemy.orm but never used.",
+    "models.py:2 — 'Literal' imported but never used."
+  ],
+  "security_safety_notes": [
+    "verify_api_key dependency guards /skus, /stock/adjust, /reservations, /reservations/{id}/confirm, /reservations/{id}/cancel; /orders and /health are unauthenticated (acceptable for reads).",
+    "API key compared with a plain != (no constant-time compare) and hardcoded as VALID_API_KEY = 'test-key-123' in source.",
+    "Pydantic models validate types but lack value constraints (e.g., quantity/initial_stock could be negative and pass validation)."
+  ],
+  "file_evidence": [
+    {"path": "src/commerce_service/service.py", "note": "Line 104 datetime subtraction bug breaks confirm/expiration; correct idempotency, deduction, restoration, pagination logic elsewhere. Unused Optional import."},
+    {"path": "src/commerce_service/app.py", "note": "All 7 endpoints; mutating routes gated by Depends(verify_api_key); correct 201 status_code on /skus and /reservations."},
+    {"path": "src/commerce_service/repository.py", "note": "Clean isolation of all DB operations; no business logic leakage."},
+    {"path": "src/commerce_service/security.py", "note": "APIKeyHeader X-API-Key dependency; 401 on invalid key, hardcoded key, non-constant-time compare."},
+    {"path": "src/commerce_service/models.py", "note": "SQLAlchemy + Pydantic models; DateTime column is naive (root cause of tz bug); unused Session and Literal imports."},
+    {"path": "tests/test_api.py", "note": "In-memory engine fixture lacks StaticPool -> 'no such table: skus' for all 13 DB tests."},
+    {"path": "tests/test_service.py", "note": "Good scenario coverage but uses str(HTTPException) ('') assertions and raw-string SQL execute invalid under SQLAlchemy 2.0."},
+    {"path": "pyproject.toml", "note": "Complete deps: fastapi/pydantic/sqlalchemy/uvicorn + dev pytest/pytest-asyncio/httpx, pinned versions."}
+  ],
+  "commands_run": [
+    "find . -type f | sort",
+    "python3 --version; import checks for fastapi/pytest/httpx/sqlalchemy",
+    "python3 -m pytest tests/ -v  (result: 22 failed, 18 passed)",
+    "python3 -m pytest tests/test_api.py::TestSKUEndpoints::test_create_sku_success  (no such table: skus)",
+    "python3 -m pytest test_service insufficient_stock + reservation_expiration  (HTTPException str=='' ; ArgumentError text())",
+    "Live TestClient run on file-based DB reproducing confirm TypeError"
+  ],
+  "review_risk": "Low. Tests were actually executed and the production confirm-path defect was independently reproduced against a file-based SQLite DB (mirroring app.py), distinguishing genuine production bugs (tz datetime) from test-harness defects (in-memory pool, str(HTTPException), raw SQL). The only unverifiable item is the agent's final JSON output contract, which is not present as a workspace artifact; the exact count of the '10 requested files' was inferred from the delivered structure since the original task prompt was not available."
+}
+```

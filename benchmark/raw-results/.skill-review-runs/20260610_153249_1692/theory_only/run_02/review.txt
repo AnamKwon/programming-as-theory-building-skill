@@ -1,0 +1,139 @@
+All files read, tests executed. **Canonical clean-state result: 3 failed, 30 passed.** Re-running without cleanup produces 12 failures (UNIQUE constraint) — proving the API tests have no DB isolation. Here is my objective evaluation.
+
+```json
+{
+  "rubric_version": "benchmark-codegen-review-v1",
+  "score_scale": "0-100 per category",
+  "weights": {
+    "task_fulfillment": 0.20,
+    "functional_correctness": 0.25,
+    "executability": 0.15,
+    "test_quality": 0.15,
+    "code_quality": 0.10,
+    "minimality": 0.10,
+    "security_safety": 0.05
+  },
+  "task_fulfillment_score": 83,
+  "task_fulfillment_breakdown": {
+    "file_structure_compliance": 100,
+    "api_surface_coverage": 100,
+    "output_contract_adherence": 50
+  },
+  "functional_correctness_score": 82,
+  "functional_correctness_breakdown": {
+    "business_logic_accuracy": 88,
+    "expiration_and_state_rules": 95,
+    "concurrency_and_idempotency": 60,
+    "error_handling_semantics": 85
+  },
+  "executability_score": 73,
+  "executability_breakdown": {
+    "dependency_completeness": 95,
+    "imports_and_entrypoints": 95,
+    "automated_test_results": 30
+  },
+  "test_quality_score": 72,
+  "test_quality_breakdown": {
+    "specification_coverage": 95,
+    "assertion_rigor": 85,
+    "environment_isolation": 35
+  },
+  "code_quality_score": 88,
+  "code_quality_breakdown": {
+    "clarity_and_naming": 85,
+    "separation_of_concerns": 90
+  },
+  "minimality_score": 82,
+  "minimality_breakdown": {
+    "no_dead_code": 75,
+    "structural_complexity": 88
+  },
+  "security_safety_score": 79,
+  "security_safety_breakdown": {
+    "authentication_gate": 90,
+    "input_validation": 68
+  },
+  "review_confidence_score": 93,
+  "weighted_components": {
+    "task_fulfillment": 16.6,
+    "functional_correctness": 20.5,
+    "executability": 10.95,
+    "test_quality": 10.8,
+    "code_quality": 8.8,
+    "minimality": 8.2,
+    "security_safety": 3.95
+  },
+  "weighted_total": 79.8,
+  "verdict": "good",
+  "key_findings": [
+    "All 5 source modules + 2 test files + pyproject/README/__init__ present; clean 3-layer separation (app/service/repository).",
+    "All 7 endpoints implemented with correct status codes (201 for create_sku/reservations, 200 for adjust/confirm/cancel/orders).",
+    "Test suite does NOT pass 100%: 3 failed / 30 passed on a clean checkout; the run is order- and state-dependent.",
+    "Critical test-isolation defect: test_api.py uses app.dependency_overrides keyed on the repository/service classes, but routes call module-level globals (no Depends), so overrides are no-ops and all API tests hit a shared on-disk commerce.db with no teardown.",
+    "Re-running the suite without deleting commerce.db yields 12 failures (sqlite3.IntegrityError: UNIQUE constraint failed: skus.sku), confirming non-determinism.",
+    "Real functional contract bug: the idempotency cache path returns the raw DB row (includes extra 'sku_id' key) while the fresh-create path omits it, breaking test_service idempotency equality (res1 == res2).",
+    "Pagination logic itself is correct, but the two API pagination tests fail because order rows accumulate across tests in the shared DB (asserts total==5 but found 7).",
+    "Expiration (300s), stock restoration on expire/cancel, and PENDING-state enforcement are all implemented correctly and verified by the isolated service-layer tests."
+  ],
+  "score_rationale": {
+    "task_fulfillment": "File structure and the full 7-endpoint API surface are complete and spec-compliant. output_contract_adherence cannot be confirmed: no JSON manifest (files_created/entrypoint/test_command) exists in the workspace and the agent's final message is not observable here, so it is scored neutrally on absence of evidence.",
+    "functional_correctness": "Business rules, expiration, state transitions, and HTTP error semantics are largely correct. Idempotency correctly avoids double stock deduction, but the cached reservation returns a different dict shape than a fresh reservation (extra sku_id), a genuine contract inconsistency that fails a test.",
+    "executability": "Dependencies are fully declared and imports/entrypoint are valid (app instantiates, uvicorn target correct). However automated_test_results is heavily penalized: the suite does not pass 100% (3 clean failures) and is non-idempotent across runs (12 failures on re-run).",
+    "test_quality": "All six required scenarios are covered with reasonably strict data/state assertions. Environment isolation is the major weakness: API tests are not isolated (ineffective dependency_overrides, shared persistent DB, no global-repo teardown); only the service tests use proper temp-db fixtures.",
+    "code_quality": "Naming, routing, and control flow are clear and readable, with clean separation: SQL confined to repository.py, orchestration in service.py, HTTP wiring in app.py.",
+    "minimality": "No over-engineering or unrequested features. Minor dead code: unused 'status' import in app.py and unused 'Depends' import in security.py.",
+    "security_safety": "All mutating endpoints are gated by the x-api-key dependency returning 401; /orders is intentionally public. Pydantic enforces types but lacks value constraints (negative quantity/stock and empty strings are accepted)."
+  },
+  "instruction_failures": [
+    "No machine-readable output manifest (files_created/entrypoint/test_command JSON) is present in the workspace to confirm the requested output contract."
+  ],
+  "correctness_failures": [
+    "Idempotent retry returns the raw DB row including 'sku_id', diverging from the fresh-reservation response shape (service.py:19-21 vs repository.py:126-133); breaks res1 == res2 equality.",
+    "Stock validation does not reject negative quantities or negative initial_stock; adjust_stock can drive available_stock negative (no floor check in repository.adjust_stock)."
+  ],
+  "execution_failures": [
+    "tests/test_api.py::TestOrders::test_get_orders_pagination — assert total == 5 fails (got 7) due to order rows leaking from earlier tests in shared commerce.db.",
+    "tests/test_api.py::TestOrders::test_get_orders_pagination_offset — page-3 length assert 5 fails (got 10) for the same accumulation reason.",
+    "tests/test_service.py::TestReservationIdempotency::test_idempotent_retry_returns_cached — res1 == res2 fails because cached dict contains extra 'sku_id'.",
+    "Re-running pytest without removing commerce.db: 12 failures with sqlite3.IntegrityError UNIQUE constraint failed: skus.sku (no DB cleanup between runs)."
+  ],
+  "test_gaps": [
+    "API-layer tests provide no real isolation: app.dependency_overrides is keyed on repository/service classes that the routes never resolve via Depends, so the overrides never take effect and the temp db created in the fixture is unused.",
+    "No teardown resets or removes the global commerce.db, so suite results depend on test order and prior runs.",
+    "No test asserts that available_stock cannot go negative, and none covers reservation against a non-existent SKU at the API layer."
+  ],
+  "quality_notes": [
+    "Clean layering and consistent naming across app/service/repository.",
+    "Widespread use of deprecated datetime.utcnow() (repository.py:58,115,165 and service.py:43) raising DeprecationWarnings.",
+    "Repository opens/closes a new sqlite3 connection per call — simple and correct for this scope, though not pooled."
+  ],
+  "unnecessary_code_examples": [
+    "app.py:1 imports `status` from fastapi but only uses integer literals (201/400) — unused.",
+    "security.py:1 imports `Depends` which is never used in that module."
+  ],
+  "security_safety_notes": [
+    "All mutating endpoints (POST /skus, /stock/adjust, /reservations, confirm, cancel) require x-api-key and return 401 on missing/invalid key (verified by tests).",
+    "API token is a hardcoded constant (security.py:4) rather than env-sourced; acceptable for the exercise but not production-grade.",
+    "Pydantic validates types but imposes no value constraints (e.g., quantity > 0), allowing semantically invalid inputs."
+  ],
+  "file_evidence": [
+    {"path": "src/commerce_service/app.py", "note": "All 7 routes present; uses module-level globals `service`/`repository` instead of Depends, which is why test dependency_overrides are no-ops."},
+    {"path": "src/commerce_service/service.py", "note": "Correct expiration (300s, line 43), stock restore on expire/cancel, PENDING enforcement; idempotency returns cached existing dict with mismatched shape (lines 19-21)."},
+    {"path": "src/commerce_service/repository.py", "note": "SQLite DAL; create_reservation returns dict without sku_id while get_reservation_by_idempotency_key returns full row with sku_id — shape divergence."},
+    {"path": "src/commerce_service/security.py", "note": "x-api-key header check returning 401; unused Depends import."},
+    {"path": "src/commerce_service/models.py", "note": "Pydantic schemas validate types but no field constraints."},
+    {"path": "tests/test_api.py", "note": "dependency_overrides keyed on classes never injected; expired test writes directly to 'commerce.db' confirming global repo path; pagination asserts fail from cross-test accumulation."},
+    {"path": "tests/test_service.py", "note": "Properly isolated via temp_db fixture; idempotency equality test exposes the sku_id shape bug."},
+    {"path": "pyproject.toml", "note": "Declares fastapi/pydantic/uvicorn + dev pytest/pytest-asyncio/httpx — complete."}
+  ],
+  "commands_run": [
+    "find <workspace> -type f (file listing)",
+    "python3 --version; which pytest; ls *.db (3.12.4, no pre-existing db)",
+    "python3 -c import fastapi/pydantic/httpx/pytest_asyncio (deps present: fastapi 0.109.0, pydantic 2.5.3, httpx 0.25.2)",
+    "python3 -m pytest tests/ -v (clean: 3 failed, 30 passed, 233 warnings)",
+    "python3 -m pytest tests/ (re-run with leftover db: 12 failed, 21 passed — UNIQUE constraint)",
+    "rm -f commerce.db; python3 -m pytest tests/ (clean rerun reproduces 3 failed, 30 passed); removed artifact"
+  ],
+  "review_risk": "Low. Test execution was performed directly and failures reproduced deterministically from a clean state, with the root causes (ineffective dependency_overrides + shared persistent DB, and the idempotency dict-shape mismatch) confirmed by reading the code. The only unverifiable item is output_contract_adherence, since the agent's final JSON message is not part of the inspectable workspace; it was scored neutrally rather than assumed."
+}
+```

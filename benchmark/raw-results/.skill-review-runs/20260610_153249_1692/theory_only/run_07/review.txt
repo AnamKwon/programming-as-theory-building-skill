@@ -1,0 +1,135 @@
+The service runs correctly with the default file-based DB. The 14 API test failures are caused entirely by a broken test fixture: `Repository("sqlite:///:memory:")` uses SQLAlchemy's per-thread `SingletonThreadPool`, but FastAPI's `TestClient` runs request handlers in a separate worker thread, which receives a fresh empty in-memory database (`no such table: skus`). The application logic itself is correct.
+
+```json
+{
+  "rubric_version": "benchmark-codegen-review-v1",
+  "score_scale": "0-100 per category",
+  "weights": {
+    "task_fulfillment": 0.20,
+    "functional_correctness": 0.25,
+    "executability": 0.15,
+    "test_quality": 0.15,
+    "code_quality": 0.10,
+    "minimality": 0.10,
+    "security_safety": 0.05
+  },
+  "task_fulfillment_score": 92,
+  "task_fulfillment_breakdown": {
+    "file_structure_compliance": 95,
+    "api_surface_coverage": 100,
+    "output_contract_adherence": 80
+  },
+  "functional_correctness_score": 87,
+  "functional_correctness_breakdown": {
+    "business_logic_accuracy": 90,
+    "expiration_and_state_rules": 90,
+    "concurrency_and_idempotency": 88,
+    "error_handling_semantics": 80
+  },
+  "executability_score": 73,
+  "executability_breakdown": {
+    "dependency_completeness": 95,
+    "imports_and_entrypoints": 90,
+    "automated_test_results": 35
+  },
+  "test_quality_score": 76,
+  "test_quality_breakdown": {
+    "specification_coverage": 95,
+    "assertion_rigor": 88,
+    "environment_isolation": 45
+  },
+  "code_quality_score": 91,
+  "code_quality_breakdown": {
+    "clarity_and_naming": 90,
+    "separation_of_concerns": 92
+  },
+  "minimality_score": 80,
+  "minimality_breakdown": {
+    "no_dead_code": 75,
+    "structural_complexity": 85
+  },
+  "security_safety_score": 92,
+  "security_safety_breakdown": {
+    "authentication_gate": 94,
+    "input_validation": 90
+  },
+  "review_confidence_score": 93,
+  "weighted_components": {
+    "task_fulfillment": 18.4,
+    "functional_correctness": 21.75,
+    "executability": 10.95,
+    "test_quality": 11.4,
+    "code_quality": 9.1,
+    "minimality": 8.0,
+    "security_safety": 4.6
+  },
+  "weighted_total": 84.2,
+  "verdict": "good",
+  "key_findings": [
+    "All 7 required endpoints implemented and the service runs correctly at runtime with the default file-based SQLite DB (verified via live TestClient smoke test: health 200, sku 201, reservation 201/PENDING, confirm CONFIRMED+order, orders pagination, noauth 401).",
+    "pytest result: 14 failed, 22 passed (61% pass rate). All 17 service-layer unit tests pass; 14 of 19 API integration tests fail.",
+    "Root cause of all API failures is a broken test fixture, not application logic: in-memory SQLite ('sqlite:///:memory:') uses SQLAlchemy's per-thread SingletonThreadPool while TestClient handles requests in a separate worker thread, so the request thread sees an empty DB ('no such table: skus').",
+    "Business rules (300s expiration with stock restore, PENDING enforcement, idempotency caching with single stock deduction, pagination offset) are correctly implemented and proven by the passing unit tests.",
+    "Clean layering: repository.py (DB), service.py (logic), app.py (routing), security.py (auth). All mutating endpoints gated by X-API-Key dependency.",
+    "Several unused imports and minor deprecation warnings (declarative_base, datetime.utcnow, Pydantic class Config)."
+  ],
+  "score_rationale": {
+    "task_fulfillment": "All expected source/config/test files present and all 7 endpoints implemented (/health, POST /skus, POST /stock/adjust, POST /reservations, /confirm, /cancel, GET /orders). The agent's final JSON output contract (files_created/entrypoint/test_command) is not present in the workspace, so output_contract_adherence is scored conservatively as unverifiable.",
+    "functional_correctness": "Domain logic is correct and verified by passing service unit tests and a live runtime smoke test: 201 vs 200 status codes, stock validation, idempotent replay returning cached reservation without double-deduction, 300s expiration with restore, and PENDING-state enforcement all behave per spec. Slight deduction for using 404 (not the rubric's expected 400) on not-found cases.",
+    "executability": "Dependencies are fully declared and the package installs/imports cleanly; the app spins up and serves requests. Scored down heavily because the specified test command does not pass 100% — 14/36 tests fail at runtime due to the in-memory DB threading defect.",
+    "test_quality": "All 6 required scenarios are covered with rigorous data/state assertions (stock levels, ids, created_at equality, totals). Environment isolation is the weak point: the in-memory + thread-pool setup is broken for API tests, the global repository/service are mutated in place, and there is no teardown of the default commerce.db file.",
+    "code_quality": "Readable naming, docstrings, consistent (data, error) tuple convention in the service, and strong separation of concerns across repository/service/app/security/models.",
+    "minimality": "No speculative architecture; structure is proportional to the task. Minor dead code: unused imports JSONResponse, ReservationResponse, OrderListResponse in app.py; Optional in models.py; timedelta in service.py.",
+    "security_safety": "Every mutating endpoint depends on verify_api_key, returning 401 for missing/invalid keys (confirmed at runtime). Pydantic models enforce types and constraints (min_length, ge, gt). GET /orders is unauthenticated, which is acceptable for a read endpoint."
+  },
+  "instruction_failures": [
+    "Agent's terminal JSON output (files_created/entrypoint/test_command) could not be located in the workspace, so strict output-contract compliance is unverified."
+  ],
+  "correctness_failures": [
+    "Confirm/cancel/not-found paths return HTTP 404 rather than the 400 implied by the rubric's 'business errors -> 400' guidance (defensible but a deviation).",
+    "No business-level guard prevents stock from going negative via POST /stock/adjust with a large negative amount (no validation beyond type)."
+  ],
+  "execution_failures": [
+    "pytest tests/ => 14 failed, 22 passed. All 14 failures: sqlalchemy.exc.OperationalError 'no such table: skus' in tests/test_api.py.",
+    "Cause: Repository('sqlite:///:memory:') + SingletonThreadPool means TestClient's worker thread gets a separate, table-less in-memory database; create_all ran only on the fixture thread's connection."
+  ],
+  "test_gaps": [
+    "API integration layer is effectively untested because every DB-touching API test errors out before asserting behavior.",
+    "test_service.py test_confirm_expired_reservation manipulates created_at across two distinct sessions (get_session().query().update() then a second get_session().commit()); it passes only incidentally due to shared connection behavior and is fragile.",
+    "No test for negative-stock prevention or for the reservation-not-found (404) branch at the API layer.",
+    "No teardown/cleanup of the commerce.db file created on app import."
+  ],
+  "quality_notes": [
+    "Deprecation warnings: declarative_base() (use sqlalchemy.orm), datetime.utcnow() (use timezone-aware), and Pydantic class-based Config (use ConfigDict).",
+    "Reservation table denormalizes both sku (string) and sku_id (FK); only sku_id is needed, sku string is redundant.",
+    "Tuple-based (result, error) returns are consistent but stringly-typed error matching in app.py couples the routing layer to exact service message text."
+  ],
+  "unnecessary_code_examples": [
+    "app.py: 'from fastapi.responses import JSONResponse' is unused.",
+    "app.py: imports ReservationResponse and OrderListResponse but never uses them (no response_model set).",
+    "models.py: 'from typing import Optional' is unused.",
+    "service.py: 'timedelta' imported but unused."
+  ],
+  "security_safety_notes": [
+    "All mutating endpoints (/skus, /stock/adjust, /reservations, /confirm, /cancel) enforced by verify_api_key; runtime check confirmed 401 on missing key.",
+    "API key compared with plain '!=' (not constant-time) and hardcoded as 'test-key-123' — acceptable for this exercise but not production-grade.",
+    "Pydantic Field constraints (min_length, ge=0, gt=0) validate inputs and reject malformed payloads with 422."
+  ],
+  "file_evidence": [
+    {"path": "tests/test_api.py", "note": "Lines 15-25: fixture builds Repository('sqlite:///:memory:') and swaps app_module.repository/service; in-memory DB is invisible to TestClient's request thread -> all DB-backed API tests fail."},
+    {"path": "src/commerce_service/repository.py", "note": "Lines 12-18: create_engine with default pooling; for :memory: this is per-thread SingletonThreadPool, the source of the 'no such table' failures under TestClient."},
+    {"path": "src/commerce_service/service.py", "note": "Lines 90-100: correct 300s expiration check with status->EXPIRED and restore_stock; verified by passing unit test."},
+    {"path": "src/commerce_service/service.py", "note": "Lines 44-55: idempotency returns cached reservation without re-deducting stock; unit test confirms stock deducted once (70 of 100)."},
+    {"path": "src/commerce_service/app.py", "note": "Lines 30,54: 201 status on /skus and /reservations; lines 31,43,56,85,112 apply verify_api_key to all mutations."},
+    {"path": "src/commerce_service/security.py", "note": "Lines 10-22: 401 on missing/invalid X-API-Key; confirmed at runtime."},
+    {"path": "pyproject.toml", "note": "Lines 10-22: complete deps (fastapi, uvicorn, pydantic, sqlalchemy) and dev (pytest, pytest-asyncio, httpx); install succeeded."}
+  ],
+  "commands_run": [
+    "python3 -m venv .venv && pip install -e '.[dev]'",
+    "python -m pytest tests/ -v  (=> 14 failed, 22 passed, 96 warnings)",
+    "python -m pytest tests/ (=> 14 failed, 22 passed)",
+    "python -c '<TestClient smoke test against default file-DB app>' (=> health 200, sku 201, reserve 201, confirm CONFIRMED, orders total 1, noauth 401)"
+  ],
+  "review_risk": "Low. Test execution was reproduced twice (deterministic 14 failed / 22 passed) and the failure root cause was confirmed by stack trace plus a live runtime smoke test proving the application works with the default file-based DB. Main residual uncertainty is the exact intended file list and the agent's final JSON output contract, neither of which is present in the workspace; those items are scored conservatively."
+}
+```

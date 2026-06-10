@@ -1,0 +1,133 @@
+Confirmed dead code: `JSONResponse` and `ErrorResponse` imported in `app.py` but never used, `Literal` imported in `models.py` but unused, and `Repository.clear_all` is never called.
+
+```json
+{
+  "rubric_version": "benchmark-codegen-review-v1",
+  "score_scale": "0-100 per category",
+  "weights": {
+    "task_fulfillment": 0.20,
+    "functional_correctness": 0.25,
+    "executability": 0.15,
+    "test_quality": 0.15,
+    "code_quality": 0.10,
+    "minimality": 0.10,
+    "security_safety": 0.05
+  },
+  "task_fulfillment_score": 90,
+  "task_fulfillment_breakdown": {
+    "file_structure_compliance": 100,
+    "api_surface_coverage": 100,
+    "output_contract_adherence": 70
+  },
+  "functional_correctness_score": 91,
+  "functional_correctness_breakdown": {
+    "business_logic_accuracy": 95,
+    "expiration_and_state_rules": 95,
+    "concurrency_and_idempotency": 95,
+    "error_handling_semantics": 78
+  },
+  "executability_score": 100,
+  "executability_breakdown": {
+    "dependency_completeness": 100,
+    "imports_and_entrypoints": 100,
+    "automated_test_results": 100
+  },
+  "test_quality_score": 91,
+  "test_quality_breakdown": {
+    "specification_coverage": 100,
+    "assertion_rigor": 92,
+    "environment_isolation": 82
+  },
+  "code_quality_score": 94,
+  "code_quality_breakdown": {
+    "clarity_and_naming": 92,
+    "separation_of_concerns": 95
+  },
+  "minimality_score": 79,
+  "minimality_breakdown": {
+    "no_dead_code": 70,
+    "structural_complexity": 88
+  },
+  "security_safety_score": 88,
+  "security_safety_breakdown": {
+    "authentication_gate": 100,
+    "input_validation": 75
+  },
+  "review_confidence_score": 95,
+  "weighted_components": {
+    "task_fulfillment": 18.0,
+    "functional_correctness": 22.75,
+    "executability": 15.0,
+    "test_quality": 13.65,
+    "code_quality": 9.4,
+    "minimality": 7.9,
+    "security_safety": 4.4
+  },
+  "weighted_total": 91.1,
+  "verdict": "excellent",
+  "key_findings": [
+    "All 27 tests pass (16 in test_api.py, 11 in test_service.py) under pytest 7.4.3 / Python 3.12.4 — 100% pass rate, 0.48s runtime.",
+    "All 10 target files present and all 7 required endpoints implemented (/health, /skus, /stock/adjust, /reservations, confirm, cancel, /orders).",
+    "Clean three-layer separation: routing in app.py, business logic in service.py, all SQL isolated in repository.py.",
+    "Core business rules correct: 201 on create (skus/reservations), 200 on mutations (adjust/confirm/cancel), insufficient-stock 400, 300s expiration with stock restoration, idempotency-key dedup that does not double-deduct stock, PENDING-state enforcement.",
+    "Minor spec deviation: missing-credentials requests return 403 (FastAPI HTTPBearer default), not the spec's 401; only the invalid-key path returns 401. Tests codify the 403 behavior.",
+    "Dead code present: unused imports JSONResponse/ErrorResponse (app.py), Literal (models.py), and unused Repository.clear_all method.",
+    "Input validation is type-only — no value constraints, so negative initial_stock/quantity/amount are accepted."
+  ],
+  "score_rationale": {
+    "task_fulfillment": "All 10 files and all 7 endpoints are present and wired correctly. The agent's final structured JSON output (files_created/entrypoint/test_command) is not observable from the repository artifacts, so output_contract_adherence is scored conservatively for lack of evidence rather than for any observed violation.",
+    "functional_correctness": "Stock validation, status-code selection, pagination offset math ((page-1)*size), 300-second expiration block with stock restoration, idempotency caching without stock mutation, and PENDING enforcement on confirm/cancel are all correct and runtime-verified. Deduction is for the missing-auth path returning 403 instead of the specified 401; the invalid-key path correctly returns 401.",
+    "executability": "pyproject.toml declares fastapi, uvicorn[standard], pydantic, pytest, httpx with pinned versions; package installs editable; imports resolve against src/ layout; uvicorn entrypoint commerce_service.app:app is valid; full test suite passes 27/27.",
+    "test_quality": "All six required scenarios are covered (happy path, insufficient stock, idempotency, expiration, auth block, pagination) at both API and service layers, with assertions on response bodies and on persisted state (stock levels, reservation status). Isolation relies on temp-DB fixtures plus monkey-patching the module-global repo/service; a real inventory.db is still created in the working dir at import time, slightly weakening isolation.",
+    "code_quality": "Naming, routing, and control flow are clear and consistent. Database access is fully encapsulated in repository.py and routing in app.py, with a clean intermediate service layer holding business logic.",
+    "minimality": "Architecture is appropriately sized with no over-engineering, but several unused imports (JSONResponse, ErrorResponse, Literal) and an unused clear_all method reduce the no-dead-code subscore.",
+    "security_safety": "Every mutating endpoint depends on verify_api_key; read-only /health and /orders are open, which is reasonable. Pydantic enforces types but no field constraints, allowing semantically invalid negative values."
+  },
+  "instruction_failures": [
+    "Output-contract JSON (files_created/entrypoint/test_command) could not be verified from repository artifacts; presence/format is unconfirmed."
+  ],
+  "correctness_failures": [
+    "Missing-credential requests return HTTP 403 (HTTPBearer default) rather than the specified 401 for auth failures; only invalid-key returns 401."
+  ],
+  "execution_failures": [],
+  "test_gaps": [
+    "No test asserts the 401 path distinctly versus 403 — test_unauthorized_mutation_attempts accepts both, masking the spec deviation.",
+    "No test for adjust_stock on a non-existent SKU (404 path) or for negative/invalid quantity inputs.",
+    "test_api isolation depends on mutating app module globals rather than dependency-injection overrides; a stray inventory.db is created in the project root at import time."
+  ],
+  "quality_notes": [
+    "Service layer cleanly separates business logic from both routing and persistence (exceeds the minimal repository.py+app.py expectation).",
+    "Idempotency returns the cached reservation regardless of whether the resubmitted quantity/sku differ — typical but undocumented behavior.",
+    "Expiration is evaluated lazily only on confirm; cancel does not re-check expiration (acceptable, since cancel restores stock for any PENDING reservation)."
+  ],
+  "unnecessary_code_examples": [
+    "src/commerce_service/app.py:4 — `from fastapi.responses import JSONResponse` never used.",
+    "src/commerce_service/app.py:13 — `ErrorResponse` imported but never referenced.",
+    "src/commerce_service/models.py:4 — `from typing import Literal` never used.",
+    "src/commerce_service/repository.py:230 — `clear_all` method defined but never called by app or tests."
+  ],
+  "security_safety_notes": [
+    "All mutating endpoints (POST /skus, /stock/adjust, /reservations, confirm, cancel) are gated by Depends(verify_api_key).",
+    "API key sourced from env with an insecure hardcoded fallback 'test-key-default' (security.py:11) when API_KEY is unset.",
+    "Pydantic models validate types only; no Field constraints, so negative initial_stock/quantity/amount pass validation and could corrupt stock accounting."
+  ],
+  "file_evidence": [
+    {"path": "src/commerce_service/app.py", "note": "7 endpoints with correct status codes (201 for skus/reservations, 200 for adjust/confirm/cancel/orders); all mutations depend on verify_api_key; unused JSONResponse/ErrorResponse imports."},
+    {"path": "src/commerce_service/service.py", "note": "Business logic: stock check (lines 68-72), idempotency cache (47-58), 300s expiration + restoration (105-117), PENDING enforcement (99-103, 141-145)."},
+    {"path": "src/commerce_service/repository.py", "note": "All SQL isolated here; pagination via LIMIT/OFFSET with offset=(page-1)*size (210-214); unused clear_all (230-238)."},
+    {"path": "src/commerce_service/security.py", "note": "HTTPBearer-based auth; invalid key -> 401, but missing header -> 403 default; insecure 'test-key-default' fallback (line 11)."},
+    {"path": "src/commerce_service/models.py", "note": "Pydantic request/response models; type-only validation, no value constraints; unused Literal import."},
+    {"path": "tests/test_api.py", "note": "16 API tests incl. happy path, insufficient stock, idempotency, expiration, pagination; asserts both 401 and 403 for unauthorized (line 470)."},
+    {"path": "tests/test_service.py", "note": "11 service-layer tests with state assertions on stock levels and reservation status; expiration test manipulates created_at to 301s."},
+    {"path": "pyproject.toml", "note": "Declares fastapi, uvicorn[standard], pydantic, pytest, httpx with pinned versions; src/ package layout."}
+  ],
+  "commands_run": [
+    "find . -type f (file inventory)",
+    "python3 --version (3.12.4)",
+    "pip install -e . (editable install; succeeded, with unrelated peer-dep warnings)",
+    "python3 -m pytest tests/ -v (27 passed in 0.48s)",
+    "grep -n for unused symbols (ErrorResponse/JSONResponse/Literal/clear_all)"
+  ],
+  "review_risk": "Low. All findings are grounded in direct file reads and a live test run (27/27 pass). The only unverifiable item is the agent's final output-contract JSON, which is not represented in repository artifacts; its score reflects absence of evidence, not an observed defect."
+}
+```

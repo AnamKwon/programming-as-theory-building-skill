@@ -1,0 +1,136 @@
+Root cause confirmed. Each `sqlite3.connect(":memory:")` opens an isolated database, so the tables created in `_init_db()` are discarded when that connection closes — every subsequent data operation hits `no such table`. This is the single defect behind 26 of 30 test failures.
+
+```json
+{
+  "rubric_version": "benchmark-codegen-review-v1",
+  "score_scale": "0-100 per category",
+  "weights": {
+    "task_fulfillment": 0.20,
+    "functional_correctness": 0.25,
+    "executability": 0.15,
+    "test_quality": 0.15,
+    "code_quality": 0.10,
+    "minimality": 0.10,
+    "security_safety": 0.05
+  },
+  "task_fulfillment_score": 82,
+  "task_fulfillment_breakdown": {
+    "file_structure_compliance": 95,
+    "api_surface_coverage": 100,
+    "output_contract_adherence": 50
+  },
+  "functional_correctness_score": 30,
+  "functional_correctness_breakdown": {
+    "business_logic_accuracy": 30,
+    "expiration_and_state_rules": 30,
+    "concurrency_and_idempotency": 25,
+    "error_handling_semantics": 35
+  },
+  "executability_score": 66,
+  "executability_breakdown": {
+    "dependency_completeness": 95,
+    "imports_and_entrypoints": 90,
+    "automated_test_results": 13
+  },
+  "test_quality_score": 75,
+  "test_quality_breakdown": {
+    "specification_coverage": 100,
+    "assertion_rigor": 90,
+    "environment_isolation": 35
+  },
+  "code_quality_score": 88,
+  "code_quality_breakdown": {
+    "clarity_and_naming": 85,
+    "separation_of_concerns": 90
+  },
+  "minimality_score": 78,
+  "minimality_breakdown": {
+    "no_dead_code": 70,
+    "structural_complexity": 85
+  },
+  "security_safety_score": 93,
+  "security_safety_breakdown": {
+    "authentication_gate": 95,
+    "input_validation": 90
+  },
+  "review_confidence_score": 96,
+  "weighted_components": {
+    "task_fulfillment": 16.4,
+    "functional_correctness": 7.5,
+    "executability": 9.9,
+    "test_quality": 11.25,
+    "code_quality": 8.8,
+    "minimality": 7.8,
+    "security_safety": 4.65
+  },
+  "weighted_total": 66.3,
+  "verdict": "mixed",
+  "key_findings": [
+    "FATAL RUNTIME DEFECT: repository.py uses DATABASE_URL=':memory:' and opens a new sqlite3.connect() per method call. Each :memory: connection is an isolated database, so tables created in _init_db() are gone before any operation runs. Every data operation throws sqlite3.OperationalError: no such table.",
+    "Test execution: 26 of 30 tests FAIL, 4 pass. The only passing tests (health check, missing/invalid auth, mutation auth gate) never touch the database.",
+    "All 7 required endpoints and all 10 file artifacts are present, and the layered structure (app/service/repository/security/models) is clean — but the service is non-functional end-to-end.",
+    "Secondary bug in app.py adjust_stock: the inner `raise HTTPException(404, 'SKU not found')` is swallowed by the surrounding `except Exception` and re-raised as 400, so a missing SKU can never return 404 even with a working DB.",
+    "Test suite has no DB/state isolation between tests — relies on globally shared TestClient/CommerceService and unique SKU names rather than fixtures with teardown.",
+    "The defect is a one-line fix (e.g. persistent shared connection or 'file::memory:?cache=shared'), placing it squarely in 'requires immediate manual code fixes to function'."
+  ],
+  "score_rationale": {
+    "task_fulfillment": "All 7 endpoints (/health, /skus, /stock/adjust, /reservations, confirm, cancel, /orders) are implemented and all expected files exist, scoring high on structure and API coverage. The agent's final-message JSON contract (files_created/entrypoint/test_command) could not be observed from the workspace artifacts, so output_contract_adherence is scored neutrally at 50 for lack of evidence.",
+    "functional_correctness": "Severely penalized: although the source logic for 201/200 statuses, stock validation, idempotency, 300s expiration, and pagination is conceptually correct, none of it executes successfully due to the :memory: connection isolation defect. 26/30 tests fail at runtime. Error handling also has a real 404→400 swallow bug in adjust_stock.",
+    "executability": "Dependencies are complete (fastapi, pydantic, uvicorn, pytest, pytest-asyncio, httpx) and imports/entrypoint are valid — the app boots and /health responds. However automated_test_results is near-zero: only 13% (4/30) of tests pass.",
+    "test_quality": "Tests cover all 6 required scenarios (happy path, insufficient stock, idempotency, expiration via datetime mock, auth block, pagination) with rigorous assertions on response bodies and stock-state changes. Heavily docked for environment isolation: shared module-level client/service with no per-test teardown or DB reset.",
+    "code_quality": "Naming, routing, and control flow are clear and readable; separation of concerns is genuinely good with DB access confined to repository.py and routing in app.py. Minor smell: broad `except Exception` blocks in app.py that mask intended HTTP status codes.",
+    "minimality": "Largely free of over-engineering, but contains dead code: the ConfirmReservationRequest model and security.get_api_key_dependency() are never used. No unrequested architectural bloat.",
+    "security_safety": "Strongest area: all mutating endpoints are gated by Depends(verify_api_key) returning 401 for missing/invalid keys (verified by passing tests), and Pydantic models enforce type and bound validation (initial_stock ge=0, quantity gt=0)."
+  },
+  "instruction_failures": [
+    "Could not confirm the final agent output was exclusively the required JSON object (files_created, entrypoint, test_command); a README.md is present but the agent's terminal message is not observable from the artifacts."
+  ],
+  "correctness_failures": [
+    "repository.py:7,16 — ':memory:' with per-call sqlite3.connect() yields isolated empty databases; tables from _init_db() do not persist, breaking all data operations (verified: sqlite3.OperationalError: no such table: skus).",
+    "app.py:36-47 — adjust_stock's inner `raise HTTPException(status_code=404)` is caught by the outer `except Exception` and converted to 400; missing-SKU can never return 404.",
+    "Confirmed at runtime: create_sku, adjust_stock, create_reservation, confirm, cancel, and get_orders all fail; idempotency/expiration/state-restoration logic never executes successfully."
+  ],
+  "execution_failures": [
+    "pytest result: 26 failed, 4 passed (test_api.py: 8 failed/4 passed; test_service.py: 14 failed/0 passed).",
+    "test_service.py failures are sqlite3.OperationalError: no such table; test_api.py failures cascade as 400 instead of 201/200/404 and KeyError: 'id' on empty response bodies."
+  ],
+  "test_gaps": [
+    "No test isolation/teardown: tests share a global TestClient and CommerceService instance and depend on unique SKU naming to avoid cross-test contamination.",
+    "No API-level test for the expiration path (only the service-level test_confirm_reservation_expired mocks datetime); the HTTP 'Reservation expired' 400 branch is unexercised.",
+    "No test asserts stock restoration specifically on expiration (only on cancel).",
+    "No negative test for the adjust_stock 404 branch at the unit/service layer to catch the exception-swallowing bug."
+  ],
+  "quality_notes": [
+    "Clean three-layer separation (app → service → repository) with models and security isolated.",
+    "Broad `try/except Exception` wrappers in app.py obscure error semantics and caused the 404→400 regression.",
+    "datetime.utcnow() is used throughout and emits DeprecationWarning on Python 3.12."
+  ],
+  "unnecessary_code_examples": [
+    "models.py:41-42 — ConfirmReservationRequest(BaseModel): pass is defined but never imported or used.",
+    "security.py:15-16 — get_api_key_dependency() helper is never referenced (routes use Depends(verify_api_key) directly)."
+  ],
+  "security_safety_notes": [
+    "All mutating endpoints enforce the X-API-Key dependency; 401 returned for missing and invalid keys (verified by 4 passing auth tests).",
+    "Pydantic models validate types and bounds (initial_stock ge=0, quantity gt=0).",
+    "API key is a hardcoded constant ('test-api-key-secret') in source — acceptable for a demo but not externalized to config/env."
+  ],
+  "file_evidence": [
+    {"path": "src/commerce_service/repository.py", "note": "Lines 7,15-18: DATABASE_URL=':memory:' with new connection per call — root cause of total runtime failure; tables created at line 20-59 do not persist."},
+    {"path": "src/commerce_service/app.py", "note": "Lines 36-47: except Exception swallows the 404 HTTPException in adjust_stock and re-raises as 400. All 7 endpoints present and registered."},
+    {"path": "src/commerce_service/service.py", "note": "Lines 29-64: expiration (300s), PENDING enforcement, and stock restoration logic correct in design but never executes due to repo defect."},
+    {"path": "src/commerce_service/security.py", "note": "Lines 7-12: verify_api_key returns 401 for missing/invalid keys — only fully working subsystem; line 15-16 helper unused."},
+    {"path": "src/commerce_service/models.py", "note": "Pydantic v2 models with bound validation; ConfirmReservationRequest (lines 41-42) is dead."},
+    {"path": "tests/test_service.py", "note": "Comprehensive scenario coverage incl. mocked expiration (72-87), but shared service fixture with no teardown; all 14 fail at runtime."},
+    {"path": "tests/test_api.py", "note": "Covers all 6 required criteria with strict body/state assertions; shared module-level client, no isolation; 8/12 fail."},
+    {"path": "pyproject.toml", "note": "Dependencies complete (fastapi, pydantic, uvicorn + dev: pytest, pytest-asyncio, httpx)."}
+  ],
+  "commands_run": [
+    "find . -type f | sort",
+    "python3 --version; python3 -c 'import fastapi,pytest,httpx' (fastapi 0.109.0, py3.12.4)",
+    "python3 -m pytest tests/ -v  => 26 failed, 4 passed",
+    "python3 -m pytest tests/ -v | grep PASSED  => health_check, create_sku_missing_auth, create_sku_invalid_auth, mutation_endpoints_require_auth",
+    "python3 -c '<sqlite :memory: isolation reproducer>'  => ISOLATED -> no such table: t"
+  ],
+  "review_risk": "Low. The defect was reproduced directly via the project's own test command and an isolated sqlite reproducer; root cause, failure count (26/30), and the secondary 404 bug are all confirmed by execution and line-level citation. The only unverifiable item is the agent's final-message JSON contract, which is not observable from the workspace artifacts and is flagged as such."
+}
+```

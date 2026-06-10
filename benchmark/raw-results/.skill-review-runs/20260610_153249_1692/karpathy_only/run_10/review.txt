@@ -1,0 +1,136 @@
+I have all the evidence needed. The findings are clear:
+
+- **Production app works** (verified manually: SKU creation, reservation, idempotency dedup, insufficient-stock 400, confirm→order, pagination all behaved correctly with a persistent file DB).
+- **Delivered test suite fails 22/27** due to a fundamental incompatibility: `Repository._get_connection()` opens a fresh `sqlite3.connect()` per call while `_init_db()` runs only once in `__init__`. With `:memory:` (test_service.py) each connection is a separate empty DB; with the `reset_db` fixture deleting `commerce.db` (test_api.py), tables are never recreated. Only the 5 non-DB tests (health + auth rejections) pass.
+
+```json
+{
+  "rubric_version": "benchmark-codegen-review-v1",
+  "score_scale": "0-100 per category",
+  "weights": {
+    "task_fulfillment": 0.20,
+    "functional_correctness": 0.25,
+    "executability": 0.15,
+    "test_quality": 0.15,
+    "code_quality": 0.10,
+    "minimality": 0.10,
+    "security_safety": 0.05
+  },
+  "task_fulfillment_score": 83,
+  "task_fulfillment_breakdown": {
+    "file_structure_compliance": 100,
+    "api_surface_coverage": 100,
+    "output_contract_adherence": 50
+  },
+  "functional_correctness_score": 65,
+  "functional_correctness_breakdown": {
+    "business_logic_accuracy": 65,
+    "expiration_and_state_rules": 60,
+    "concurrency_and_idempotency": 65,
+    "error_handling_semantics": 70
+  },
+  "executability_score": 68,
+  "executability_breakdown": {
+    "dependency_completeness": 95,
+    "imports_and_entrypoints": 90,
+    "automated_test_results": 19
+  },
+  "test_quality_score": 67,
+  "test_quality_breakdown": {
+    "specification_coverage": 95,
+    "assertion_rigor": 90,
+    "environment_isolation": 15
+  },
+  "code_quality_score": 90,
+  "code_quality_breakdown": {
+    "clarity_and_naming": 88,
+    "separation_of_concerns": 92
+  },
+  "minimality_score": 84,
+  "minimality_breakdown": {
+    "no_dead_code": 78,
+    "structural_complexity": 90
+  },
+  "security_safety_score": 88,
+  "security_safety_breakdown": {
+    "authentication_gate": 95,
+    "input_validation": 80
+  },
+  "review_confidence_score": 93,
+  "weighted_components": {
+    "task_fulfillment": 16.6,
+    "functional_correctness": 16.25,
+    "executability": 10.2,
+    "test_quality": 10.05,
+    "code_quality": 9.0,
+    "minimality": 8.4,
+    "security_safety": 4.4
+  },
+  "weighted_total": 74.9,
+  "verdict": "mixed",
+  "key_findings": [
+    "Test suite fails 22 of 27 tests (18.5% pass) at runtime; only the 5 non-DB tests pass (health + auth rejections).",
+    "Root cause is a DB lifecycle defect: Repository._get_connection() opens a fresh sqlite3.connect() per call while _init_db() runs only once in __init__. With ':memory:' each connection is a separate empty DB; the test_api reset_db fixture deletes commerce.db but tables are never recreated.",
+    "When run normally via the file DB (commerce.db), the service is fully functional: verified SKU creation (201), reservation with PENDING status, idempotency dedup, insufficient-stock 400, confirm->order creation, and pagination all behave per spec.",
+    "All 7 endpoints and all 10 core files are present; separation of concerns (app/service/repository/security) is clean.",
+    "The delivered artifact requires manual code fixes (DB connection strategy or fixture/init design) for its own tests to pass."
+  ],
+  "score_rationale": {
+    "task_fulfillment": "All 10 core files present (pyproject, README, __init__, app, models, repository, security, service, 2 test modules) and all 7 endpoints implemented (/health, /skus, /stock/adjust, /reservations, confirm, cancel, /orders). Output-contract adherence (final JSON with files_created/entrypoint/test_command) could not be observed from the workspace artifacts, scored neutrally.",
+    "functional_correctness": "Per the directive to base correctness on actual runtime test results, most behavior-verifying tests fail to execute due to the DB defect. Independent manual exercise of the running app confirmed the logic itself is correct (201/200 status split, PENDING enforcement, idempotency caching without double-decrement, insufficient-stock 400), so the logic is sound but not corroborated by the delivered test run.",
+    "executability": "Dependencies are complete and pinned (fastapi, pydantic, uvicorn, pytest, pytest-asyncio, httpx); imports/entrypoint are valid and the app spins up (health 200). Automated tests pass only 5/27, dragging the category down.",
+    "test_quality": "Coverage spans all 6 required scenarios (happy path, insufficient stock, idempotency, expiration, auth block, pagination) with rigorous assertions on data and stock state. Environment isolation is the critical failure: ':memory:' and file-deletion teardown are incompatible with the per-call connection design, so isolation breaks every DB test.",
+    "code_quality": "Clear naming, readable routing, and clean separation: repository.py owns all SQL, service.py owns business rules, app.py owns routing, security.py owns auth.",
+    "minimality": "No over-engineering. Minor dead code: unused 'status' import in app.py and unused SKUResponse model in models.py.",
+    "security_safety": "All mutating POST endpoints are gated by verify_token dependency; auth rejections (401 missing/invalid) verified passing. Pydantic models validate types but lack value constraints (e.g., no ge=0 on stock/quantity/amount, allowing negative stock)."
+  },
+  "instruction_failures": [
+    "Output contract (exclusive JSON with files_created/entrypoint/test_command) not verifiable from delivered files; a README was provided instead, which may violate an 'output JSON only' instruction."
+  ],
+  "correctness_failures": [
+    "Delivered test suite does not pass: 22/27 fail with sqlite3.OperationalError: no such table.",
+    "test_service.py uses Repository(':memory:') which is incompatible with the connection-per-operation pattern (tables vanish between connections).",
+    "test_api.py reset_db deletes commerce.db each test but tables are only created once at import, so they are never recreated.",
+    "create_sku has no duplicate-SKU handling (UNIQUE constraint would raise an unhandled 500); adjust_stock permits stock going negative."
+  ],
+  "execution_failures": [
+    "pytest: 22 failed, 5 passed in ~1.7s.",
+    "Every endpoint test touching the database raises sqlite3.OperationalError: no such table: skus."
+  ],
+  "test_gaps": [
+    "Environment isolation/teardown is structurally broken, so no DB-backed behavior is actually validated by the suite.",
+    "No test asserts stock is restored on expiration at the API layer (the service-level test exists but cannot run).",
+    "No test for duplicate-SKU creation or negative-stock adjustment edge cases."
+  ],
+  "quality_notes": [
+    "Clean layered architecture (app/service/repository/security/models).",
+    "Consistent ValueError->HTTPException(400) translation in app.py.",
+    "Timezone-aware UTC timestamps used for created_at and expiration math."
+  ],
+  "unnecessary_code_examples": [
+    "models.py:9-12 SKUResponse is defined but never used (endpoints return raw dicts).",
+    "app.py:1 'status' imported from fastapi but not referenced in app.py."
+  ],
+  "security_safety_notes": [
+    "All mutating endpoints require Bearer token via Depends(verify_token); verified 401 on missing and invalid tokens.",
+    "GET /orders is unauthenticated (read-only; acceptable but worth noting).",
+    "Pydantic models lack numeric constraints, permitting negative initial_stock/quantity/amount."
+  ],
+  "file_evidence": [
+    {"path": "src/commerce_service/repository.py", "note": "Lines 11-22: _get_connection() opens a new sqlite3.connect(db_path) per call; lines 24-55: _init_db() runs only once in __init__ — root cause of all test failures with :memory: and file-deletion fixtures."},
+    {"path": "src/commerce_service/service.py", "note": "Lines 46-70: correct expiration (>300s) with stock restoration and order creation; lines 27-29: idempotency returns cached reservation. Logic verified correct via manual run."},
+    {"path": "src/commerce_service/app.py", "note": "All 7 endpoints present; 201 on create_sku/reservations, default 200 on adjust/confirm/cancel; 'status' import unused."},
+    {"path": "src/commerce_service/security.py", "note": "Bearer-token gate returning 401 on missing/invalid; covers all mutating endpoints."},
+    {"path": "tests/test_service.py", "note": "Line 9: Repository(':memory:') incompatible with per-call connections — all DB tests fail."},
+    {"path": "tests/test_api.py", "note": "Lines 16-23: reset_db deletes commerce.db but tables are never recreated post-import — all DB tests fail."},
+    {"path": "pyproject.toml", "note": "Complete pinned deps incl. dev (pytest, pytest-asyncio, httpx); editable install succeeded."}
+  ],
+  "commands_run": [
+    "find . -type f | sort",
+    "python3 -m venv .venv && .venv/bin/pip install -e \".[dev]\"",
+    ".venv/bin/python -m pytest tests/ -v  (result: 22 failed, 5 passed)",
+    ".venv/bin/python -c '<manual TestClient exercise of all endpoints with fresh file DB>'  (all behaved per spec)"
+  ],
+  "review_risk": "Low confidence risk on scoring: test failures, root cause, and manual app behavior were all reproduced directly. The main interpretive judgment is the production-vs-test split — the running service is functional, but the delivered test suite is broken and would require code/fixture fixes to pass, which is why correctness/executability/test-quality are penalized despite sound logic. Output-contract adherence could not be observed from workspace files and was scored neutrally."
+}
+```

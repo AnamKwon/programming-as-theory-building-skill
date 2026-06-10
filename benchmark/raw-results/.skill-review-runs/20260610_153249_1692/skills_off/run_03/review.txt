@@ -1,0 +1,138 @@
+```json
+{
+  "rubric_version": "benchmark-codegen-review-v1",
+  "score_scale": "0-100 per category",
+  "weights": {
+    "task_fulfillment": 0.20,
+    "functional_correctness": 0.25,
+    "executability": 0.15,
+    "test_quality": 0.15,
+    "code_quality": 0.10,
+    "minimality": 0.10,
+    "security_safety": 0.05
+  },
+  "task_fulfillment_score": 83,
+  "task_fulfillment_breakdown": {
+    "file_structure_compliance": 100,
+    "api_surface_coverage": 100,
+    "output_contract_adherence": 50
+  },
+  "functional_correctness_score": 54,
+  "functional_correctness_breakdown": {
+    "business_logic_accuracy": 60,
+    "expiration_and_state_rules": 20,
+    "concurrency_and_idempotency": 85,
+    "error_handling_semantics": 50
+  },
+  "executability_score": 68,
+  "executability_breakdown": {
+    "dependency_completeness": 95,
+    "imports_and_entrypoints": 90,
+    "automated_test_results": 20
+  },
+  "test_quality_score": 62,
+  "test_quality_breakdown": {
+    "specification_coverage": 90,
+    "assertion_rigor": 80,
+    "environment_isolation": 15
+  },
+  "code_quality_score": 87,
+  "code_quality_breakdown": {
+    "clarity_and_naming": 85,
+    "separation_of_concerns": 88
+  },
+  "minimality_score": 75,
+  "minimality_breakdown": {
+    "no_dead_code": 65,
+    "structural_complexity": 85
+  },
+  "security_safety_score": 75,
+  "security_safety_breakdown": {
+    "authentication_gate": 90,
+    "input_validation": 60
+  },
+  "review_confidence_score": 93,
+  "weighted_components": {
+    "task_fulfillment": 16.6,
+    "functional_correctness": 13.5,
+    "executability": 10.2,
+    "test_quality": 9.3,
+    "code_quality": 8.7,
+    "minimality": 7.5,
+    "security_safety": 3.75
+  },
+  "weighted_total": 69.6,
+  "verdict": "mixed",
+  "key_findings": [
+    "CRITICAL: service.py:75 subtracts a timezone-naive datetime (SQLite-stored created_at) from an aware datetime.now(timezone.utc), raising TypeError on every reservation confirm/expiration check. Since the confirm route only catches ValueError, this surfaces as HTTP 500 in production and breaks all order creation.",
+    "CRITICAL test defect: test_api.py sets app.dependency_overrides[db.get_session], but routes depend on the module-level get_session function (verified: get_session is db.get_session -> False). The override never applies, so API tests hit the real persistent commerce.db file.",
+    "Test results are non-deterministic: 14 failed on a clean DB, then stable at 17 failed / 20 passed once commerce.db accumulates PRODUCT-001 primary keys and idempotency keys from prior runs.",
+    "All 10 required files and all 7 required endpoints are present and structurally correct.",
+    "Idempotency logic is correct at the service layer (duplicate key returns cached reservation without double-deducting stock) — verified by passing isolated service tests.",
+    "Clean layering: repository.py owns DB access, service.py owns business logic, app.py owns routing."
+  ],
+  "score_rationale": {
+    "task_fulfillment": "All 10 target files and all 7 endpoints (/health, /skus, /stock/adjust, /reservations, confirm, cancel, /orders) are implemented. output_contract_adherence scored 50 because no final agent JSON (files_created/entrypoint/test_command) artifact exists in the repository to verify against.",
+    "functional_correctness": "Idempotency and pagination math are correct, but the timezone subtraction bug renders the entire confirm/expiration/state-transition path non-functional at runtime, and that path is central to the spec. Confirm leaks TypeError as 500 because only ValueError is handled.",
+    "executability": "Dependencies and imports are complete and the app imports/boots cleanly, but the mandatory test run produced 17 failures of 37 (~54% pass) and is run-order/state dependent, so automated_test_results is heavily penalized.",
+    "test_quality": "All six required scenarios are covered with reasonably strict assertions (stock levels, status fields, ids). However environment isolation is fundamentally broken: the dependency override targets the wrong callable, in-memory DBs are recreated per request (no cross-request persistence even if keyed right), and a real commerce.db file is written and polluted across runs.",
+    "code_quality": "Naming, routing structure, and control flow are clear and idiomatic; separation of concerns across repository/service/app layers is clean and consistent.",
+    "minimality": "Architecture is appropriately scoped with no gratuitous patterns, but several dead artifacts exist (unused ErrorResponse model, unused Optional import in models.py, unused OrderModel import in service.py, and a status_code returned by create_reservation that the route ignores).",
+    "security_safety": "All mutating endpoints enforce the X-API-Token dependency and return 401 correctly; /orders is an unauthenticated read which is acceptable. Input validation is weak: Pydantic models declare only base types with no constraints (no ge=0 on stock/quantity, no min_length on sku/idempotency_key), allowing negative stock and empty identifiers."
+  },
+  "instruction_failures": [
+    "No final-output JSON artifact (files_created/entrypoint/test_command) is present in the workspace to confirm output_contract_adherence."
+  ],
+  "correctness_failures": [
+    "service.py:74-75 — TypeError: can't subtract offset-naive and offset-aware datetimes on every confirm_reservation call (SQLite returns naive created_at; now is tz-aware). Breaks confirm, expiration handling, expired-stock-restoration, and all order creation.",
+    "app.py:82-97 — confirm_reservation route catches only ValueError; the TypeError above propagates as HTTP 500 instead of a structured error.",
+    "create_reservation returns status_code 201 for cached idempotent replays; the route hardcodes 201 and ignores the returned status_code, so an idempotent replay cannot signal 200.",
+    "app.py:42-47/56-61 — broad `except Exception -> 400` masks IntegrityErrors (e.g., duplicate SKU primary key) as generic 400 Bad Request."
+  ],
+  "execution_failures": [
+    "pytest: 17 failed, 20 passed (stable after commerce.db pollution); 14 failed, 23 passed on a clean DB — non-deterministic.",
+    "Service-layer failures: test_confirm_reservation_success, test_confirm_reservation_expired, test_confirm_expired_restores_stock, test_confirm_non_pending_fails, test_cancel_non_pending_fails, test_list_orders_pagination, test_list_orders_page_offset — all from the timezone TypeError.",
+    "API-layer failures: create/adjust/reserve/confirm/cancel/list tests fail because the dependency override never takes effect and requests hit a shared persistent commerce.db."
+  ],
+  "test_gaps": [
+    "No test asserts stock restoration via the API layer (only service layer), and those service assertions are unreachable due to the timezone bug.",
+    "No negative/zero-quantity or negative-stock validation tests (the code would accept them).",
+    "API idempotency test asserts only id/sku equality, not that stock was deducted exactly once over HTTP.",
+    "No test isolates the persistent commerce.db; the suite silently depends on prior-run state."
+  ],
+  "quality_notes": [
+    "Layered design (repository/service/app/security/models) is clean and readable.",
+    "Reservation expiration constant RESERVATION_EXPIRY_SECONDS = 300 matches the 300-second spec.",
+    "Generic `except Exception` handlers reduce diagnosability and conflate distinct failure modes into 400."
+  ],
+  "unnecessary_code_examples": [
+    "models.py:50 ErrorResponse class is defined but never used.",
+    "models.py:3 `from typing import Optional` is unused.",
+    "service.py:12 imports OrderModel which is never referenced.",
+    "service.create_reservation returns a (dict, status_code) tuple but the route discards the status_code, always emitting 201."
+  ],
+  "security_safety_notes": [
+    "All mutating endpoints (POST /skus, /stock/adjust, /reservations, confirm, cancel) require verify_api_token and return 401 on missing/invalid token — verified by passing auth tests.",
+    "Pydantic models lack value constraints (no Field(ge=...), no min_length), so negative stock/quantity and empty sku/idempotency_key are accepted.",
+    "Hardcoded API token literal 'test-api-key-12345' in security.py is acceptable for a demo but not configurable via environment."
+  ],
+  "file_evidence": [
+    {"path": "src/commerce_service/service.py", "note": "Lines 74-75: tz-aware now minus naive created_at -> TypeError; root cause of all confirm/expiration failures. Expiry constant 300s at line 16 is correct."},
+    {"path": "tests/test_api.py", "note": "Lines 13-19: override_get_session keyed on db.get_session (bound method) not the route's module-level get_session; override never applies. Also creates a new in-memory DB per request."},
+    {"path": "src/commerce_service/app.py", "note": "All 7 endpoints present; confirm route (82-97) catches only ValueError so TypeError -> 500; broad Exception->400 at 46-47/60-61."},
+    {"path": "src/commerce_service/repository.py", "note": "Clean DB layer; global Database default 'sqlite:///commerce.db' is the persistent file that pollutes test runs."},
+    {"path": "src/commerce_service/security.py", "note": "verify_api_token returns 401 on missing/invalid X-API-Token; correct auth gate."},
+    {"path": "pyproject.toml", "note": "Complete deps: fastapi, pydantic, sqlalchemy, uvicorn; dev: pytest, pytest-asyncio, httpx."},
+    {"path": "src/commerce_service/models.py", "note": "Pydantic models use bare types with no validation constraints; unused ErrorResponse and Optional import."}
+  ],
+  "commands_run": [
+    "find . -type f (10 source/test files enumerated)",
+    "python3 --version (3.12.4); import check for fastapi/pydantic/sqlalchemy/pytest/httpx -> deps ok",
+    "pip install -e . (exit 0)",
+    "python3 -m pytest tests/ -v (first clean run: 14 failed, 23 passed)",
+    "python3 -m pytest tests/ x3 (stable: 17 failed, 20 passed each)",
+    "python3 -c verify get_session is db.get_session -> False (override key mismatch confirmed)"
+  ],
+  "review_risk": "Low. Tests were executed multiple times and both critical defects (timezone subtraction TypeError and dependency-override key mismatch) were reproduced and root-caused with direct runtime verification. The only unverifiable item is output_contract_adherence, since the agent's final JSON output is not part of the workspace."
+}
+```

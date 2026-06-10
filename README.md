@@ -33,47 +33,43 @@ That makes the agent inspect code paths, names, tests, docs, and runtime behavio
 
 ## Benchmark summary
 
-The comparison used the same commerce-backend code generation prompt across three arms:
+The benchmark compares commerce-backend code generation across three isolated arms:
 
 - `skills_off`: managed Claude Code skills disabled.
 - `karpathy_only`: only the Karpathy guidelines skill enabled.
 - `theory_only`: only this Programming as Theory Building skill enabled.
 
-Code generation used **Claude Haiku** through the Claude Code `MODEL=haiku` setting for every arm. Each arm ran independent generations in a fresh temporary workspace. The generated projects were then reviewed by a separate Claude Opus review pass using a weighted rubric for task fulfillment, functional correctness, executability, test quality, code quality, minimality, and security/safety.
+Code generation used **Claude Haiku** through the Claude Code `MODEL=haiku` setting for every arm. Each generation ran in a fresh temporary workspace, and generated projects were reviewed by a separate Claude Opus review pass using `benchmark-codegen-review-v1`.
 
-Latest comparable 3-arm summary used:
+The copied benchmark now contains two prompt families:
 
-- Codegen runs: `benchmark/raw-results/.skill-codegen-runs/20260609_152615_16568`, `benchmark/raw-results/.skill-codegen-runs/20260609_195509_38196`, `benchmark/raw-results/.skill-codegen-runs/20260610_091239_64934`, `benchmark/raw-results/.skill-codegen-runs/20260610_092511_66275`
-- Review runs: `benchmark/raw-results/.skill-review-runs/20260609_170106_24348`, `benchmark/raw-results/.skill-review-runs/20260609_231224_49469`, `benchmark/raw-results/.skill-review-runs/20260610_102240_76453`, `benchmark/raw-results/.skill-review-runs/20260610_141815_93034`
-- Codegen model setting: `MODEL=haiku`
-- Repeats: 40 per arm, 120 total reviewed projects
-- Prompt: FastAPI + SQLite inventory reservation and order orchestration API
-- Reviewer rubric: `benchmark-codegen-review-v1`
-- Excluded run: `benchmark/raw-results/.skill-review-runs/20260610_153249_1692` because it is not a comparable three-arm run.
+- `basic-commerce`: the original, looser FastAPI + SQLite inventory reservation/order orchestration prompt.
+- `strict-production`: a later, more explicit prompt that specifies endpoints, status codes, error bodies, expiration behavior, stock restoration, 401 auth behavior, and pagination semantics.
 
-| Arm | Avg weighted total | Functional correctness | Test quality | Good verdicts | Mixed verdicts | Poor verdicts |
-| --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| `skills_off` | 71.0 | 61.4 | 65.8 | 12/40 | 27/40 | 1/40 |
-| `karpathy_only` | 73.9 | 63.8 | 70.5 | 19/40 | 21/40 | 0/40 |
-| `theory_only` | 77.9 | 68.6 | 76.1 | 27/40 | 13/40 | 0/40 |
+Because the prompt changed, the headline result is reported by prompt family rather than as one flattened average.
 
-The largest difference was not formatting or surface completeness. `theory_only` improved the reviewer-scored correctness of the generated business rules: stock availability, idempotency, reservation expiration, order state transitions, and error behavior. Across 40 runs per arm, it led `skills_off` by +6.8 weighted-total points, +7.2 functional-correctness points, +9.6 executability points, and +10.3 test-quality points. It led `karpathy_only` by +4.0 weighted-total points and +4.8 functional-correctness points.
+| Prompt family | Arm | n | Avg weighted | Functional | Executability | Test quality | Verdict summary |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | --- |
+| `basic-commerce` | `skills_off` | 40 | 71.0 | 61.4 | 68.9 | 65.8 | 12 good, 27 mixed, 1 poor |
+| `basic-commerce` | `karpathy_only` | 40 | 73.9 | 63.8 | 71.0 | 70.5 | 19 good, 21 mixed |
+| `basic-commerce` | `theory_only` | 40 | **77.9** | **68.6** | **78.5** | **76.1** | 27 good, 13 mixed |
+| `strict-production` | `skills_off` | 19 | 80.9 | 76.6 | 74.2 | 80.3 | 4 excellent, 7 good, 8 mixed |
+| `strict-production` | `karpathy_only` | 19 | 82.5 | 77.5 | **80.5** | 83.2 | 5 excellent, 5 good, 9 mixed |
+| `strict-production` | `theory_only` | 20 | **83.4** | **81.8** | 77.8 | **83.8** | 4 excellent, 12 good, 4 mixed |
 
 ## Interpreting the result
 
-The baseline without skills was already capable of producing complete-looking FastAPI projects, but the review repeatedly found hidden domain failures: tests passing while stock was not actually reserved, order state transitions diverging from reservation state, or generated code leaving committed database artifacts and unused schemas.
+The `basic-commerce` prompt is the cleaner test of skill behavior because the prompt leaves more program theory to be inferred. In that family, `theory_only` won all four run-level comparisons. Its advantage was strongest in executability and tests, where it led `skills_off` by +9.6 and +10.3 points respectively.
 
-The Karpathy-only arm was useful as general coding discipline and outperformed `skills_off` on weighted total, test quality, minimality, and good-verdict count in this 40-run summary. It still repeatedly missed important commerce invariants: reservations that did not actually hold inventory, non-atomic confirmation flows, idempotency retries that ignored payload changes, and incomplete order lifecycle wiring. The pattern in review findings suggests that broad "good code" guidance can improve shape and readability while still missing the exact invariant unless the agent is forced to rebuild the program's domain theory.
+The `strict-production` prompt raised every arm. It explicitly supplied many rules that the theory-building skill otherwise had to recover: status codes, stock restoration, expiration behavior, idempotency expectations, and pagination semantics. In that stricter family, the gap narrowed; `karpathy_only` won one run and `theory_only` won the other.
 
-The theory-only arm was not perfect. Review still found reservation reuse, expiration cleanup, idempotency, unused dependency, README mismatch, and deprecated API issues in some runs. The useful signal is that it shifted the distribution: more `good` verdicts, higher average functional correctness, better executability, stronger tests, and clearer service/repository/API boundaries tied to the requested workflow.
+The overall pattern is that `karpathy_only` improves readability and compactness, while `theory_only` more consistently improves domain correctness, executability, and behavioral tests. Neither skill eliminates recurring failures by itself: inventory/reservation invariants, idempotency, expiration/state transitions, SQLite isolation, runtime entrypoints, dead code, and README overclaims still appear in reviews.
 
-The public benchmark files include the aggregate summary plus raw copied codegen/review run folders:
+Run-by-run results, invalid review-output notes, copied raw result folders, and recurring failure categories are documented in [benchmark/README.md](benchmark/README.md).
 
 - `benchmark/results-20260609.json`
 - `benchmark/raw-results/.skill-codegen-runs/`
 - `benchmark/raw-results/.skill-review-runs/`
-
-The headline aggregate now uses four comparable three-arm review sets and excludes `20260610_153249_1692`, which contains only `karpathy_only` results. Generated SQLite databases, Python caches, and pytest caches are intentionally ignored.
 
 ## Install
 
@@ -112,14 +108,14 @@ These guidelines are working if you see:
 
 ## Reproduce the benchmark
 
-From the parent experiment workspace, run 10-repeat sets and aggregate the comparable three-arm results:
+From the parent experiment workspace, run 10-repeat sets and aggregate results by prompt family:
 
 ```bash
 MODEL=haiku REPEATS=10 ARMS="skills_off karpathy_only theory_only" ./run_skill_codegen_experiment.sh
 MODEL=opus ./run_opus_code_review_experiment.sh .skill-codegen-runs/<run_id>
 ```
 
-The published summary combines four complete 10-repeat review sets. A fresh `REPEATS=40` run can produce the same sample size, but it will not reproduce the exact copied run ids.
+The published benchmark combines multiple 10-repeat batches. Keep prompt revisions separate when aggregating; the `basic-commerce` and `strict-production` prompts are not directly interchangeable samples.
 
 The benchmark harness intentionally keeps `both` out of the default comparison set. `ARMS=both` remains available as an explicit opt-in, but the default comparison isolates single-skill effects.
 

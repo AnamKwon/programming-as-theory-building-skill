@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "commerce-service"
+version = "0.1.0"
+description = "Commerce Inventory & Order API"
+requires-python = ">=3.10"
+dependencies = [
+    "fastapi==0.109.0",
+    "uvicorn[standard]==0.27.0",
+    "pydantic==2.5.3",
+    "pytest==7.4.3",
+    "httpx==0.25.2",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest-asyncio==0.23.2",
+    "black==23.12.1",
+    "ruff==0.1.11",
+]
+
+[tool.setuptools]
+packages = ["commerce_service"]
+package-dir = {"" = "src"}

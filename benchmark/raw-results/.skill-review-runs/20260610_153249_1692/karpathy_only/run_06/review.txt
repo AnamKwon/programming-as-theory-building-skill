@@ -1,0 +1,133 @@
+```json
+{
+  "rubric_version": "benchmark-codegen-review-v1",
+  "score_scale": "0-100 per category",
+  "weights": {
+    "task_fulfillment": 0.20,
+    "functional_correctness": 0.25,
+    "executability": 0.15,
+    "test_quality": 0.15,
+    "code_quality": 0.10,
+    "minimality": 0.10,
+    "security_safety": 0.05
+  },
+  "task_fulfillment_score": 88,
+  "task_fulfillment_breakdown": {
+    "file_structure_compliance": 90,
+    "api_surface_coverage": 100,
+    "output_contract_adherence": 75
+  },
+  "functional_correctness_score": 80,
+  "functional_correctness_breakdown": {
+    "business_logic_accuracy": 88,
+    "expiration_and_state_rules": 90,
+    "concurrency_and_idempotency": 80,
+    "error_handling_semantics": 60
+  },
+  "executability_score": 88,
+  "executability_breakdown": {
+    "dependency_completeness": 100,
+    "imports_and_entrypoints": 95,
+    "automated_test_results": 70
+  },
+  "test_quality_score": 90,
+  "test_quality_breakdown": {
+    "specification_coverage": 100,
+    "assertion_rigor": 90,
+    "environment_isolation": 80
+  },
+  "code_quality_score": 84,
+  "code_quality_breakdown": {
+    "clarity_and_naming": 88,
+    "separation_of_concerns": 80
+  },
+  "minimality_score": 80,
+  "minimality_breakdown": {
+    "no_dead_code": 75,
+    "structural_complexity": 85
+  },
+  "security_safety_score": 90,
+  "security_safety_breakdown": {
+    "authentication_gate": 90,
+    "input_validation": 90
+  },
+  "review_confidence_score": 95,
+  "weighted_components": {
+    "task_fulfillment": 17.6,
+    "functional_correctness": 20.0,
+    "executability": 13.2,
+    "test_quality": 13.5,
+    "code_quality": 8.4,
+    "minimality": 8.0,
+    "security_safety": 4.5
+  },
+  "weighted_total": 85.2,
+  "verdict": "good",
+  "key_findings": [
+    "Test suite executes and 35/37 pass; 2 auth tests fail because missing X-API-Token returns HTTP 422 (FastAPI required-header validation) instead of the spec-expected 401.",
+    "All 7 specified endpoints implemented (/health, /skus, /stock/adjust, /reservations, confirm, cancel, /orders) with correct 201/200 status codes and correct offset pagination.",
+    "300-second expiration block, stock restoration on expiration and cancellation, and PENDING-state enforcement are all implemented and covered by passing tests.",
+    "Idempotency replay correctly returns cached reservation without double-deducting stock (test_idempotent_reservation_does_not_deduct_stock_twice passes).",
+    "Clean layered separation across app.py / service.py / repository.py / security.py / models.py, but with minor leaks and dead code."
+  ],
+  "score_rationale": {
+    "task_fulfillment": "All expected source/test files are present (11 files: package + two test modules, exceeding the typical 10-file set) and all 7 endpoints exist. output_contract_adherence cannot be verified from the workspace alone since the agent's final JSON message is not observable here, so it is scored conservatively rather than failed.",
+    "functional_correctness": "Business rules, expiration/state transitions, and idempotency are largely correct and test-verified. Error semantics are the weak point: missing-auth yields 422 not 401, and service.create_reservation evaluates stock (service.py:30) before the repository idempotency lookup (repository.py:156), so an idempotent replay after stock falls below quantity would wrongly return insufficient_stock.",
+    "executability": "Dependencies are fully declared (fastapi, pydantic, uvicorn, pytest, pytest-asyncio, httpx); imports and the uvicorn entrypoint resolve and the app boots. Knocked down because the automated suite does not reach 100% — 2 of 37 tests fail at runtime.",
+    "test_quality": "All six required scenarios are covered (happy path, insufficient stock, idempotency, expiration, auth block, pagination) with rigorous assertions on response bodies and stock-level state, not just status codes. Per-test temp DB fixtures provide isolation; the api client fixture instantiates two separate Repository objects against the same temp file, which works but is sloppy.",
+    "code_quality": "Naming and control flow are clear and routing is readable. Separation is mostly clean, but app.py:30 inspects raw SQLite error strings (DB concern leaking into the route layer) and confirm/cancel routes call repository.get_reservation directly, bypassing the service layer.",
+    "minimality": "No over-engineered architecture or unrequested features. Minor dead code: app.py:76 fetches a reservation that is never used in the confirm response, and models.ErrorResponse plus the Optional import in models.py are unused.",
+    "security_safety": "All mutating endpoints (skus, stock/adjust, reservations, confirm, cancel) are gated by the verify_api_token dependency; GET /orders and /health are unauthenticated by design. Pydantic models enforce types and constraints (min_length, ge, gt). Minor smells: hardcoded fallback token 'default-secret-token' and the gate emitting 422 rather than 401 on a missing header."
+  },
+  "instruction_failures": [
+    "Output-contract (exclusive JSON with files_created/entrypoint/test_command) cannot be confirmed from the delivered workspace; no evidence of violation but not verifiable."
+  ],
+  "correctness_failures": [
+    "Missing X-API-Token header returns 422 instead of 401 (security.py:10 uses Header(...) as a required param; failure raised before the token comparison).",
+    "service.create_reservation checks stock availability before the idempotency lookup, so an idempotent replay after stock depletion can incorrectly return insufficient_stock instead of the cached reservation.",
+    "confirm_reservation response is assembled in app.py from order data while an unused get_reservation call is made (app.py:76)."
+  ],
+  "execution_failures": [
+    "tests/test_api.py::test_create_sku_no_auth — assert 422 == 401",
+    "tests/test_api.py::test_unauthorized_mutations — assert 422 == 401"
+  ],
+  "test_gaps": [
+    "No test asserts that the confirm response includes order id / created_at fields, only status and reservation_id.",
+    "No test for idempotent replay after stock depletion (the exact path exposing the service-layer ordering bug).",
+    "No test covers /orders empty-result or out-of-range page behavior.",
+    "Tests assert 401 for missing auth (matching spec) but the implementation returns 422 — the mismatch went uncaught at build time and surfaces only as a runtime failure."
+  ],
+  "quality_notes": [
+    "app.py:30 catches a broad Exception and string-matches 'UNIQUE constraint failed', leaking SQLite-specific behavior into the routing layer.",
+    "confirm/cancel routes reach into repository.get_reservation directly, partially bypassing the CommerceService abstraction.",
+    "Repeated datetime.utcnow() usage triggers deprecation warnings under Python 3.12 (non-fatal).",
+    "New SQLite connection opened per operation; acceptable for the scope but not pooled."
+  ],
+  "unnecessary_code_examples": [
+    "app.py:76 — reservation = repository.get_reservation(id) result is never used in confirm_reservation.",
+    "models.py:51 — ErrorResponse model defined but never referenced.",
+    "models.py:2 — 'from typing import Optional' imported but unused (code uses list[...] / built-in generics)."
+  ],
+  "security_safety_notes": [
+    "All mutating POST endpoints enforce Depends(verify_api_token); read-only GET /orders and /health are intentionally open.",
+    "security.py:6 falls back to a hardcoded 'default-secret-token' when API_TOKEN is unset — weak default for production.",
+    "Auth gate rejects missing credentials with 422 rather than 401; access is still blocked, but the status code misrepresents the failure as a validation error."
+  ],
+  "file_evidence": [
+    {"path": "src/commerce_service/security.py", "note": "Header(...) makes the token required, so missing header yields 422 before the 401 comparison; hardcoded default token fallback."},
+    {"path": "src/commerce_service/app.py", "note": "All 7 endpoints with correct status codes; broad except + SQLite string match at line 30; unused get_reservation at line 76."},
+    {"path": "src/commerce_service/service.py", "note": "Stock check (line 30) precedes repository idempotency lookup; 300s expiry, restore, and PENDING enforcement correct."},
+    {"path": "src/commerce_service/repository.py", "note": "Idempotency keyed on idempotency_key; restore_stock reverses available/reserved; pagination offset = (page-1)*size."},
+    {"path": "tests/test_api.py", "note": "20 API tests incl. auth, expiration (line 254), pagination (line 344); two auth tests assert 401 and fail against 422."},
+    {"path": "tests/test_service.py", "note": "Unit tests verify stock-state changes for idempotency, cancel, and expiration; all pass."},
+    {"path": "pyproject.toml", "note": "Declares fastapi/pydantic/uvicorn and dev deps pytest/pytest-asyncio/httpx; asyncio_mode=auto."}
+  ],
+  "commands_run": [
+    "find . -type f (excluding caches) — enumerated 11 project files",
+    "python3 --version (3.12.4); dependency import check — all present",
+    "python3 -m pytest tests/ -v — 2 failed, 35 passed, 213 warnings",
+    "python3 -m pytest tests/ — confirmed 2 failed / 35 passed"
+  ],
+  "review_risk": "Low. All core files read in full and the actual test command executed twice with consistent results (35 pass / 2 fail). The only unverifiable rubric item is output_contract_adherence, since the agent's final JSON message is not present in the workspace; scored conservatively rather than penalized as a failure."
+}
+```

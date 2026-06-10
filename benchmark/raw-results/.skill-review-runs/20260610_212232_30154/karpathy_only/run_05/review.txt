@@ -1,0 +1,150 @@
+All files read, imports verified, and tests executed. I have complete runtime evidence. Here is my objective evaluation.
+
+The critical finding: `security.py` imports `HTTPAuthCredentials` from `fastapi.security`, which does not exist (correct name is `HTTPAuthorizationCredentials`). This `ImportError` propagates through `app.py`, so the entire FastAPI application cannot be imported or started, and all 18 integration tests in `test_api.py` fail at collection. Only the 11 mock-based unit tests in `test_service.py` run and pass.
+
+```json
+{
+  "rubric_version": "benchmark-codegen-review-v1",
+  "score_scale": "0-100 per category",
+  "weights": {
+    "task_fulfillment": 0.20,
+    "functional_correctness": 0.25,
+    "executability": 0.15,
+    "test_quality": 0.15,
+    "code_quality": 0.10,
+    "minimality": 0.10,
+    "security_safety": 0.05
+  },
+  "task_fulfillment_score": 83,
+  "task_fulfillment_breakdown": {
+    "file_structure_compliance": 95,
+    "api_surface_coverage": 95,
+    "output_contract_adherence": 60
+  },
+  "functional_correctness_score": 68,
+  "functional_correctness_breakdown": {
+    "business_logic_accuracy": 68,
+    "expiration_and_state_rules": 80,
+    "concurrency_and_idempotency": 80,
+    "error_handling_semantics": 45
+  },
+  "executability_score": 40,
+  "executability_breakdown": {
+    "dependency_completeness": 95,
+    "imports_and_entrypoints": 10,
+    "automated_test_results": 15
+  },
+  "test_quality_score": 74,
+  "test_quality_breakdown": {
+    "specification_coverage": 90,
+    "assertion_rigor": 88,
+    "environment_isolation": 45
+  },
+  "code_quality_score": 88,
+  "code_quality_breakdown": {
+    "clarity_and_naming": 85,
+    "separation_of_concerns": 90
+  },
+  "minimality_score": 78,
+  "minimality_breakdown": {
+    "no_dead_code": 70,
+    "structural_complexity": 85
+  },
+  "security_safety_score": 75,
+  "security_safety_breakdown": {
+    "authentication_gate": 72,
+    "input_validation": 78
+  },
+  "review_confidence_score": 95,
+  "weighted_components": {
+    "task_fulfillment": 16.6,
+    "functional_correctness": 17.0,
+    "executability": 6.0,
+    "test_quality": 11.1,
+    "code_quality": 8.8,
+    "minimality": 7.8,
+    "security_safety": 3.75
+  },
+  "weighted_total": 71.1,
+  "verdict": "mixed",
+  "key_findings": [
+    "CRITICAL: security.py line 4 imports non-existent 'HTTPAuthCredentials' from fastapi.security (should be 'HTTPAuthorizationCredentials'). This raises ImportError on app import, so the application cannot start and the entire API integration test module fails at collection.",
+    "Test execution result: `pytest tests/` ends in a collection ERROR; 18 of 18 tests in test_api.py never run. Only 11 mock-based unit tests in test_service.py pass. The suite does NOT pass 100%.",
+    "All 10+ target files are present and all 7 endpoints (/health, /skus, /stock/adjust, /reservations, confirm, cancel, /orders) are implemented.",
+    "Auth uses HTTPBearer which returns HTTP 403 on missing/invalid credentials, not 401 as the rubric specifies; tests were written to assert 403, matching the implementation rather than the spec.",
+    "README documents 'X-API-Key' header authentication, but the code implements Bearer-token auth (Authorization: Bearer ...) — documentation/implementation mismatch.",
+    "Core domain logic (300s expiration, stock restoration on expire/cancel, PENDING enforcement, idempotent reservation reuse, pagination offset) is correct and verified by the passing unit tests.",
+    "test_confirm_reservation_expired calls real time.sleep(301), forcing a literal 5-minute wall-clock block if the API tests could run."
+  ],
+  "score_rationale": {
+    "task_fulfillment": "All requested source/test/config files exist and all seven endpoints are routed and wired to the service layer. Output-contract adherence (final JSON with files_created/entrypoint/test_command) cannot be verified from the workspace artifacts, so it is scored neutrally.",
+    "functional_correctness": "The isolated business logic is correct and provably passes mock-based unit tests for stock validation, expiration, restoration, idempotency, and pagination. However, error-handling semantics deviate from spec: auth failures yield 403 instead of the required 401, and duplicate-SKU detection relies on fragile substring matching of a raised exception. Crucially the integrated service is non-functional at runtime due to the import error.",
+    "executability": "Dependencies are fully and pin-correctly declared. But imports_and_entrypoints fails outright: the app cannot be imported. Running the specified test command produces a collection error rather than a passing suite — only 11/29 tests execute.",
+    "test_quality": "Test design covers all six required scenarios with rigorous data-level assertions (state, stock levels, IDs, pagination counts). Isolation is weak: a single shared module-level in-memory DB and TestClient with no per-test teardown, relying on unique SKU names to avoid cross-test contamination, plus an unguarded real 301-second sleep.",
+    "code_quality": "Clean layered architecture with clear naming and docstrings; repository.py isolates all DB access, service.py holds business logic, app.py holds routing. The lone significant defect is the broken security import.",
+    "minimality": "No major over-engineering or unrequested features. Several unused imports lower the score: typing.Optional and datetime.timedelta in service.py, and typing.Literal in models.py.",
+    "security_safety": "All mutating endpoints are gated by the verify_api_key dependency (GET endpoints intentionally open). Pydantic enforces payload types, but there are no value constraints (e.g., quantity>0, non-negative stock), and the auth gate is non-functional at runtime due to the import error and returns the wrong status code."
+  },
+  "instruction_failures": [
+    "Auth returns 403, not the rubric-specified 401 for authentication failures.",
+    "README claims X-API-Key header auth while code uses Bearer token auth.",
+    "Final structured output contract (files_created/entrypoint/test_command JSON) not verifiable from delivered artifacts."
+  ],
+  "correctness_failures": [
+    "Application is unimportable/unstartable: ImportError on 'HTTPAuthCredentials' in security.py:4.",
+    "Authentication failure status code is 403 instead of 401.",
+    "Duplicate-SKU error handling depends on matching the substring 'UNIQUE constraint failed' in the raised exception string, which is brittle across DB drivers/versions.",
+    "adjust_stock and reservation quantity accept values without lower-bound validation (stock can be driven negative)."
+  ],
+  "execution_failures": [
+    "`python3 -c 'import src.commerce_service.app'` -> ImportError: cannot import name 'HTTPAuthCredentials' from 'fastapi.security'.",
+    "`pytest tests/ --co -q` -> 11 tests collected, 1 error; collection interrupted by test_api.py import failure.",
+    "Full suite does not pass 100%: 18 API integration tests do not run at all."
+  ],
+  "test_gaps": [
+    "No per-test database isolation/teardown; tests share one module-level in-memory engine and TestClient.",
+    "Real time.sleep(301) used for expiration testing instead of time mocking/dependency injection.",
+    "API auth tests assert implementation behavior (403) rather than the specified contract (401), masking the spec deviation.",
+    "No test exercises adjusting/reserving with invalid (negative/zero) quantities."
+  ],
+  "quality_notes": [
+    "Strong separation of concerns across app/service/repository/models/security.",
+    "Consistent docstrings and clear, conventional naming.",
+    "Deprecation warnings: declarative_base() (SQLAlchemy 2.0 moved) and datetime.utcnow() usage.",
+    "models.py defines ORM relationships (sku_obj, order) that are not exercised by the code paths."
+  ],
+  "unnecessary_code_examples": [
+    "service.py:4 `from typing import Optional` — unused.",
+    "service.py:3 `from datetime import datetime, timedelta` — timedelta unused.",
+    "models.py:4 `from typing import Literal` — unused."
+  ],
+  "security_safety_notes": [
+    "All mutating POST endpoints depend on verify_api_key; GET /health and GET /orders are unauthenticated by design.",
+    "API key is a hardcoded constant ('test-api-key') in security.py rather than configuration/env-sourced.",
+    "Pydantic enforces types but no field constraints, allowing negative/zero quantities and stock.",
+    "Auth dependency is non-functional at runtime due to the import error."
+  ],
+  "file_evidence": [
+    {"path": "src/commerce_service/security.py", "note": "Line 4 imports 'HTTPAuthCredentials' (nonexistent) and line 10 type-hints with it; fatal ImportError breaking app import and all API tests."},
+    {"path": "src/commerce_service/app.py", "note": "All 7 endpoints implemented; mutating routes gated by Depends(verify_api_key); imports security so it also fails to load."},
+    {"path": "src/commerce_service/service.py", "note": "Correct 300s expiration, stock restoration, PENDING enforcement, idempotency reuse; unused Optional/timedelta imports."},
+    {"path": "src/commerce_service/repository.py", "note": "DB access cleanly isolated; pagination offset=(page-1)*size correct."},
+    {"path": "src/commerce_service/models.py", "note": "Pydantic + SQLAlchemy models defined; unused Literal import; from_attributes set for ORM serialization."},
+    {"path": "tests/test_api.py", "note": "18 integration tests covering all 6 criteria but fail at collection; real time.sleep(301) at line 252; auth tests assert 403."},
+    {"path": "tests/test_service.py", "note": "11 mock-based unit tests; all pass; verify core business logic."},
+    {"path": "pyproject.toml", "note": "Dependencies complete and pinned (fastapi, uvicorn, pydantic, sqlalchemy, pytest, pytest-asyncio, httpx)."},
+    {"path": "README.md", "note": "Documents X-API-Key auth, contradicting the Bearer-token implementation."}
+  ],
+  "commands_run": [
+    "find . -type f (file listing)",
+    "python3 --version; import fastapi/pytest version checks",
+    "python3 -c 'from fastapi.security import HTTPAuthCredentials' -> ImportError",
+    "python3 -c 'import src.commerce_service.app' -> ImportError",
+    "python3 -m pytest tests/test_service.py -v -> 11 passed",
+    "python3 -m pytest tests/test_api.py --collect-only -> 1 collection error",
+    "python3 -m pytest tests/ --co -q -> 11 collected, 1 error",
+    "python3 -m pytest tests/ --ignore=tests/test_api.py -q -> 11 passed"
+  ],
+  "review_risk": "Low. Findings are grounded in executed commands and exact line citations. The blocking ImportError was reproduced directly. The only unverifiable item is the agent's final JSON output contract, which is not present in the workspace; it is scored neutrally rather than penalized as a confirmed failure. The expiration API test's real 301s sleep was not executed to completion since the module fails collection first."
+}
+```

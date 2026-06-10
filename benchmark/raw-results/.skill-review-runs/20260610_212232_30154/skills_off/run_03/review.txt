@@ -1,0 +1,145 @@
+All files read, tests executed, and the app smoke-tested. Here is my objective evaluation.
+
+**Key runtime findings:**
+- `tests/test_service.py`: 11/11 pass — the service/business layer is correct.
+- `tests/test_api.py`: 2/16 pass, 14 fail. Two distinct root causes:
+  1. **Broken test fixture (environment isolation):** the `db` fixture uses `create_engine("sqlite:///:memory:")` with the default `SingletonThreadPool`. Tables are created on the test thread's connection, but `TestClient` dispatches requests on a different thread, which gets a fresh empty in-memory DB → `OperationalError: no such table: skus`. The `test_confirm_reservation_expired` test compounds this by mutating via the file-based `SessionLocal` instead of the overridden session.
+  2. **Auth semantics bug:** `verify_api_key` uses `Header(...)` (required), so a *missing* `X-API-Key` returns **422**, not the expected **401**. Invalid-key correctly returns 401.
+- Direct smoke test against the real file DB confirms the app itself runs correctly: 201 on create, 400 on insufficient stock, idempotent duplicate returns cached reservation, pagination correct.
+
+```json
+{
+  "rubric_version": "benchmark-codegen-review-v1",
+  "score_scale": "0-100 per category",
+  "weights": {
+    "task_fulfillment": 0.20,
+    "functional_correctness": 0.25,
+    "executability": 0.15,
+    "test_quality": 0.15,
+    "code_quality": 0.10,
+    "minimality": 0.10,
+    "security_safety": 0.05
+  },
+  "task_fulfillment_score": 87,
+  "task_fulfillment_breakdown": {
+    "file_structure_compliance": 95,
+    "api_surface_coverage": 100,
+    "output_contract_adherence": 65
+  },
+  "functional_correctness_score": 84,
+  "functional_correctness_breakdown": {
+    "business_logic_accuracy": 90,
+    "expiration_and_state_rules": 90,
+    "concurrency_and_idempotency": 90,
+    "error_handling_semantics": 65
+  },
+  "executability_score": 73,
+  "executability_breakdown": {
+    "dependency_completeness": 95,
+    "imports_and_entrypoints": 95,
+    "automated_test_results": 30
+  },
+  "test_quality_score": 68,
+  "test_quality_breakdown": {
+    "specification_coverage": 90,
+    "assertion_rigor": 85,
+    "environment_isolation": 30
+  },
+  "code_quality_score": 87,
+  "code_quality_breakdown": {
+    "clarity_and_naming": 88,
+    "separation_of_concerns": 86
+  },
+  "minimality_score": 84,
+  "minimality_breakdown": {
+    "no_dead_code": 80,
+    "structural_complexity": 88
+  },
+  "security_safety_score": 84,
+  "security_safety_breakdown": {
+    "authentication_gate": 88,
+    "input_validation": 80
+  },
+  "review_confidence_score": 92,
+  "weighted_components": {
+    "task_fulfillment": 17.4,
+    "functional_correctness": 21.0,
+    "executability": 11.0,
+    "test_quality": 10.2,
+    "code_quality": 8.7,
+    "minimality": 8.4,
+    "security_safety": 4.2
+  },
+  "weighted_total": 80.9,
+  "verdict": "good",
+  "key_findings": [
+    "All 7 specified endpoints are implemented and the application runs correctly against its real file-based SQLite DB (verified via direct TestClient smoke test: 201 create, 400 insufficient stock, idempotent duplicate returns cached reservation, correct pagination).",
+    "Test suite result: 13/27 pass overall — test_service.py 11/11 pass, test_api.py only 2/16 pass.",
+    "Primary failure cause is a defective test fixture: in-memory SQLite with the default SingletonThreadPool means TestClient's request thread sees an empty DB -> 'no such table: skus' on every mutating API test.",
+    "Genuine app bug: a missing X-API-Key header returns HTTP 422 (Header(...) is required) instead of the spec-expected 401; only an invalid key correctly yields 401.",
+    "Clean separation of concerns: repository.py (DB/ORM), service.py (business logic), app.py (routing), security.py (auth), models.py (Pydantic schemas).",
+    "Business rules (300s expiration with stock restoration, cancellation restoration, PENDING enforcement, idempotency without double stock decrement) are correctly implemented and verified by the passing service-layer tests."
+  ],
+  "score_rationale": {
+    "task_fulfillment": "Complete file layout and all 7 endpoints present with correct status codes (201 for create/reservation, 200 for others). output_contract_adherence scored conservatively because the agent's final JSON output (files_created/entrypoint/test_command) is not observable in the workspace, only its supporting artifacts (README documents entrypoint and test command).",
+    "functional_correctness": "Core logic is correct and runtime-verified for stock validation, expiration/restoration, PENDING enforcement, and idempotency. Deduction concentrated in error_handling_semantics: missing-auth-header returns 422 rather than 401.",
+    "executability": "Dependencies are complete and the app imports and serves requests cleanly against its file DB. automated_test_results heavily penalized because only 48% of the suite passes at runtime.",
+    "test_quality": "Coverage spans all six required scenarios with rigorous assertions on response bodies and state (stock totals, order counts). Severely undercut by broken environment isolation: the in-memory engine/threading mismatch and a cross-database mutation in the expiration test cause 14 runtime failures.",
+    "code_quality": "Readable naming, consistent (reservation, status) tuple result pattern, and clear layering. Minor wrinkle: SQLAlchemy ORM models live in repository.py while models.py holds only Pydantic schemas.",
+    "minimality": "No over-engineering or unrequested features; structure is appropriately scoped. A few unused imports in service.py (timedelta, ReservationResponse) are the main blemish.",
+    "security_safety": "All mutating endpoints depend on verify_api_key and the read-only /orders is appropriately open. Pydantic enforces field types. Weaknesses: wrong status code for the missing-key path and no value constraints (e.g., non-negative quantity)."
+  },
+  "instruction_failures": [
+    "The agent's required final JSON output (files_created, entrypoint, test_command) could not be located in the workspace, so exclusive output-contract adherence is unverifiable from delivered artifacts."
+  ],
+  "correctness_failures": [
+    "Missing X-API-Key header yields HTTP 422 (FastAPI validation error from Header(...)) instead of 401; tests test_create_sku_unauthorized / test_adjust_stock_unauthorized / test_reservation_unauthorized assert 401 and fail with 422.",
+    "Expiration is evaluated lazily only at confirm time; a reservation past 300s remains in PENDING state (and stock stays decremented) until someone attempts to confirm it — no background sweep."
+  ],
+  "execution_failures": [
+    "tests/test_api.py: 14 failures with sqlalchemy.exc.OperationalError 'no such table: skus' — in-memory SQLite tables created on the fixture thread are invisible to TestClient's request thread (SingletonThreadPool gives a per-thread connection).",
+    "Teardown emits sqlite3.ProgrammingError 'SQLite objects created in a thread can only be used in that same thread' due to the same cross-thread in-memory connection misuse.",
+    "test_confirm_reservation_expired (test_api.py) mutates created_at via the file-based SessionLocal rather than the dependency-overridden in-memory session, so even with threading fixed it targets the wrong database."
+  ],
+  "test_gaps": [
+    "No test asserts the precise 401 vs 422 distinction is actually satisfied — the auth bug slipped through because the failing assertion is masked by the earlier DB-table error / the 422 mismatch.",
+    "No test covers adjust_stock on a non-existent SKU (the 404 path in app.py is unexercised).",
+    "No negative/zero quantity or negative initial_stock validation test.",
+    "API-level idempotency test does not assert that stock was NOT decremented twice (only the service-level test verifies stock invariance)."
+  ],
+  "quality_notes": [
+    "Consistent (entity, status_string) return convention from the service layer keeps HTTP mapping in app.py clean.",
+    "SQLAlchemy declarative models reside in repository.py while models.py holds Pydantic schemas — workable but splits 'models' across two files.",
+    "Uses deprecated datetime.utcnow() and legacy declarative_base() (SQLAlchemy 2.0 MovedIn20Warning) throughout."
+  ],
+  "unnecessary_code_examples": [
+    "service.py imports `timedelta` but never uses it (expiration uses total_seconds() > 300).",
+    "service.py imports `ReservationResponse` from models but never references it (responses are built in app.py).",
+    "service.py imports SKURepository's get_by_id-style methods are partly unused (e.g., SKURepository.get_by_id is never called)."
+  ],
+  "security_safety_notes": [
+    "All mutating endpoints (/skus, /stock/adjust, /reservations, confirm, cancel) enforce the X-API-Key dependency; GET /orders is intentionally open.",
+    "API key is hardcoded as a module constant ('test-api-key-12345') in security.py rather than read from environment/config.",
+    "Missing-header returns 422 not 401 — still a rejection, so the gate holds, but the status semantics are incorrect.",
+    "Pydantic validates types but imposes no domain constraints (quantity/amount could be zero or negative)."
+  ],
+  "file_evidence": [
+    {"path": "src/commerce_service/security.py", "note": "verify_api_key uses Header(...) (required) -> missing header produces 422 instead of 401; key hardcoded."},
+    {"path": "src/commerce_service/app.py", "note": "All 7 endpoints present; 201 on /skus and /reservations, 200 elsewhere; mutating routes Depends(verify_api_key); /orders unauthenticated."},
+    {"path": "src/commerce_service/service.py", "note": "Correct business logic: idempotency short-circuit before stock decrement, 300s expiration with stock restoration, PENDING enforcement; unused timedelta/ReservationResponse imports."},
+    {"path": "src/commerce_service/repository.py", "note": "DB layer isolated; uses file DB sqlite:///./commerce.db with SingletonThreadPool; legacy declarative_base()/utcnow()."},
+    {"path": "tests/test_api.py", "note": "db fixture uses in-memory SQLite incompatible with TestClient's request thread -> 14 'no such table' failures; expired test uses wrong SessionLocal."},
+    {"path": "tests/test_service.py", "note": "11/11 pass; rigorous assertions on stock levels, order creation, EXPIRED/CANCELLED states, and pagination counts."},
+    {"path": "pyproject.toml", "note": "Dependencies complete (fastapi, uvicorn, pydantic, sqlalchemy + dev: pytest, pytest-asyncio, httpx); pytest configured for tests/."}
+  ],
+  "commands_run": [
+    "find . -type f (excluding caches) — enumerated 11 project files",
+    "python3 --version (3.12.4) and import check for fastapi/pydantic/sqlalchemy/pytest/httpx — deps ok",
+    "python3 -m pytest tests/ -v — 14 failed, 13 passed, 154 warnings",
+    "python3 -m pytest tests/test_service.py -q — 11 passed",
+    "python3 -m pytest tests/test_api.py -q — 14 failed, 2 passed",
+    "python3 -c '<TestClient smoke test against file DB>' — health ok, sku 201, missing-key 422, reserve 201, dup cached, insufficient 400"
+  ],
+  "review_risk": "Low. Conclusions are grounded in actual pytest execution and a direct TestClient smoke test. The one unverifiable item is the agent's final JSON chat output (not present in the workspace), which only affects the output_contract_adherence sub-score. The exact original task spec was inferred from the rubric and README rather than a spec file in the repo."
+}
+```

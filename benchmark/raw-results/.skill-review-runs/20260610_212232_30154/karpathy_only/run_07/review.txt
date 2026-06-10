@@ -1,0 +1,143 @@
+I have complete evidence. Producing the evaluation.
+
+```json
+{
+  "rubric_version": "benchmark-codegen-review-v1",
+  "score_scale": "0-100 per category",
+  "weights": {
+    "task_fulfillment": 0.20,
+    "functional_correctness": 0.25,
+    "executability": 0.15,
+    "test_quality": 0.15,
+    "code_quality": 0.10,
+    "minimality": 0.10,
+    "security_safety": 0.05
+  },
+  "task_fulfillment_score": 82,
+  "task_fulfillment_breakdown": {
+    "file_structure_compliance": 95,
+    "api_surface_coverage": 100,
+    "output_contract_adherence": 50
+  },
+  "functional_correctness_score": 37,
+  "functional_correctness_breakdown": {
+    "business_logic_accuracy": 33,
+    "expiration_and_state_rules": 33,
+    "concurrency_and_idempotency": 35,
+    "error_handling_semantics": 45
+  },
+  "executability_score": 54,
+  "executability_breakdown": {
+    "dependency_completeness": 85,
+    "imports_and_entrypoints": 55,
+    "automated_test_results": 23
+  },
+  "test_quality_score": 73,
+  "test_quality_breakdown": {
+    "specification_coverage": 95,
+    "assertion_rigor": 85,
+    "environment_isolation": 40
+  },
+  "code_quality_score": 83,
+  "code_quality_breakdown": {
+    "clarity_and_naming": 80,
+    "separation_of_concerns": 85
+  },
+  "minimality_score": 63,
+  "minimality_breakdown": {
+    "no_dead_code": 55,
+    "structural_complexity": 70
+  },
+  "security_safety_score": 80,
+  "security_safety_breakdown": {
+    "authentication_gate": 90,
+    "input_validation": 70
+  },
+  "review_confidence_score": 93,
+  "weighted_components": {
+    "task_fulfillment": 16.4,
+    "functional_correctness": 9.25,
+    "executability": 8.1,
+    "test_quality": 10.95,
+    "code_quality": 8.3,
+    "minimality": 6.3,
+    "security_safety": 4.0
+  },
+  "weighted_total": 63.3,
+  "verdict": "mixed",
+  "key_findings": [
+    "CRITICAL runtime defect: Database.get_connection() calls sqlite3.connect(':memory:') on every operation, so each call gets a fresh private empty database. Tables created in init_db() do not persist, so every DB-touching operation fails with 'sqlite3.OperationalError: no such table'.",
+    "Test execution result: 24 failed, 7 passed (22.6% pass rate). The only passing tests are health-check and the 5 auth-rejection tests, all of which return before touching the database.",
+    "All 10 target files are present and all 7 specified endpoints are implemented; the API surface and layered structure (app/service/repository/security/models) are complete and well organized on paper.",
+    "Business logic (201-vs-200 idempotency, 300s expiration with stock restore, PENDING enforcement, pagination offset math, stock-sufficiency check) is coded correctly in principle but is entirely unverifiable because nothing executes successfully.",
+    "Test design flaw: two expiration tests use time.sleep(301); if the DB bug were fixed the suite would block for ~10 minutes. (They currently fail fast because the DB error fires before the sleep.)",
+    "Several unused declarations: sqlalchemy dependency never imported; ReservationResponse/ConfirmReservationRequest/CancelReservationRequest/ErrorResponse models defined/imported but unused."
+  ],
+  "score_rationale": {
+    "task_fulfillment": "All 10 requested files exist and all 7 endpoints (/health, /skus, /stock/adjust, /reservations, confirm, cancel, /orders) are defined, earning near-full file/API marks. Output-contract adherence (final JSON with files_created/entrypoint/test_command) cannot be verified from the workspace alone, scored neutrally.",
+    "functional_correctness": "Severely penalized: the service is non-functional at runtime due to the per-call :memory: connection bug. Logic is plausibly correct in source but no business operation succeeds; only auth-rejection error semantics actually work. Reservation/confirm/cancel/orders endpoints also lack try/except, so DB errors surface as raw 500s.",
+    "executability": "Dependencies are declared completely (FastAPI, uvicorn, pydantic, pytest, httpx; sqlalchemy is superfluous). Imports run, but tests import via 'src.commerce_service' while the README entrypoint assumes installed 'commerce_service' with no setuptools package-dir mapping. Automated tests score very low: only 7/31 pass.",
+    "test_quality": "Specification coverage is strong — happy path, insufficient stock, idempotency, expiration, auth block, and pagination are all tested across API and service layers, with reasonably rigorous assertions on data and state. Isolation is the weak point: the autouse reset_db fixture relies on the broken shared-DB model and never achieves real isolation, and time.sleep(301) is an unacceptable test pattern.",
+    "code_quality": "Naming, docstrings, routing, and control flow are clear, and concerns are cleanly separated: SQL confined to repository.py, business logic in service.py, routing in app.py, auth in security.py. Quality is structural only; the design does not actually function.",
+    "minimality": "No gratuitous architectural patterns, but multiple dead artifacts lower the score: unused sqlalchemy dependency, unused empty request models, unused ReservationResponse/ErrorResponse, and an unused 'status' import in app.py.",
+    "security_safety": "All mutating endpoints are gated by the verify_api_token dependency (confirmed by passing 401 tests), and GET /orders is public per spec. Pydantic enforces field types, but there are no value constraints (negative quantity/stock/amount accepted), so input validation is only partial."
+  },
+  "instruction_failures": [
+    "Final structured JSON output (files_created, entrypoint, test_command) is not present in the workspace and could not be confirmed."
+  ],
+  "correctness_failures": [
+    "repository.py:16-27 — get_connection() opens a new sqlite3.connect(':memory:') per call; in-memory DB is destroyed when the connection closes, so schema and data never persist across operations.",
+    "Every data-mutating/reading path fails with 'no such table' (skus/reservations/orders).",
+    "app.py:56-73 /reservations (and confirm/cancel/orders) have no exception handling, so DB errors return HTTP 500 instead of structured 4xx errors.",
+    "service.py confirm_reservation returns an order dict without created_at and is not validated against OrderResponse.",
+    "repository.adjust_stock / service.adjust_stock permit stock to go negative with no validation."
+  ],
+  "execution_failures": [
+    "pytest result: 24 failed, 7 passed, 22 warnings.",
+    "test_create_sku (api) -> assert 400 == 201 (create_sku endpoint caught OperationalError and returned 400).",
+    "test_create_reservation_* / confirm_* / cancel_* / get_orders_* -> sqlite3.OperationalError: no such table.",
+    "DeprecationWarning: datetime.datetime.utcnow() used throughout repository.py and service.py."
+  ],
+  "test_gaps": [
+    "time.sleep(301) used in both expiration tests instead of injectable/mocked time — would make a healthy suite run ~10 minutes.",
+    "API-layer reset_db fixture does not provide real isolation given the shared module-level db singleton and the broken connection model.",
+    "No test asserts that an idempotent retry leaves stock unchanged at the API layer (only the service test does).",
+    "No negative-input validation tests (e.g., negative quantity, negative initial_stock)."
+  ],
+  "quality_notes": [
+    "Clear layering and docstrings; repository isolates SQL, service holds business rules, app holds routing.",
+    "app.py maps service status codes to HTTPException consistently for endpoints that do have error mapping.",
+    "DeprecationWarning for utcnow() indicates non-future-proof datetime usage."
+  ],
+  "unnecessary_code_examples": [
+    "pyproject.toml:14 declares 'sqlalchemy>=2.0.0' but the code uses raw sqlite3 and never imports SQLAlchemy.",
+    "models.py:32 ConfirmReservationRequest and models.py:36 CancelReservationRequest are empty, unused models.",
+    "models.py:23 ReservationResponse imported in app.py but never used as a response_model (endpoint returns raw JSONResponse).",
+    "models.py:59 ErrorResponse is defined but never referenced.",
+    "app.py imports 'status' from fastapi but does not use it (literal codes used instead)."
+  ],
+  "security_safety_notes": [
+    "All mutating endpoints depend on verify_api_token; 401 responses for missing/invalid tokens confirmed by passing tests.",
+    "API token is hardcoded as a literal constant (security.py:5) — acceptable for a demo/test fixture but unsuitable for production.",
+    "Pydantic validates types but imposes no bounds; negative quantities/amounts are accepted by the schema."
+  ],
+  "file_evidence": [
+    {"path": "src/commerce_service/repository.py", "note": "Lines 11-27: per-call sqlite3.connect(':memory:') is the root-cause defect breaking all persistence."},
+    {"path": "src/commerce_service/service.py", "note": "Correct-on-paper business logic for idempotency, expiration (300s + stock restore), cancellation, and pagination; never executes successfully."},
+    {"path": "src/commerce_service/app.py", "note": "All 7 endpoints present; auth via Depends(verify_api_token); reservation/confirm/cancel/orders lack try/except so DB errors become 500."},
+    {"path": "src/commerce_service/security.py", "note": "verify_api_token returns 401 for missing/invalid X-API-Token; verified by 5 passing auth tests."},
+    {"path": "tests/test_api.py", "note": "Good spec coverage but time.sleep(301) at line 231 and reliance on broken shared-db reset fixture."},
+    {"path": "tests/test_service.py", "note": "Strong state assertions (stock levels, status transitions) but also uses time.sleep(301) at line 113."},
+    {"path": "pyproject.toml", "note": "Deps complete to run; includes unused sqlalchemy; no setuptools package-dir mapping for the src/ layout vs README entrypoint."}
+  ],
+  "commands_run": [
+    "find . -type f (file inventory)",
+    "python3 --version; import checks for fastapi/pydantic/sqlalchemy/pytest/httpx",
+    "python3 -m pytest tests/test_service.py::test_create_sku -x -q",
+    "python3 -m pytest -q -p no:cacheprovider",
+    "python3 -m pytest -v -p no:cacheprovider (PASSED list)",
+    "grep for unused sqlalchemy/status/unused models"
+  ],
+  "review_risk": "Low. Findings are grounded in actual test execution (24 failed / 7 passed) and specific line citations. Only uncertainty is output_contract_adherence, which depends on the agent's final message not present in the workspace; it was scored neutrally rather than assumed."
+}
+```

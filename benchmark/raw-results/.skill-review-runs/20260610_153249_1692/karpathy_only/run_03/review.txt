@@ -1,0 +1,136 @@
+I have complete evidence. All 26 tests pass at runtime; confirmed dead imports and two f-strings without placeholders. Here is my objective evaluation.
+
+```json
+{
+  "rubric_version": "benchmark-codegen-review-v1",
+  "score_scale": "0-100 per category",
+  "weights": {
+    "task_fulfillment": 0.20,
+    "functional_correctness": 0.25,
+    "executability": 0.15,
+    "test_quality": 0.15,
+    "code_quality": 0.10,
+    "minimality": 0.10,
+    "security_safety": 0.05
+  },
+  "task_fulfillment_score": 87,
+  "task_fulfillment_breakdown": {
+    "file_structure_compliance": 100,
+    "api_surface_coverage": 100,
+    "output_contract_adherence": 60
+  },
+  "functional_correctness_score": 91,
+  "functional_correctness_breakdown": {
+    "business_logic_accuracy": 90,
+    "expiration_and_state_rules": 92,
+    "concurrency_and_idempotency": 95,
+    "error_handling_semantics": 85
+  },
+  "executability_score": 100,
+  "executability_breakdown": {
+    "dependency_completeness": 100,
+    "imports_and_entrypoints": 100,
+    "automated_test_results": 100
+  },
+  "test_quality_score": 93,
+  "test_quality_breakdown": {
+    "specification_coverage": 100,
+    "assertion_rigor": 90,
+    "environment_isolation": 90
+  },
+  "code_quality_score": 93,
+  "code_quality_breakdown": {
+    "clarity_and_naming": 90,
+    "separation_of_concerns": 95
+  },
+  "minimality_score": 80,
+  "minimality_breakdown": {
+    "no_dead_code": 72,
+    "structural_complexity": 88
+  },
+  "security_safety_score": 85,
+  "security_safety_breakdown": {
+    "authentication_gate": 100,
+    "input_validation": 70
+  },
+  "review_confidence_score": 95,
+  "weighted_components": {
+    "task_fulfillment": 17.40,
+    "functional_correctness": 22.75,
+    "executability": 15.00,
+    "test_quality": 13.95,
+    "code_quality": 9.30,
+    "minimality": 8.00,
+    "security_safety": 4.25
+  },
+  "weighted_total": 90.7,
+  "verdict": "excellent",
+  "key_findings": [
+    "All 26 tests (14 API + 12 service) pass at runtime: `26 passed, 133 warnings in 0.38s`.",
+    "All 10 expected target files present and all 7 required endpoints implemented (/health, /skus, /stock/adjust, /reservations, /reservations/{id}/confirm, /reservations/{id}/cancel, /orders).",
+    "Clean three-layer separation: repository.py (all SQLite I/O), service.py (business logic + HTTPException mapping), app.py (routing), security.py (auth).",
+    "Idempotency, 300s expiration with stock restoration, PENDING-state enforcement, and pagination math all implemented and verified.",
+    "Several unused imports across 4 source/test files and two f-strings without placeholders (cosmetic dead code).",
+    "Missing API key returns 403 (FastAPI APIKeyHeader default) rather than 401; only an invalid key yields 401.",
+    "Pydantic models validate types but lack value constraints (quantity/initial_stock can be 0 or negative)."
+  ],
+  "score_rationale": {
+    "task_fulfillment": "File structure and API surface are fully compliant (10/10 files, 7/7 endpoints). The output-contract item (final agent JSON with files_created/entrypoint/test_command) could not be verified from the workspace — no such artifact is present — so it is scored conservatively.",
+    "functional_correctness": "Status codes (201 create, 200 mutate), pagination offset=(page-1)*size, idempotent cached returns without double stock deduction, 300s lazy expiration with stock restore, and PENDING enforcement all behave correctly under test. Minor deductions: adjust_stock permits negative balances, and missing-key auth returns 403 instead of 401.",
+    "executability": "All dependencies declared in pyproject.toml; absolute imports (src.commerce_service.*) align with the run command and tests; full suite executes and passes 26/26.",
+    "test_quality": "All six required scenarios covered at both service and API layers; assertions check response data, stock state, and status transitions, not just status codes. One API idempotency test checks /health rather than re-asserting stock (the service-layer test covers that), slightly weakening rigor.",
+    "code_quality": "Readable naming, clear control flow, and strong separation of concerns. Two non-placeholder f-strings are a small smell.",
+    "minimality": "No over-engineering or unrequested features, but pyflakes flags 6 unused imports across source and tests, lowering the no-dead-code sub-score.",
+    "security_safety": "Every mutating endpoint is gated by the verify_api_key dependency (read-only /health and /orders correctly open). Input validation relies on Pydantic types only, with no range/positivity constraints."
+  },
+  "instruction_failures": [
+    "Output-contract JSON (files_created/entrypoint/test_command) is not evidenced in the workspace; adherence to the exclusive-JSON-output requirement is unverifiable from artifacts alone."
+  ],
+  "correctness_failures": [
+    "Missing X-API-Key header yields HTTP 403 (APIKeyHeader auto_error) rather than the 401 implied for auth failures; only an invalid key returns 401.",
+    "adjust_stock applies any delta without a lower bound, allowing available_stock to go negative.",
+    "Idempotency lookup precedes expiration evaluation, so re-posting a key for a stale reservation returns the cached (still-PENDING) record rather than reflecting expiry."
+  ],
+  "execution_failures": [],
+  "test_gaps": [
+    "No test asserts stock is unchanged via the API after a duplicate idempotency_key call (test_create_reservation_idempotency queries /health instead).",
+    "No test for the not-found paths (404 on unknown SKU adjust via API, unknown reservation confirm/cancel).",
+    "No test for invalid input payloads (negative/zero quantity or initial_stock)."
+  ],
+  "quality_notes": [
+    "service.py lines 64 and 95 use f-strings with no placeholders (`f\"Reservation is not PENDING\"`).",
+    "confirm/cancel endpoints return an ad-hoc {id,status} dict with no response_model, unlike the other typed endpoints.",
+    "datetime.utcnow() is deprecated on Python 3.12 (133 DeprecationWarnings emitted); functional but dated."
+  ],
+  "unnecessary_code_examples": [
+    "src/commerce_service/app.py:1 — `status` imported but unused.",
+    "src/commerce_service/app.py:2 — `JSONResponse` imported but unused.",
+    "src/commerce_service/models.py:3 — `Field` imported but unused.",
+    "src/commerce_service/repository.py:4 — `pathlib.Path` imported but unused.",
+    "src/commerce_service/service.py:2 — `timezone` and `timedelta` imported but unused.",
+    "tests/test_api.py:179 and tests/test_service.py:2 — `sqlite3` / `time` imported but unused."
+  ],
+  "security_safety_notes": [
+    "All mutating routes (POST /skus, /stock/adjust, /reservations, confirm, cancel) depend on verify_api_key; verified by test_unauthorized_endpoints.",
+    "Read endpoints /health and /orders are intentionally unauthenticated.",
+    "Pydantic enforces field types but no value constraints (e.g., Field(gt=0)); semantically invalid quantities are accepted."
+  ],
+  "file_evidence": [
+    {"path": "src/commerce_service/app.py", "note": "7 routes; correct status codes (201 on /skus and /reservations, 200 elsewhere); verify_api_key on all mutating routes; unused status/JSONResponse imports."},
+    {"path": "src/commerce_service/service.py", "note": "Idempotency-before-stock, insufficient-stock 400, 300s expiration with stock restore (lines 67-77), PENDING enforcement; unused timezone/timedelta; placeholderless f-strings at 64/95."},
+    {"path": "src/commerce_service/repository.py", "note": "All SQLite operations isolated here incl. pagination LIMIT/OFFSET (lines 199-214); unused Path import; uses deprecated datetime.utcnow()."},
+    {"path": "src/commerce_service/models.py", "note": "Pydantic v2 request/response models with Literal status enum; no value constraints; unused Field import."},
+    {"path": "src/commerce_service/security.py", "note": "APIKeyHeader X-API-Key dependency returning 401 on mismatch (403 on absent header by FastAPI default)."},
+    {"path": "tests/test_api.py", "note": "14 API tests covering all 6 required scenarios; per-test fixture resets app_module._repo/_service for isolation; idempotency test checks /health rather than stock."},
+    {"path": "tests/test_service.py", "note": "12 service tests with strict state assertions on stock, status, and order counts; fresh in-memory repo per test."},
+    {"path": "pyproject.toml", "note": "Declares fastapi/pydantic/uvicorn runtime and pytest/pytest-asyncio/httpx dev deps; src-layout packages.find; pytest testpaths configured."}
+  ],
+  "commands_run": [
+    "find . -type f (file inventory)",
+    "python3 --version (3.12.4) and import check for fastapi/pytest/httpx",
+    "python3 -m pytest tests/ -v  =>  26 passed, 133 warnings in 0.38s",
+    "python3 -m pyflakes src/commerce_service/*.py tests/*.py (unused-import audit)"
+  ],
+  "review_risk": "The original task specification/prompt was not present in the workspace; requirements were inferred from the rubric, README, and code. The 'output_contract_adherence' item depends on the agent's final chat message, which is not observable from filesystem artifacts, so that sub-score carries the most uncertainty. All functional and executability scores are grounded in an actual passing test run."
+}
+```
