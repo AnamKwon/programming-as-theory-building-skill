@@ -115,10 +115,12 @@ These guidelines are working if you see:
 
 ## Reproduce the benchmark
 
-From the parent experiment workspace, run 10-repeat sets and aggregate results by prompt family:
+From the repository root, run 10-repeat sets with the prompt file for the family
+you want to reproduce, then review the generated workspaces:
 
 ```bash
-MODEL=haiku REPEATS=10 ARMS="skills_off karpathy_only theory_only" ./run_skill_codegen_experiment.sh
+MODEL=haiku REPEATS=10 ARMS="skills_off karpathy_only theory_only" ./run_skill_codegen_experiment.sh benchmark/prompts/basic-commerce.md
+MODEL=haiku REPEATS=10 ARMS="skills_off karpathy_only theory_only" ./run_skill_codegen_experiment.sh benchmark/prompts/strict-commerce.md
 MODEL=opus ./run_opus_code_review_experiment.sh .skill-codegen-runs/<run_id>
 ```
 
