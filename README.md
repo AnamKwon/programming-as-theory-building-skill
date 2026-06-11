@@ -36,7 +36,7 @@ That makes the agent inspect code paths, names, tests, docs, and runtime behavio
 The benchmark compares commerce-backend code generation across three isolated arms:
 
 - `skills_off`: managed Claude Code skills disabled.
-- `karpathy_only`: only the Karpathy guidelines skill enabled.
+- `karpathy_only`: only the compact comparison-guidelines skill enabled.
 - `theory_only`: only this Programming as Theory Building skill enabled.
 
 Code generation used **Claude Haiku** through the Claude Code `MODEL=haiku` setting for every arm. Each generation ran in a fresh temporary workspace, and generated projects were reviewed by a separate Claude Opus review pass using `benchmark-codegen-review-v1`.

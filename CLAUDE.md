@@ -1,6 +1,6 @@
 # Programming as Theory Building
 
-Karpathy-style operating rules for Peter Naur's "Programming as Theory Building". Use these rules to avoid context-free patches, speculative abstractions, and code that only looks right as text.
+Operational rules for applying Peter Naur's "Programming as Theory Building" to coding-agent workflows. Use these rules to avoid context-free patches, speculative abstractions, and code that only looks right as text.
 
 **Tradeoff:** This skill slows down trivial edits. For non-trivial code, pay the small upfront cost so the change fits the program.
 
