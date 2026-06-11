@@ -1,0 +1,133 @@
+Confirmed several unused imports (`Field`, `Optional`, `datetime` in models.py; `datetime`, `HTTPException` in app.py; `Depends`, `Optional` in security.py). I have all evidence needed.
+
+```json
+{
+  "rubric_version": "benchmark-codegen-review-v1",
+  "score_scale": "0-100 per category",
+  "weights": {
+    "task_fulfillment": 0.20,
+    "functional_correctness": 0.25,
+    "executability": 0.15,
+    "test_quality": 0.15,
+    "code_quality": 0.10,
+    "minimality": 0.10,
+    "security_safety": 0.05
+  },
+  "task_fulfillment_score": 90,
+  "task_fulfillment_breakdown": {
+    "file_structure_compliance": 95,
+    "api_surface_coverage": 100,
+    "output_contract_adherence": 75
+  },
+  "functional_correctness_score": 93,
+  "functional_correctness_breakdown": {
+    "business_logic_accuracy": 95,
+    "expiration_and_state_rules": 100,
+    "concurrency_and_idempotency": 90,
+    "error_handling_semantics": 88
+  },
+  "executability_score": 98,
+  "executability_breakdown": {
+    "dependency_completeness": 100,
+    "imports_and_entrypoints": 95,
+    "automated_test_results": 100
+  },
+  "test_quality_score": 93,
+  "test_quality_breakdown": {
+    "specification_coverage": 100,
+    "assertion_rigor": 88,
+    "environment_isolation": 90
+  },
+  "code_quality_score": 90,
+  "code_quality_breakdown": {
+    "clarity_and_naming": 92,
+    "separation_of_concerns": 88
+  },
+  "minimality_score": 86,
+  "minimality_breakdown": {
+    "no_dead_code": 80,
+    "structural_complexity": 92
+  },
+  "security_safety_score": 88,
+  "security_safety_breakdown": {
+    "authentication_gate": 95,
+    "input_validation": 80
+  },
+  "review_confidence_score": 95,
+  "weighted_components": {
+    "task_fulfillment": 18.0,
+    "functional_correctness": 23.3,
+    "executability": 14.7,
+    "test_quality": 14.0,
+    "code_quality": 9.0,
+    "minimality": 8.6,
+    "security_safety": 4.4
+  },
+  "weighted_total": 91.9,
+  "verdict": "excellent",
+  "key_findings": [
+    "All 32 tests pass at runtime: 17/17 in tests/test_service.py (0.46s) and 15/15 in tests/test_api.py (301.66s).",
+    "All 7 specified endpoints are implemented: GET /health, POST /skus, POST /stock/adjust, POST /reservations, POST /reservations/{id}/confirm, POST /reservations/{id}/cancel, GET /orders.",
+    "Core business rules implemented correctly: 201 on create_sku/create_reservation, insufficient-stock -> 400, 300s expiration with stock restoration, PENDING-only confirm/cancel, idempotent reservation creation without double stock deduction.",
+    "Clean layering: SQLAlchemy data access in repository.py, business logic in service.py, routing in app.py, auth in security.py.",
+    "Quality drags: test_api.py uses a real time.sleep(301) for the expiration test (makes the suite take 5 minutes); several unused imports; Pydantic models lack value constraints (negative quantity/stock accepted)."
+  ],
+  "score_rationale": {
+    "task_fulfillment": "Every required module and all 7 endpoints are present and routed correctly (app.py:21-122). file_structure and api_surface are effectively complete; an extra test file (test_service.py) is a benign addition. output_contract_adherence is scored conservatively (75) because the agent's final JSON message (files_created/entrypoint/test_command) is not observable from the workspace and could not be verified against the spec.",
+    "functional_correctness": "Logic matches spec: status codes (app.py:26,50 set 201; adjust/confirm/cancel default 200), insufficient-stock 400 (service.py:34-35), idempotency returns cached reservation before any stock deduction (service.py:26-28), expiration at >300s restores stock and marks EXPIRED (service.py:49-56), PENDING enforcement on confirm/cancel (service.py:46,67), pagination offset=(page-1)*size with total count (repository.py:118-122). Minor deductions: not-found uses 404 rather than the rubric's generic 400 framing; adjust_stock has no negative-stock floor; idempotency returns the stored reservation regardless of whether request params match.",
+    "executability": "pyproject.toml declares fastapi, pydantic, sqlalchemy, uvicorn, pytest, pytest-asyncio, httpx. Imports resolve and the app instantiates; both suites executed and passed 100% (32/32). Small ding for unused imports, which do not affect execution.",
+    "test_quality": "All 6 required scenarios covered (health/happy path, insufficient stock, idempotency, expiration, auth missing+invalid, pagination across 3 pages) plus service-level tests asserting state (stock restoration, status transitions). Assertions inspect response bodies and DB state, not just status codes. Deductions: one meaningless leftover assertion in test_create_reservation_success (asserts /health after a reservation, test_api.py:133-137); the API expiration test relies on a real 301s sleep rather than manipulating created_at as the service test does (test_service.py:137-139), making it slow/brittle.",
+    "code_quality": "Naming and control flow are clear and consistent; concerns are separated across repository/service/app/security. Minor: SQLAlchemy ORM models, engine setup, get_db, and the Repository class all live together in repository.py; each endpoint manually re-instantiates Repository+CommerceService instead of injecting them.",
+    "minimality": "No speculative abstractions or unrequested features (only a minor extra updated_at column). The main detractor is dead code: unused imports of Field and Optional and datetime in models.py, datetime and HTTPException in app.py, and Depends and Optional in security.py.",
+    "security_safety": "All mutating endpoints depend on verify_api_key (app.py:29,41,53,72,90), returning 401 for missing/invalid keys (security.py:9-13); /orders is an unprotected read, which is acceptable. Input validation is type-level via Pydantic only; no value constraints (Field is imported but never used), so negative quantities/stock and non-positive values are accepted."
+  },
+  "instruction_failures": [
+    "Could not verify the 'agent output is exclusively the requested JSON (files_created/entrypoint/test_command)' contract — only the produced workspace is available, not the agent's final message."
+  ],
+  "correctness_failures": [],
+  "execution_failures": [],
+  "test_gaps": [
+    "No test asserts stock is restored to the original level after cancellation at the API layer (only verified in the service-layer test).",
+    "No test for negative/zero quantity or negative initial_stock inputs (these are currently accepted).",
+    "Idempotency test does not assert that stock was deducted only once at the API layer.",
+    "Expiration is tested with a real 301-second sleep instead of mocking time, making the suite take ~5 minutes."
+  ],
+  "quality_notes": [
+    "test_api.py:218 uses time.sleep(301); the service test (test_service.py:137-139) shows the better pattern of backdating created_at.",
+    "test_api.py:133-137 contains a leftover assertion that calls /health and is unrelated to the reservation under test.",
+    "app.py repeats `repo = Repository(db); service = CommerceService(repo)` in every endpoint; could be a dependency.",
+    "repository.py mixes ORM model definitions, engine/session setup, get_db, and the Repository class in one module."
+  ],
+  "unnecessary_code_examples": [
+    "models.py:1 `from pydantic import BaseModel, Field` — Field never used.",
+    "models.py:2 `from typing import Optional` — Optional never used.",
+    "models.py:3 / app.py:16 `from datetime import datetime` — datetime never used in those modules.",
+    "app.py:1 imports HTTPException but it is never raised in app.py.",
+    "security.py:1 imports Depends and security.py:2 imports Optional — Depends unused; Optional only used in the type hint.",
+    "ReservationModel.updated_at column (repository.py:29) is maintained but never exposed in any response or required by the spec."
+  ],
+  "security_safety_notes": [
+    "All POST/mutation endpoints are gated by verify_api_key; missing key -> 401 'API key required', wrong key -> 401 'Invalid API key' (security.py:9-13).",
+    "API key is a hardcoded constant (security.py:5) — acceptable for a demo/spec fixture but not production-grade secret handling.",
+    "No Pydantic value validation: negative quantity would increase stock on cancel/expire paths; negative initial_stock is accepted. Recommend Field(gt=0)/(ge=0) constraints.",
+    "/orders is unauthenticated; acceptable as a read endpoint per spec (only mutations require the key)."
+  ],
+  "file_evidence": [
+    {"path": "src/commerce_service/app.py", "note": "All 7 endpoints routed; 201 status on /skus and /reservations; auth dependency on all mutations; pagination response shape."},
+    {"path": "src/commerce_service/service.py", "note": "Business logic: insufficient-stock 400, idempotency short-circuit before stock deduction, 300s expiration with stock restore, PENDING enforcement on confirm/cancel."},
+    {"path": "src/commerce_service/repository.py", "note": "Data access layer plus ORM models, engine/session, and get_db all defined here; pagination offset=(page-1)*size with total count."},
+    {"path": "src/commerce_service/security.py", "note": "verify_api_key returns 401 for missing/invalid X-API-Key; unused Depends/Optional imports."},
+    {"path": "src/commerce_service/models.py", "note": "Pydantic request/response models; type-only validation, no value constraints; unused Field/Optional/datetime imports."},
+    {"path": "tests/test_service.py", "note": "17 service-layer tests passing; expiration tested by backdating created_at; asserts state (stock restore, status transitions)."},
+    {"path": "tests/test_api.py", "note": "15 API tests passing; covers all 6 required scenarios; uses real time.sleep(301) for expiration; isolates DB via drop/create autouse fixture and get_db override."},
+    {"path": "pyproject.toml", "note": "Declares fastapi, pydantic, sqlalchemy, uvicorn and dev deps pytest, pytest-asyncio, httpx."}
+  ],
+  "commands_run": [
+    "python3 --version && python3 -c \"import fastapi, pydantic, sqlalchemy, pytest, httpx\"",
+    "python3 -m pytest tests/test_service.py -v  (17 passed in 0.46s)",
+    "python3 -m pytest tests/test_api.py -v  (15 passed in 301.66s)",
+    "grep -n import (unused-import verification)"
+  ],
+  "review_risk": "Low. All claims are grounded in direct file reads and full runtime test execution (32/32 passing). The only unverifiable item is the agent's final JSON output contract, which is not present in the workspace and was scored conservatively. Minor subjectivity exists in error-code expectations (404 vs 400) and in weighting of dead imports."
+}
+```

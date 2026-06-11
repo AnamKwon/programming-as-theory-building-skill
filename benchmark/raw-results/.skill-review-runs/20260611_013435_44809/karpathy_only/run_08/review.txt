@@ -1,0 +1,128 @@
+All 10 requested files are present (`.pytest_cache` is from my test run; `egg-info` is a build artifact). All 37 tests pass. I have enough evidence to produce the evaluation.
+
+```json
+{
+  "rubric_version": "benchmark-codegen-review-v1",
+  "score_scale": "0-100 per category",
+  "weights": {
+    "task_fulfillment": 0.20,
+    "functional_correctness": 0.25,
+    "executability": 0.15,
+    "test_quality": 0.15,
+    "code_quality": 0.10,
+    "minimality": 0.10,
+    "security_safety": 0.05
+  },
+  "task_fulfillment_score": 92,
+  "task_fulfillment_breakdown": {
+    "file_structure_compliance": 100,
+    "api_surface_coverage": 100,
+    "output_contract_adherence": 75
+  },
+  "functional_correctness_score": 93,
+  "functional_correctness_breakdown": {
+    "business_logic_accuracy": 95,
+    "expiration_and_state_rules": 100,
+    "concurrency_and_idempotency": 95,
+    "error_handling_semantics": 80
+  },
+  "executability_score": 100,
+  "executability_breakdown": {
+    "dependency_completeness": 100,
+    "imports_and_entrypoints": 100,
+    "automated_test_results": 100
+  },
+  "test_quality_score": 95,
+  "test_quality_breakdown": {
+    "specification_coverage": 100,
+    "assertion_rigor": 95,
+    "environment_isolation": 90
+  },
+  "code_quality_score": 93,
+  "code_quality_breakdown": {
+    "clarity_and_naming": 90,
+    "separation_of_concerns": 95
+  },
+  "minimality_score": 85,
+  "minimality_breakdown": {
+    "no_dead_code": 80,
+    "structural_complexity": 90
+  },
+  "security_safety_score": 90,
+  "security_safety_breakdown": {
+    "authentication_gate": 100,
+    "input_validation": 80
+  },
+  "review_confidence_score": 93,
+  "weighted_components": {
+    "task_fulfillment": 18.4,
+    "functional_correctness": 23.25,
+    "executability": 15.0,
+    "test_quality": 14.25,
+    "code_quality": 9.3,
+    "minimality": 8.5,
+    "security_safety": 4.5
+  },
+  "weighted_total": 93.2,
+  "verdict": "excellent",
+  "key_findings": [
+    "All 10 requested target files present in the exact src/commerce_service + tests layout; all 7 endpoints implemented.",
+    "Full test suite executes and passes 100% (37/37 tests across test_api.py and test_service.py) in 0.35s.",
+    "Reservation lifecycle is correct: 300s expiration block (service.py:54), stock restoration on expire/cancel (service.py:56,76), and PENDING-only state enforcement (service.py:47,72).",
+    "Idempotency correctly returns the cached reservation before touching stock (service.py:22-24), so duplicate keys do not double-decrement inventory.",
+    "Clean three-layer separation: repository.py (all SQLite I/O), service.py (business rules), app.py (routing only).",
+    "Minor: missing API key yields HTTP 403 (FastAPI APIKeyHeader default) rather than the rubric-implied 401; only a wrong key returns 401."
+  ],
+  "score_rationale": {
+    "task_fulfillment": "Exactly 10 requested files present and all 7 endpoints (/health, /skus, /stock/adjust, /reservations, confirm, cancel, /orders) implemented with correct verbs/paths. output_contract_adherence is scored conservatively (75) because the agent's final terminal message (required JSON with files_created/entrypoint/test_command) is not observable from the workspace artifacts alone.",
+    "functional_correctness": "Status codes are spec-aligned (201 for /skus and /reservations, 200 for confirm/cancel/adjust), pagination offset math is correct, and stock validation blocks over-reservation. Expiration/state rules and idempotency are fully correct. Deducted on error semantics: auth failure is split 401 (wrong key) / 403 (missing key) rather than uniformly 401.",
+    "executability": "Dependencies are complete (fastapi, uvicorn, pydantic + dev: pytest, pytest-asyncio, httpx). Imports/entrypoints resolve and the app instantiates. The pytest suite ran and passed every test (37 passed).",
+    "test_quality": "All six required scenarios covered (happy path, insufficient stock, idempotency, expiration, auth block, pagination) at both API and service layers. Assertions inspect response bodies AND state (stock levels, reservation statuses), not just status codes. Isolation via autouse fixture rebuilding a fresh in-memory Repository per test; deducted slightly because connections are never explicitly closed (relies on GC of :memory: DBs).",
+    "code_quality": "Readable naming, clear control flow, and strong separation of concerns across repository/service/app. Minor stylistic blemishes (an f-string with no placeholder) prevent a perfect score.",
+    "minimality": "Largely tight, but create_reservation in app.py contains a redundant branch — the `if error == \"Insufficient stock\"` arm raises the same 400 as the fallback, making it dead/duplicated logic. No unrequested features or over-engineering otherwise.",
+    "security_safety": "Every mutating endpoint (and /orders) is gated by Depends(verify_api_key); /health is appropriately open. Pydantic enforces payload types, but there are no value constraints (e.g. quantity/initial_stock can be negative or zero), so input validation is type-only."
+  },
+  "instruction_failures": [
+    "Cannot confirm from workspace artifacts whether the agent's final message was exclusively the required JSON (files_created/entrypoint/test_command); scored conservatively, not as a confirmed failure."
+  ],
+  "correctness_failures": [
+    "Missing X-API-Key header returns HTTP 403 instead of 401 (FastAPI APIKeyHeader auto_error default); rubric implies 401 for auth failures. Only an incorrect key returns 401.",
+    "Idempotency lookup returns the existing reservation regardless of its current status, so reusing a key after CONFIRMED/CANCELLED returns the stale record with a 201 (edge case, not exercised by tests)."
+  ],
+  "execution_failures": [],
+  "test_gaps": [
+    "No test asserting the 401 path distinctly from 403 for auth (tests codify 403 for missing key, 401 only for wrong key).",
+    "No negative/zero quantity or negative initial_stock validation test (because no such validation exists).",
+    "DB connections are not explicitly torn down between tests; isolation relies on fresh :memory: instances and GC rather than fixture teardown."
+  ],
+  "quality_notes": [
+    "service.py:48 uses f-string `f\"Reservation is not pending\"` with no interpolation placeholder.",
+    "datetime.utcnow() is used throughout (repository.py:87,157; service.py:51) and emits DeprecationWarnings on Python 3.12 — functional but flagged for removal in future Python.",
+    "app.py get_service() lazily attaches the service to app.state; works but couples request handling to module-global app state rather than FastAPI dependency injection."
+  ],
+  "unnecessary_code_examples": [
+    "app.py:66-75 — create_reservation branches `if error == \"Insufficient stock\": raise 400` then falls through to an identical `raise 400` for any other error, making the special-case branch redundant."
+  ],
+  "security_safety_notes": [
+    "All mutating endpoints (/skus, /stock/adjust, /reservations, confirm, cancel) and /orders enforce verify_api_key via Depends; /health is intentionally unauthenticated.",
+    "Pydantic validates field types but no constraints (Field(ge=...)) are applied, so negative or zero quantity/stock payloads pass validation.",
+    "API key is a hardcoded constant ('test-api-key') in security.py rather than sourced from environment/config — acceptable for a benchmark but not production-grade."
+  ],
+  "file_evidence": [
+    {"path": "src/commerce_service/app.py", "note": "All 7 routes defined; status_code=201 on /skus and /reservations; confirm/cancel default to 200; auth via Depends(verify_api_key) on every mutating route and /orders."},
+    {"path": "src/commerce_service/service.py", "note": "RESERVATION_EXPIRY_SECONDS=300; expiration check restores stock (line 56); cancel restores stock (line 76); PENDING-only enforcement (lines 47,72); idempotency short-circuit before stock decrement (lines 22-24)."},
+    {"path": "src/commerce_service/repository.py", "note": "All SQLite access isolated here; in-memory DB with check_same_thread=False; pagination via LIMIT/OFFSET and COUNT(*) (lines 172-190); UNIQUE idempotency_key constraint enforces idempotency at DB level."},
+    {"path": "src/commerce_service/security.py", "note": "APIKeyHeader('X-API-Key'); wrong key -> 401; missing key -> 403 (FastAPI auto_error default)."},
+    {"path": "src/commerce_service/models.py", "note": "Pydantic v2 models for all requests/responses; type-validated but no value constraints."},
+    {"path": "tests/test_api.py", "note": "20 endpoint tests covering all 6 required criteria; asserts bodies and stock/state, plus expiration via DB time manipulation (lines 181-196)."},
+    {"path": "tests/test_service.py", "note": "17 service-layer tests; verifies stock decrement/restoration, idempotency no-double-decrement, expired status transition, pagination counts."},
+    {"path": "pyproject.toml", "note": "Declares fastapi/uvicorn/pydantic runtime deps and pytest/pytest-asyncio/httpx dev deps; src layout package discovery."}
+  ],
+  "commands_run": [
+    "python3 --version (3.12.4)",
+    "python3 -c 'import fastapi, pydantic, httpx, pytest' -> deps ok",
+    "PYTHONPATH=src python3 -m pytest tests/ -v -> 37 passed, 185 warnings in 0.35s"
+  ],
+  "review_risk": "Low. Test suite executed and fully passed (37/37) and all core files were read end-to-end. Primary residual uncertainty is output_contract_adherence — the agent's final JSON message is not observable from workspace artifacts — and the 403-vs-401 auth semantics, which is standard FastAPI behavior rather than a runtime defect."
+}
+```

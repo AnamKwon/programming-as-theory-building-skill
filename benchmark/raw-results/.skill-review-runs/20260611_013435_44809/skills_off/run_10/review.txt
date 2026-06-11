@@ -1,0 +1,126 @@
+All confirmed. Tests: 42/42 pass. Response Pydantic models and several typing imports are unused. Here is the objective evaluation.
+
+```json
+{
+  "rubric_version": "benchmark-codegen-review-v1",
+  "score_scale": "0-100 per category",
+  "weights": {
+    "task_fulfillment": 0.20,
+    "functional_correctness": 0.25,
+    "executability": 0.15,
+    "test_quality": 0.15,
+    "code_quality": 0.10,
+    "minimality": 0.10,
+    "security_safety": 0.05
+  },
+  "task_fulfillment_score": 92,
+  "task_fulfillment_breakdown": {
+    "file_structure_compliance": 100,
+    "api_surface_coverage": 100,
+    "output_contract_adherence": 75
+  },
+  "functional_correctness_score": 91,
+  "functional_correctness_breakdown": {
+    "business_logic_accuracy": 95,
+    "expiration_and_state_rules": 95,
+    "concurrency_and_idempotency": 90,
+    "error_handling_semantics": 85
+  },
+  "executability_score": 98,
+  "executability_breakdown": {
+    "dependency_completeness": 100,
+    "imports_and_entrypoints": 95,
+    "automated_test_results": 100
+  },
+  "test_quality_score": 92,
+  "test_quality_breakdown": {
+    "specification_coverage": 100,
+    "assertion_rigor": 90,
+    "environment_isolation": 85
+  },
+  "code_quality_score": 94,
+  "code_quality_breakdown": {
+    "clarity_and_naming": 92,
+    "separation_of_concerns": 95
+  },
+  "minimality_score": 70,
+  "minimality_breakdown": {
+    "no_dead_code": 60,
+    "structural_complexity": 80
+  },
+  "security_safety_score": 93,
+  "security_safety_breakdown": {
+    "authentication_gate": 95,
+    "input_validation": 90
+  },
+  "review_confidence_score": 95,
+  "weighted_components": {
+    "task_fulfillment": 18.4,
+    "functional_correctness": 22.75,
+    "executability": 14.7,
+    "test_quality": 13.8,
+    "code_quality": 9.4,
+    "minimality": 7.0,
+    "security_safety": 4.65
+  },
+  "weighted_total": 90.7,
+  "verdict": "excellent",
+  "key_findings": [
+    "All 42 tests pass (19 in test_api.py, 23 in test_service.py) in 0.59s with zero failures.",
+    "All 10 expected files present and all 7 specified endpoints implemented with correct status codes (201 for create_sku/reservations, 200 for adjust/confirm/cancel/orders/health).",
+    "Clean three-layer separation: repository.py (all SQLite I/O), service.py (business rules + domain exceptions), app.py (routing).",
+    "Idempotency correctly short-circuits before stock deduction; verified no double-deduction via test and code (service.py:44-52).",
+    "300s expiration is enforced lazily on confirm with stock restoration; cancellation restores stock; PENDING enforced on both confirm and cancel.",
+    "Minimality is the weak point: 5 response Pydantic models in models.py are never wired (no response_model=) and several typing/datetime imports are unused.",
+    "Final agent JSON output (files_created/entrypoint/test_command) could not be observed from the workspace, so output_contract_adherence is scored conservatively."
+  ],
+  "score_rationale": {
+    "task_fulfillment": "Exactly 10 files match the package layout (README, pyproject, __init__, app, models, repository, security, service, 2 test modules) and all 7 endpoints exist. Output-contract adherence cannot be verified from files alone, so it is the only sub-item below full marks.",
+    "functional_correctness": "Status codes, pagination offset ((page-1)*size), stock validation, idempotency, expiration, and state transitions are all correct and test-confirmed. Deductions: broad `except Exception -> 400 with str(e)` in every route flattens distinct error causes and can leak internal messages; no semantic guard prevents adjust_stock or reservations from driving stock negative beyond type checks.",
+    "executability": "Dependencies fully declared (fastapi, uvicorn, pydantic; dev: pytest, pytest-asyncio, httpx). App importable at commerce_service.app:app and 100% of tests pass at runtime. Minor: tests rely on sys.path insertion and module-global patching rather than dependency injection.",
+    "test_quality": "All 6 required scenarios covered (happy path, insufficient stock, idempotency, expiration, auth block, pagination) plus extras. Assertions check response bodies and persisted state, not just status codes. Isolation uses per-function db-file teardown but mutates app module globals and triggers a real commerce.db creation at import time.",
+    "code_quality": "Readable naming, explicit domain exceptions, and strong separation of DB/business/routing concerns. Slightly verbose repetitive try/except blocks across routes.",
+    "minimality": "Five unused response models (SKUResponse, StockAdjustResponse, ReservationResponse, OrderResponse, OrderListResponse) are defined but never bound via response_model; unused imports (typing Optional/List/Tuple in repository.py, datetime/Optional in models.py). The service layer is reasonable, not bloat.",
+    "security_safety": "All mutating endpoints (/skus, /stock/adjust, /reservations, confirm, cancel) gated by verify_api_key returning 401 on missing/invalid key; read-only /orders and /health open. Pydantic enforces payload types; no bounds validation (e.g., non-negative quantity)."
+  },
+  "instruction_failures": [
+    "Agent's final JSON output (files_created/entrypoint/test_command) is not present in the workspace and therefore could not be confirmed as exclusively-JSON."
+  ],
+  "correctness_failures": [],
+  "execution_failures": [],
+  "test_gaps": [
+    "No test asserts behavior of cancelling an already-expired (still PENDING) reservation, which would restore stock a second time since expiry is only evaluated on confirm.",
+    "No test for duplicate SKU creation (UNIQUE constraint -> generic 400).",
+    "No concurrency test; SQLite operations use separate connections with no locking, so simultaneous reservations could oversell."
+  ],
+  "quality_notes": [
+    "Every route wraps logic in try/except with a trailing `except Exception -> HTTPException(400, str(e))`, making specific handlers above it partly redundant and risking internal-detail leakage.",
+    "API and service tests bypass DI by patching commerce_service.app.repo/service module globals; functional but fragile."
+  ],
+  "unnecessary_code_examples": [
+    "models.py: SKUResponse, StockAdjustResponse, ReservationResponse, OrderResponse, OrderListResponse are never referenced (endpoints return plain dicts without response_model=).",
+    "repository.py:3 `from typing import Optional, List, Tuple` — none used.",
+    "models.py:2-3 `from datetime import datetime` and `Optional` — unused."
+  ],
+  "security_safety_notes": [
+    "verify_api_key uses APIKeyHeader(auto_error=False) and explicitly raises 401 on missing/invalid key — all mutating endpoints depend on it.",
+    "API key defaults to hardcoded 'your-secret-api-key' via os.getenv fallback; acceptable for a demo but should be required in production.",
+    "Pydantic models validate types but enforce no value bounds (negative quantity/initial_stock accepted at the schema level)."
+  ],
+  "file_evidence": [
+    {"path": "src/commerce_service/app.py", "note": "All 7 routes; correct status_code values; mutating routes Depends(verify_api_key); broad except->400 pattern."},
+    {"path": "src/commerce_service/service.py", "note": "Business logic: idempotency check before deduction (44-52), 300s expiry with stock restore (88-96), PENDING enforcement (82,109)."},
+    {"path": "src/commerce_service/repository.py", "note": "All SQLite operations isolated here; pagination offset=(page-1)*size (173); unused typing imports (3)."},
+    {"path": "src/commerce_service/models.py", "note": "Five response models defined but unused; unused datetime/Optional imports."},
+    {"path": "src/commerce_service/security.py", "note": "X-API-Key header dependency returning 401 on missing/invalid key."},
+    {"path": "tests/test_api.py", "note": "19 endpoint tests incl auth 401, idempotency no-double-deduct, pagination; per-function db teardown."},
+    {"path": "tests/test_service.py", "note": "23 service tests incl expiration via backdated created_at and stock restoration assertions."}
+  ],
+  "commands_run": [
+    "find . -type f (file inventory)",
+    "python3 -m pytest tests/ -v  => 42 passed in 0.59s",
+    "grep response_model / response-model usage in src (confirmed none wired)"
+  ],
+  "review_risk": "Low for executability/correctness — tests were actually run and all 42 passed, and source was read line-by-line. Main residual uncertainty is output_contract_adherence: the agent's final JSON message is not part of the workspace, so that sub-score is an inference, not a verified fact."
+}
+```

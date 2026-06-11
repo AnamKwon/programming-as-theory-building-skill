@@ -1,0 +1,138 @@
+```json
+{
+  "rubric_version": "benchmark-codegen-review-v1",
+  "score_scale": "0-100 per category",
+  "weights": {
+    "task_fulfillment": 0.20,
+    "functional_correctness": 0.25,
+    "executability": 0.15,
+    "test_quality": 0.15,
+    "code_quality": 0.10,
+    "minimality": 0.10,
+    "security_safety": 0.05
+  },
+  "task_fulfillment_score": 83,
+  "task_fulfillment_breakdown": {
+    "file_structure_compliance": 100,
+    "api_surface_coverage": 100,
+    "output_contract_adherence": 50
+  },
+  "functional_correctness_score": 76,
+  "functional_correctness_breakdown": {
+    "business_logic_accuracy": 75,
+    "expiration_and_state_rules": 80,
+    "concurrency_and_idempotency": 80,
+    "error_handling_semantics": 70
+  },
+  "executability_score": 80,
+  "executability_breakdown": {
+    "dependency_completeness": 100,
+    "imports_and_entrypoints": 100,
+    "automated_test_results": 40
+  },
+  "test_quality_score": 70,
+  "test_quality_breakdown": {
+    "specification_coverage": 95,
+    "assertion_rigor": 85,
+    "environment_isolation": 30
+  },
+  "code_quality_score": 88,
+  "code_quality_breakdown": {
+    "clarity_and_naming": 85,
+    "separation_of_concerns": 90
+  },
+  "minimality_score": 84,
+  "minimality_breakdown": {
+    "no_dead_code": 80,
+    "structural_complexity": 88
+  },
+  "security_safety_score": 91,
+  "security_safety_breakdown": {
+    "authentication_gate": 92,
+    "input_validation": 90
+  },
+  "review_confidence_score": 93,
+  "weighted_components": {
+    "task_fulfillment": 16.6,
+    "functional_correctness": 19.0,
+    "executability": 12.0,
+    "test_quality": 10.5,
+    "code_quality": 8.8,
+    "minimality": 8.4,
+    "security_safety": 4.55
+  },
+  "weighted_total": 79.9,
+  "verdict": "good",
+  "key_findings": [
+    "Test suite does NOT pass: actual run produced 22 passed, 9 failed, 3 errors out of 34 tests (~65% pass rate).",
+    "Genuine functional bug confirmed by isolated unit test: cancel_reservation returns the pre-update reservation dict, so the response shows status 'PENDING' instead of 'CANCELLED' (service.py:117 returns stale `reservation`).",
+    "Auth deviation: a MISSING X-API-Key header returns HTTP 422 (Pydantic 'field required'), not 401 as the spec/tests expect. An invalid key correctly returns 401.",
+    "Idempotent replay returns HTTP 201, not 200: service.create_reservation returns status code '200' for a cached reservation, but app.py only branches on '400' and the route decorator hard-codes status_code=201, so the 200 signal is discarded.",
+    "All 10 target files and all 7 endpoints are present; app imports and boots cleanly; dependencies are fully declared.",
+    "test_api.py shares a single module-level in-memory DB (app.py:20-22) with no per-test reset/teardown, causing state-leak cascade failures (SKU already exists, reused idempotency keys, KeyError 'id' in fixtures)."
+  ],
+  "score_rationale": {
+    "task_fulfillment": "All requested files present (pyproject.toml, app/models/repository/service/security/__init__, tests) and all 7 endpoints implemented (/health, /skus, /stock/adjust, /reservations, confirm, cancel, /orders). The final-output JSON contract (files_created/entrypoint/test_command) is not present as an artifact in the workspace and cannot be verified from the repo alone, so that item is scored neutrally.",
+    "functional_correctness": "Core stock validation, 300s expiration with stock restoration, PENDING enforcement, and idempotency caching (stock deducted once) all work. Deductions: cancel returns a stale PENDING payload (DB row is correctly CANCELLED, response is wrong); idempotent replay returns 201 instead of 200; missing-auth maps to 422 rather than 401.",
+    "executability": "Dependencies (fastapi, uvicorn, pydantic, pytest, pytest-asyncio, httpx) are fully and correctly declared; imports resolve and the app instantiates. However the mandated test run did not pass 100% — 9 failures + 3 errors of 34 — heavily penalizing automated_test_results.",
+    "test_quality": "Tests cover all six required criteria (happy path, insufficient stock, idempotency, expiration, auth block, pagination) with reasonably strict assertions on data and state (e.g. stock restoration). The major weakness is environment isolation: test_service.py uses a clean function-scoped DB fixture, but test_api.py relies on a shared global DB with no teardown, which is the direct cause of most failures.",
+    "code_quality": "Clear naming, conventional FastAPI routing, and clean layering: SQL lives in repository.py, business rules in service.py, routing in app.py. Minor smell: business outcomes are signaled via stringly-typed status codes ('400_EXPIRED') passed up as tuples.",
+    "minimality": "No speculative features beyond the spec; structure is proportionate. Small amount of dead code: unused imports (Path in repository.py; datetime and Optional in models.py).",
+    "security_safety": "Every mutating/listing endpoint depends on verify_api_key; /health is appropriately open. Pydantic models enforce types and constraints (min_length, ge, gt). The only weakness is that absent credentials surface as 422 rather than a 401 auth rejection."
+  },
+  "instruction_failures": [
+    "Idempotent reservation replay returns HTTP 201 instead of 200 — the service computes a '200' status but app.py discards it and the route forces 201.",
+    "Missing API key returns 422 instead of 401, deviating from 'pull 401 for auth failures'.",
+    "Output-contract JSON (files_created/entrypoint/test_command) is not observable in the workspace; compliance unverifiable."
+  ],
+  "correctness_failures": [
+    "service.cancel_reservation (service.py:102-117) returns the reservation dict fetched before the status update, so the API/unit response reports status 'PENDING' instead of 'CANCELLED'. Confirmed: tests/test_service.py::test_cancel_reservation_success fails with 'assert PENDING == CANCELLED' even under isolated DB.",
+    "adjust_stock applies an unbounded delta with no floor check, allowing available_stock to go negative (no test asserts otherwise, but it violates a typical stock invariant)."
+  ],
+  "execution_failures": [
+    "pytest result: 9 failed, 22 passed, 3 errors (34 collected). Not 100% pass.",
+    "tests/test_api.py state-leak failures: test_create_sku_without_auth (422 vs 401), test_adjust_stock_negative (stock mutated by prior tests), test_create_reservation_insufficient_stock (reused idempotency key returns cached 201), test_confirm_reservation_expired, test_cancel_reservation_success, test_get_orders_without_auth (422 vs 401), test_get_orders_empty (orders leaked from prior tests), test_happy_path (SKU001 already exists -> 400).",
+    "tests/test_api.py::TestOrderEndpoints errors: setup_orders fixture raises KeyError 'id' because reused SKU/idempotency keys cause 400 responses lacking an 'id' field.",
+    "tests/test_service.py::test_cancel_reservation_success fails — genuine code bug, not isolation."
+  ],
+  "test_gaps": [
+    "test_api.py provides no fixture to reset or rebuild the shared module-level database between tests; all API tests run against accumulating global state.",
+    "No test asserts the idempotent-replay HTTP status semantics distinctly (the test was written to expect 201, masking the 200-vs-201 spec question).",
+    "No test for the missing-header auth path expecting a specific 401 contract (the tests assume 401 and therefore fail rather than documenting the 422 behavior).",
+    "No test covers reserving against a non-existent SKU at the API layer, or stock going negative via adjust_stock."
+  ],
+  "quality_notes": [
+    "Layering is clean: repository.py isolates all sqlite access, service.py holds logic, app.py is thin routing.",
+    "Stringly-typed status sentinels ('400_EXPIRED', '200', '404') threaded as tuple return values are brittle and easy to mis-handle (app.py already ignores the '200' case).",
+    "datetime.utcnow() is deprecated on Python 3.12 (141 deprecation warnings emitted); timezone-aware datetimes would be cleaner.",
+    "Response models for create_sku use response_model=dict rather than the existing StockResponse, weakening the contract."
+  ],
+  "unnecessary_code_examples": [
+    "repository.py:4 imports `from pathlib import Path` which is never used.",
+    "models.py:2 imports `datetime` and models.py:3 imports `Optional`, neither of which is used (date fields are typed as str)."
+  ],
+  "security_safety_notes": [
+    "All mutating endpoints (/skus, /stock/adjust, /reservations, confirm, cancel) and /orders are gated by Depends(verify_api_key); /health is intentionally open.",
+    "API token read from env API_TOKEN with an insecure default 'test-token-secret'; comparison is non-constant-time (minor timing concern, low impact here).",
+    "Pydantic Field constraints (min_length=1, ge=0, gt=0) provide input validation; missing-credential requests are blocked (as 422) before reaching business logic."
+  ],
+  "file_evidence": [
+    {"path": "src/commerce_service/service.py", "note": "cancel_reservation (lines 102-117) returns the stale pre-update reservation dict -> response status stays PENDING; confirmed by failing unit test."},
+    {"path": "src/commerce_service/app.py", "note": "Module-level shared in-memory DB (lines 20-22); idempotent '200' status from service is discarded, route hard-codes 201 (lines 67-85)."},
+    {"path": "src/commerce_service/security.py", "note": "verify_api_key uses Header(...) (required) so a missing key yields 422; only a present-but-wrong key returns 401 (lines 11-19)."},
+    {"path": "tests/test_api.py", "note": "Client fixture reuses the global app/DB with no reset; tests reuse SKU001 and idempotency keys, causing state-leak failures and KeyError errors."},
+    {"path": "tests/test_service.py", "note": "Proper function-scoped Database fixture with teardown (lines 8-14); cancel test (line 153) independently exposes the stale-return bug."},
+    {"path": "src/commerce_service/repository.py", "note": "Clean SQL isolation across SKU/Reservation/Order repos; unused `Path` import at line 4."},
+    {"path": "pyproject.toml", "note": "All runtime and dev dependencies declared correctly (fastapi/uvicorn/pydantic + pytest/pytest-asyncio/httpx)."}
+  ],
+  "commands_run": [
+    "find . -type f (file inventory)",
+    "python3 -m venv .venv_eval && pip install -e . && pip install -e .[dev]",
+    "python -m pytest -v  => 9 failed, 22 passed, 3 errors in 0.53s",
+    "python -m pytest -p no:randomly  => 9 failed, 22 passed, 3 errors (deterministic, same result)",
+    "python -c '...' to confirm missing-auth=422 and bad-auth=401",
+    "rm -rf .venv_eval .pytest_cache *.egg-info __pycache__ (cleanup; no project files modified)"
+  ],
+  "review_risk": "Low. Findings are grounded in an actual pytest run (22/34 passing) and targeted reproduction confirming the cancel stale-return bug and the 422-vs-401 auth behavior. Distinction between test-isolation-induced failures (test_api.py shared DB) and genuine code defects (cancel return, idempotency status, missing-auth status) is established. Only output_contract_adherence could not be verified because the agent's final JSON message is not part of the workspace; it was scored neutrally rather than penalized."
+}
+```

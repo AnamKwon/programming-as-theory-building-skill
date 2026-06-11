@@ -1,0 +1,129 @@
+All 7 specified endpoints are present and the app boots cleanly. Here is my objective evaluation.
+
+```json
+{
+  "rubric_version": "benchmark-codegen-review-v1",
+  "score_scale": "0-100 per category",
+  "weights": {
+    "task_fulfillment": 0.20,
+    "functional_correctness": 0.25,
+    "executability": 0.15,
+    "test_quality": 0.15,
+    "code_quality": 0.10,
+    "minimality": 0.10,
+    "security_safety": 0.05
+  },
+  "task_fulfillment_score": 90,
+  "task_fulfillment_breakdown": {
+    "file_structure_compliance": 100,
+    "api_surface_coverage": 100,
+    "output_contract_adherence": 70
+  },
+  "functional_correctness_score": 88,
+  "functional_correctness_breakdown": {
+    "business_logic_accuracy": 92,
+    "expiration_and_state_rules": 90,
+    "concurrency_and_idempotency": 80,
+    "error_handling_semantics": 90
+  },
+  "executability_score": 100,
+  "executability_breakdown": {
+    "dependency_completeness": 100,
+    "imports_and_entrypoints": 100,
+    "automated_test_results": 100
+  },
+  "test_quality_score": 93,
+  "test_quality_breakdown": {
+    "specification_coverage": 100,
+    "assertion_rigor": 95,
+    "environment_isolation": 85
+  },
+  "code_quality_score": 93,
+  "code_quality_breakdown": {
+    "clarity_and_naming": 90,
+    "separation_of_concerns": 95
+  },
+  "minimality_score": 85,
+  "minimality_breakdown": {
+    "no_dead_code": 80,
+    "structural_complexity": 90
+  },
+  "security_safety_score": 88,
+  "security_safety_breakdown": {
+    "authentication_gate": 100,
+    "input_validation": 75
+  },
+  "review_confidence_score": 88,
+  "weighted_components": {
+    "task_fulfillment": 18.0,
+    "functional_correctness": 22.0,
+    "executability": 15.0,
+    "test_quality": 13.95,
+    "code_quality": 9.3,
+    "minimality": 8.5,
+    "security_safety": 4.4
+  },
+  "weighted_total": 91.2,
+  "verdict": "excellent",
+  "key_findings": [
+    "All 38 tests (15 API + 23 service) pass in 0.51s with no failures or errors.",
+    "All 7 specified endpoints implemented and confirmed in the live route table; all 5 mutating POST endpoints gated by the API-key dependency.",
+    "Clean three-layer separation: SQL strictly in repository.py, business rules in service.py, routing in app.py.",
+    "Idempotency verified to return the cached reservation without re-deducting stock; lazy 300s expiration at confirm-time correctly restores stock and marks EXPIRED.",
+    "Latent (untested) concurrency hole: stock deduction and reservation insert run in separate transactions, so a same-key race could double-deduct stock before the UNIQUE constraint rejects the second insert."
+  ],
+  "score_rationale": {
+    "task_fulfillment": "Every source/test file and all 7 endpoints (/health, /skus, /stock/adjust, /reservations, confirm, cancel, /orders) are present. output_contract_adherence is scored conservatively because the agent's final JSON message (files_created/entrypoint/test_command) is not part of the workspace and cannot be directly verified from the repository state.",
+    "functional_correctness": "Status codes (201 create, 200 mutate/read), pagination offset=(page-1)*size, insufficient-stock 400, PENDING-state enforcement, expiration restoration, and idempotent caching all behave per spec and are test-confirmed. Deduction lost a point because the deduct+insert pair is non-atomic across two connections, a real concurrency risk not exercised by the single-threaded suite.",
+    "executability": "pyproject.toml declares fastapi, uvicorn[standard], pydantic>=2, pytest, httpx. Imports resolve, the app instantiates and exposes the full route table, and the entire pytest suite passes 38/38.",
+    "test_quality": "All six required scenarios covered (happy path, insufficient stock, idempotency, expiration, auth block, pagination) at both service and HTTP layers. Assertions check response bodies and persisted stock/status, not just status codes. Slight deduction: test_api mutates module-global db/service rather than using dependency overrides, though each test still gets an isolated tempfile DB with teardown.",
+    "code_quality": "Naming and control flow are clear; layering is textbook (repository/service/app). No structural confusion.",
+    "minimality": "No dead functions or unreachable branches, but a few unused imports remain (Field and Optional in models.py, Any in service.py). Architecture is proportionate to the spec with no speculative abstraction.",
+    "security_safety": "All mutating endpoints enforce Bearer-token auth with correct 401 responses; GET /orders is intentionally public and matches the README. Input validation is type-level only — Pydantic models lack value constraints, so negative quantity/initial_stock would be accepted."
+  },
+  "instruction_failures": [
+    "Final-agent-output JSON contract (files_created/entrypoint/test_command) could not be verified from the delivered workspace; only the repository artifacts were available for inspection."
+  ],
+  "correctness_failures": [
+    "Non-atomic reservation: deduct_stock() and create_reservation() use separate DB connections/transactions, so a concurrent same-idempotency-key race can double-deduct available_stock while only one reservation row survives the UNIQUE constraint.",
+    "adjust_stock and create_reservation never guard against driving available_stock negative beyond the create-time check (e.g., negative adjustment below zero is silently accepted)."
+  ],
+  "execution_failures": [],
+  "test_gaps": [
+    "No test asserts the 401 path for the other mutating endpoints (/stock/adjust, /reservations, confirm, cancel) — only /skus auth is exercised.",
+    "No concurrency/race test around idempotent reservation creation, so the non-atomic deduct+insert bug is undetected.",
+    "No test for negative/zero quantity or negative initial_stock input validation."
+  ],
+  "quality_notes": [
+    "Deprecated @app.on_event('startup') triggers a FastAPI DeprecationWarning; lifespan handlers are the current idiom.",
+    "Most endpoints omit response_model (only /health declares one), so the OpenAPI schema under-documents response shapes despite Pydantic models existing in models.py.",
+    "test_api.py reassigns app_module.db/service globals instead of using FastAPI dependency_overrides — works but couples tests to module internals."
+  ],
+  "unnecessary_code_examples": [
+    "models.py imports Field (pydantic) and Optional (typing) which are never used.",
+    "service.py imports Any from typing which is never used.",
+    "A generated commerce.db artifact is present in the workspace and is not a requested source file."
+  ],
+  "security_safety_notes": [
+    "All five mutating POST endpoints are protected by verify_api_token; 401 returned for missing/malformed/invalid Bearer tokens.",
+    "Default API token is hardcoded as a fallback ('sk-test-key-123') via os.getenv; acceptable for dev but should be required in production.",
+    "Pydantic request models validate types only — no Field(gt=0)/ge=0 constraints, allowing semantically invalid negative quantities or stock."
+  ],
+  "file_evidence": [
+    {"path": "src/commerce_service/app.py", "note": "Defines all 7 routes; APIToken dependency applied to /skus, /stock/adjust, /reservations, /reservations/{id}/confirm, /reservations/{id}/cancel; /orders intentionally unauthenticated (app.py:77-83)."},
+    {"path": "src/commerce_service/service.py", "note": "Business logic: idempotency short-circuit (38-42), insufficient-stock 400 (52-56), 300s lazy expiration with stock restore (79-91), PENDING enforcement (73-77, 106-110), pagination guard (122-127)."},
+    {"path": "src/commerce_service/repository.py", "note": "All SQL isolated here; deduct_stock (146-153) and create_reservation (121-144) run in separate get_connection() transactions — non-atomic."},
+    {"path": "src/commerce_service/security.py", "note": "Bearer-token gate returning 401 for missing/format/invalid token (8-19)."},
+    {"path": "src/commerce_service/models.py", "note": "Pydantic request/response models; unused imports Field and Optional (line 1-2); no value constraints on quantity/initial_stock."},
+    {"path": "tests/test_api.py", "note": "15 HTTP-level tests with tempfile DB isolation; covers auth, idempotency, expiration (backdated created_at), pagination."},
+    {"path": "tests/test_service.py", "note": "23 service-level tests including expiration stock-restore assertion (131-134) and full happy-path workflow (213-239)."},
+    {"path": "pyproject.toml", "note": "Declares fastapi==0.104.1, uvicorn[standard]==0.24.0, pydantic>=2, pytest==7.4.3, httpx==0.25.1; pytest testpaths configured."}
+  ],
+  "commands_run": [
+    "find . -type f (file inventory)",
+    "python3 -m pytest tests/ -v  => 38 passed, 2 warnings in 0.51s",
+    "python3 -c 'from src.commerce_service.app import app; ...' (route-table verification)"
+  ],
+  "review_risk": "Low for observed behavior — every file read and the full test suite executed and passed. Residual uncertainty: the original task spec prompt and the agent's final JSON output message were not available in the workspace, so output_contract_adherence and exact '10 requested files' matching are inferred from the README and repository contents rather than the source specification."
+}
+```

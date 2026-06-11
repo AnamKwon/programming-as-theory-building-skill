@@ -1,0 +1,135 @@
+Confirmed both the dead import and the dead duplicate branch. I have all evidence needed.
+
+```json
+{
+  "rubric_version": "benchmark-codegen-review-v1",
+  "score_scale": "0-100 per category",
+  "weights": {
+    "task_fulfillment": 0.20,
+    "functional_correctness": 0.25,
+    "executability": 0.15,
+    "test_quality": 0.15,
+    "code_quality": 0.10,
+    "minimality": 0.10,
+    "security_safety": 0.05
+  },
+  "task_fulfillment_score": 88,
+  "task_fulfillment_breakdown": {
+    "file_structure_compliance": 95,
+    "api_surface_coverage": 100,
+    "output_contract_adherence": 70
+  },
+  "functional_correctness_score": 88,
+  "functional_correctness_breakdown": {
+    "business_logic_accuracy": 85,
+    "expiration_and_state_rules": 95,
+    "concurrency_and_idempotency": 85,
+    "error_handling_semantics": 85
+  },
+  "executability_score": 96,
+  "executability_breakdown": {
+    "dependency_completeness": 100,
+    "imports_and_entrypoints": 88,
+    "automated_test_results": 100
+  },
+  "test_quality_score": 93,
+  "test_quality_breakdown": {
+    "specification_coverage": 100,
+    "assertion_rigor": 92,
+    "environment_isolation": 88
+  },
+  "code_quality_score": 83,
+  "code_quality_breakdown": {
+    "clarity_and_naming": 88,
+    "separation_of_concerns": 78
+  },
+  "minimality_score": 76,
+  "minimality_breakdown": {
+    "no_dead_code": 72,
+    "structural_complexity": 80
+  },
+  "security_safety_score": 87,
+  "security_safety_breakdown": {
+    "authentication_gate": 95,
+    "input_validation": 78
+  },
+  "review_confidence_score": 95,
+  "weighted_components": {
+    "task_fulfillment": 17.6,
+    "functional_correctness": 22.0,
+    "executability": 14.4,
+    "test_quality": 13.95,
+    "code_quality": 8.3,
+    "minimality": 7.6,
+    "security_safety": 4.35
+  },
+  "weighted_total": 88.2,
+  "verdict": "good",
+  "key_findings": [
+    "All 27 tests (15 API + 12 service) pass: `27 passed` after the documented `pip install -e` step; package auto-discovery via src layout works.",
+    "All 7 required endpoints implemented (/health, /skus, /stock/adjust, /reservations, confirm, cancel, /orders) with correct status codes (201 create vs 200 mutate/list).",
+    "Clean layering: repository.py owns DB/ORM, service.py owns business logic, app.py owns routing — except an app-layer helper that queries the DB directly.",
+    "300s expiration, stock restoration on expire/cancel, PENDING-state enforcement, and idempotency-key replay are all implemented and explicitly tested.",
+    "Minor defects: a dead duplicate branch in create_reservation, an unused IntegrityError import, and an ignored service-computed 200 status code on idempotent replay (route forces 201)."
+  ],
+  "score_rationale": {
+    "task_fulfillment": "All core source/test files and all 7 endpoints are present and correct. output_contract_adherence cannot be confirmed from workspace artifacts (no transcript of the agent's final JSON message is available), so it is scored neutrally rather than assumed compliant.",
+    "functional_correctness": "Stock validation, pagination (ceil division), expiration/restoration, PENDING enforcement, and idempotency are correct and verified by passing tests. Docked for the idempotent-replay status nuance (service returns 200 but the route always emits 201) and absence of value-range validation allowing negative/zero quantities and stock going negative.",
+    "executability": "Dependencies are fully and pin-declared. 27/27 tests pass at runtime. Bare `pytest tests/` fails with ModuleNotFoundError unless the package is installed; the README documents `pip install -e \".[dev]\"` and the editable install succeeds, so this is normal src-layout friction rather than a defect, but no pytest pythonpath fallback is configured.",
+    "test_quality": "All six required scenarios covered at both API and service layers, with assertions on response bodies and persisted state (stock restored, status EXPIRED/CANCELLED), not just status codes. Per-function create_all/drop_all on a temp DB plus dependency_overrides gives good isolation; slight wrinkle is the app helper opening its own SessionLocal outside the overridden session.",
+    "code_quality": "Naming and routing are clear and consistent. Main weakness is separation-of-concerns: app.py's get_sku_name_from_reservation runs a direct DB query and opens its own session inside the routing layer to backfill the SKU string, plus deprecated on_event startup and utcnow usage.",
+    "minimality": "Generally lean three-layer design. Deductions for concrete dead code: duplicate `if status_code == 200: return response / return response` branch, unused `IntegrityError` import, and a service status_code tuple the route ignores.",
+    "security_safety": "Every mutating endpoint (and /orders) is gated by the verify_api_token dependency; /health is correctly open; wrong/missing key returns 401. Pydantic enforces types, but no field constraints (quantity>0, non-negative stock), leaving room for invalid-but-well-typed payloads."
+  },
+  "instruction_failures": [
+    "output_contract_adherence (exclusive JSON final message with files_created/entrypoint/test_command) is not verifiable from the delivered workspace; no such artifact or transcript is present."
+  ],
+  "correctness_failures": [
+    "Idempotent reservation replay: service computes status_code 200 but app.py lines 87-89 return identically and the route decorator forces HTTP 201, so the intended 200-on-replay semantic is lost.",
+    "No value validation: ReservationCreate.quantity and SKUCreate.initial_stock / StockAdjustRequest.amount accept negatives/zero; a negative-amount adjust or negative reservation can drive stock below zero with no guard."
+  ],
+  "execution_failures": [
+    "`pytest tests/` without prior install fails: ModuleNotFoundError: No module named 'commerce_service' (tests/conftest.py:15). Requires the README-documented `pip install -e`; no [tool.pytest.ini_options] pythonpath fallback is provided."
+  ],
+  "test_gaps": [
+    "No test asserts the idempotent replay leaves stock unchanged at the API layer (only the service-level test checks stock invariance).",
+    "No negative/invalid-input tests (e.g., negative quantity, zero stock, malformed payload → 422).",
+    "Cancel-on-already-confirmed and reserving against a non-existent SKU are covered at service level but not at the API layer."
+  ],
+  "quality_notes": [
+    "app.py get_sku_name_from_reservation (lines 31-39) performs DB access in the routing layer and opens a fresh SessionLocal, bypassing the injected/overridden session — a separation-of-concerns leak driven by the service returning the ORM object without the SKU string.",
+    "Deprecated @app.on_event('startup') and pervasive datetime.utcnow() generate DeprecationWarnings (208 warnings in the run).",
+    "Broad `except Exception -> HTTPException(400)` wrappers can mask unexpected errors as client errors."
+  ],
+  "unnecessary_code_examples": [
+    "app.py:87-89 — `if status_code == 200: return response` followed by `return response`: both branches identical (dead branch).",
+    "repository.py:5 — `from sqlalchemy.exc import IntegrityError` imported but never used.",
+    "service.create_reservation returns a (reservation, status_code) tuple whose status_code the route never acts on."
+  ],
+  "security_safety_notes": [
+    "Authentication: /skus, /stock/adjust, /reservations, /reservations/{id}/confirm, /reservations/{id}/cancel, and /orders all carry dependencies=[Depends(verify_api_token)]; /health is intentionally unauthenticated. Correct gating.",
+    "verify_api_token compares the X-API-Key header against API_KEY env (default 'secret-key') and returns 401 on missing/mismatch; uses plain `!=` (non-constant-time) comparison — minor timing consideration only.",
+    "Pydantic validates types but not domain ranges; add constraints (e.g., conint(gt=0)) to harden against well-typed-but-invalid inputs."
+  ],
+  "file_evidence": [
+    {"path": "src/commerce_service/app.py", "note": "7 routes with correct status codes and auth dependencies; lines 87-89 dead duplicate branch; lines 31-39 DB query in routing layer."},
+    {"path": "src/commerce_service/service.py", "note": "Business logic: insufficient-stock raise, 300s expiration with restore (45-48), PENDING enforcement (38, 59), idempotency replay (21-23)."},
+    {"path": "src/commerce_service/repository.py", "note": "All DB ops isolated here; unused IntegrityError import (line 5); pagination count+offset+limit (129-132)."},
+    {"path": "src/commerce_service/security.py", "note": "verify_api_token returns 401 on missing/wrong X-API-Key; env-driven expected key."},
+    {"path": "src/commerce_service/models.py", "note": "Pydantic request/response models with type-only validation (no value constraints)."},
+    {"path": "tests/conftest.py", "note": "Sets env before import; per-function create_all/drop_all on temp sqlite; dependency_overrides[get_db]; session-scoped temp-db cleanup."},
+    {"path": "tests/test_api.py", "note": "15 API tests covering all 6 required scenarios with body+state assertions."},
+    {"path": "tests/test_service.py", "note": "12 service tests including stock-invariance on idempotent replay and stock restore on expire/cancel."},
+    {"path": "pyproject.toml", "note": "Pinned deps complete (fastapi, uvicorn, pydantic, sqlalchemy, python-dotenv; dev: pytest, pytest-asyncio, httpx); no pytest pythonpath config."}
+  ],
+  "commands_run": [
+    "find . -type f (excluding .git/__pycache__) — enumerated 16 files",
+    "python3 --version && import deps check — Python 3.12.4, deps present",
+    "python3 -m pytest tests/ -v — FAILED at collection: ModuleNotFoundError: No module named 'commerce_service'",
+    "PYTHONPATH=src python3 -m pytest tests/ -v — 27 passed, 208 warnings in 0.68s",
+    "pip install -e . --no-deps && python3 -m pytest tests/ -q — 27 passed (documented install path works)",
+    "grep -rn IntegrityError src/ ; grep -n 'status_code == 200' app.py — confirmed unused import and dead branch"
+  ],
+  "review_risk": "Low. Conclusions are grounded in actual test execution (27/27 pass both via PYTHONPATH and via the documented editable install) and direct line citations. The one unresolved item is output_contract_adherence: the agent's final JSON message is outside the workspace and could not be inspected, so that sub-score is an unverifiable-neutral estimate rather than a measured value. The exact intended set of '10 target files' was inferred from the README/structure (no original prompt spec was present in the workspace)."
+}
+```

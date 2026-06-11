@@ -1,0 +1,135 @@
+```json
+{
+  "rubric_version": "benchmark-codegen-review-v1",
+  "score_scale": "0-100 per category",
+  "weights": {
+    "task_fulfillment": 0.20,
+    "functional_correctness": 0.25,
+    "executability": 0.15,
+    "test_quality": 0.15,
+    "code_quality": 0.10,
+    "minimality": 0.10,
+    "security_safety": 0.05
+  },
+  "task_fulfillment_score": 88,
+  "task_fulfillment_breakdown": {
+    "file_structure_compliance": 95,
+    "api_surface_coverage": 100,
+    "output_contract_adherence": 70
+  },
+  "functional_correctness_score": 86,
+  "functional_correctness_breakdown": {
+    "business_logic_accuracy": 90,
+    "expiration_and_state_rules": 88,
+    "concurrency_and_idempotency": 82,
+    "error_handling_semantics": 82
+  },
+  "executability_score": 69,
+  "executability_breakdown": {
+    "dependency_completeness": 95,
+    "imports_and_entrypoints": 90,
+    "automated_test_results": 22
+  },
+  "test_quality_score": 64,
+  "test_quality_breakdown": {
+    "specification_coverage": 72,
+    "assertion_rigor": 75,
+    "environment_isolation": 45
+  },
+  "code_quality_score": 90,
+  "code_quality_breakdown": {
+    "clarity_and_naming": 88,
+    "separation_of_concerns": 92
+  },
+  "minimality_score": 72,
+  "minimality_breakdown": {
+    "no_dead_code": 58,
+    "structural_complexity": 85
+  },
+  "security_safety_score": 85,
+  "security_safety_breakdown": {
+    "authentication_gate": 95,
+    "input_validation": 75
+  },
+  "review_confidence_score": 93,
+  "weighted_components": {
+    "task_fulfillment": 17.6,
+    "functional_correctness": 21.5,
+    "executability": 10.4,
+    "test_quality": 9.6,
+    "code_quality": 9.0,
+    "minimality": 7.2,
+    "security_safety": 4.3
+  },
+  "weighted_total": 79.5,
+  "verdict": "good",
+  "key_findings": [
+    "Application code is fully functional: an independent smoke test confirmed SKU creation, stock adjust, reservation with stock decrement, idempotent replay (cached data, stock unchanged), confirm->order, insufficient-stock 400, cancel stock restoration, and pagination all behave per spec.",
+    "Test suite does NOT pass: actual run is '1 failed, 10 passed, 14 errors' of 25 tests (40% pass) — fails the 100%-pass requirement.",
+    "All 14 test_api.py tests ERROR because the autouse reset_db fixture calls repository.engine.execute(...), removed in SQLAlchemy 2.0 (project pins sqlalchemy>=2.0.0).",
+    "test_confirm_reservation_expired FAILS: it references service.repo.SessionLocal.kw['bind'].metadata (Engine has no .metadata) and the old_time variable is dead code that never actually ages the reservation, so the expiration path is not genuinely exercised.",
+    "All 7 endpoints present (/health, /skus, /stock/adjust, /reservations, confirm, cancel, /orders) and all mutating endpoints are gated by verify_api_key.",
+    "Clean separation of concerns across app/service/repository/security/models; 300s expiration, PENDING enforcement, and stock restoration are correctly implemented in service.py."
+  ],
+  "score_rationale": {
+    "task_fulfillment": "All 7 required endpoints implemented and the expected file layout (pyproject, README, package init + app/models/repository/service/security, two test modules) is present. output_contract_adherence cannot be verified from the workspace because the agent's final JSON message is not available as an artifact; scored conservatively rather than zero since deliverables exist.",
+    "functional_correctness": "The implementation logic is correct end-to-end as verified by direct smoke testing: stock validation, 201-vs-200 statuses, pagination math (offset=(page-1)*size), idempotency cache returning original data without re-decrementing stock, 300s expiration block with stock restore, cancellation restore, and PENDING state guards. Minor gaps: not-found returns 404 (rubric phrases errors as 400), and stock-decrement/reservation-insert span two separate sessions (non-atomic), so a failure between them could leak stock.",
+    "executability": "Dependencies are complete and the app imports and boots cleanly (verified with TestClient). However automated_test_results is the dominant signal and the suite does not pass — 14 errors + 1 failure out of 25 — driving the category down.",
+    "test_quality": "Tests nominally cover all six required scenarios and make state-level assertions (stock balances, status transitions), not just status codes — good rigor. But the API tests' isolation fixture is broken (engine.execute removed in SA2.0) so they never run, and the expiration test is non-functional dead code that crashes instead of aging the record.",
+    "code_quality": "Readable, idiomatic naming and routing; strong separation of concerns with DB access confined to repository.py, business rules in service.py, routing in app.py, auth in security.py, schemas in models.py.",
+    "minimality": "Architecture is appropriately scoped (repository + service). Deductions for dead code: ReservationResponse, OrderResponse, OrderListResponse, and StockAdjustResponse Pydantic models are defined but never wired as response_model; 'Optional' is imported but unused in models.py and service.py.",
+    "security_safety": "Every mutating endpoint depends on verify_api_key, returning 401 for missing/invalid keys (verified). Input validation relies on Pydantic type coercion only — no Field constraints, so negative/zero quantity or initial_stock are accepted."
+  },
+  "instruction_failures": [
+    "output_contract_adherence (final agent JSON containing files_created/entrypoint/test_command) could not be confirmed from workspace artifacts alone."
+  ],
+  "correctness_failures": [
+    "Not-found conditions return HTTP 404 rather than the rubric-described 400 (debatable as more-correct, noted for completeness).",
+    "create_reservation decrements stock (one session) then inserts the reservation (another session) without a transaction; a failure between the two would lose stock."
+  ],
+  "execution_failures": [
+    "tests/test_api.py (all 14 tests) ERROR: 'Engine' object has no attribute 'execute' at tests/test_api.py:14-16 — uses SQLAlchemy 1.x API against pinned sqlalchemy>=2.0.0.",
+    "tests/test_service.py::test_confirm_reservation_expired FAILED: AttributeError 'Engine' object has no attribute 'metadata' at tests/test_service.py:96.",
+    "Net result: 10 passed / 1 failed / 14 errors (40% pass); the 100%-pass executability criterion is not met."
+  ],
+  "test_gaps": [
+    "Expiration scenario is not truly tested: test_confirm_reservation_expired never advances created_at past 300s (old_time is unused), so even fixing the crash it would not validate the expiry/stock-restore path.",
+    "API-level test isolation is non-functional (broken teardown), so happy-path, insufficient-stock, idempotency, auth-block, and pagination HTTP tests never execute.",
+    "No test for adjust_stock driving available_stock negative, nor for negative/zero reservation quantity validation."
+  ],
+  "quality_notes": [
+    "Service methods hand-build dicts duplicating fields already modeled by ReservationResponse/OrderResponse instead of using the response models.",
+    "datetime.utcnow() is used throughout (deprecation warnings under Python 3.12) rather than timezone-aware now(datetime.UTC).",
+    "declarative_base() imported from sqlalchemy.ext.declarative emits a SQLAlchemy 2.0 MovedIn20Warning."
+  ],
+  "unnecessary_code_examples": [
+    "models.py: ReservationResponse, OrderResponse, OrderListResponse, StockAdjustResponse defined but never referenced as response_model in app.py.",
+    "models.py line 2 and service.py line 2: 'from typing import Optional' imported but unused.",
+    "tests/test_service.py lines 92-98: reservation/old_time/session block computes values that are never applied — dead code."
+  ],
+  "security_safety_notes": [
+    "All mutating POST endpoints enforce verify_api_key; missing key -> 401 'Missing API Key', invalid key -> 401 'Invalid API Key' (verified at runtime).",
+    "API key is a hardcoded constant set (VALID_API_KEYS={'test-api-key-123'}) — acceptable for the exercise but not production-grade secret handling.",
+    "Pydantic enforces field types but no value constraints (Field(gt=0)), so negative quantity/amount inputs are accepted by the schema layer."
+  ],
+  "file_evidence": [
+    {"path": "tests/test_api.py", "note": "Lines 14-16 use repository.engine.execute('DROP TABLE ...'), removed in SQLAlchemy 2.0 — causes all 14 API tests to ERROR."},
+    {"path": "tests/test_service.py", "note": "Line 96 accesses .metadata on an Engine and never applies old_time; test_confirm_reservation_expired FAILS and does not genuinely test expiry."},
+    {"path": "src/commerce_service/service.py", "note": "Lines 76-84 correctly implement the 300s expiration block with status->EXPIRED and stock restoration; idempotency cache at lines 26-35; PENDING guards at 70 and 105."},
+    {"path": "src/commerce_service/app.py", "note": "All 7 endpoints present; mutating endpoints use Depends(verify_api_key); /skus and /reservations return 201, others 200."},
+    {"path": "src/commerce_service/repository.py", "note": "DB access isolated here; get_orders implements offset=(page-1)*size pagination with total count."},
+    {"path": "src/commerce_service/security.py", "note": "verify_api_key returns 401 for missing/invalid X-API-Key header."},
+    {"path": "src/commerce_service/models.py", "note": "Four response models and an Optional import are defined but unused."},
+    {"path": "pyproject.toml", "note": "Dependencies complete (fastapi, uvicorn, pydantic, sqlalchemy + dev: pytest, pytest-asyncio, httpx); src layout configured."}
+  ],
+  "commands_run": [
+    "find . -type f (file inventory)",
+    "python3 --version; import fastapi/pydantic/sqlalchemy/pytest/httpx version check (fastapi 0.104.1, sqlalchemy 2.0.23, pytest 7.4.3, httpx 0.25.1)",
+    "PYTHONPATH=src python3 -m pytest tests/ -v  ->  1 failed, 10 passed, 14 errors",
+    "PYTHONPATH=src python3 -m pytest tests/ -q  ->  confirmed counts",
+    "Service-layer smoke test (in-memory DB): create/adjust/reserve/idempotency/confirm/insufficient/cancel/orders all correct",
+    "TestClient HTTP/auth smoke test in temp dir: health 200, missing key 401, bad key 401, create 201, reserve 201, orders 200"
+  ],
+  "review_risk": "Low. Test outcomes are from actual execution and the application's behavior was independently verified with direct smoke tests; both confirm the same picture (working app, broken test suite). Only uncertainty is output_contract_adherence, which depends on the agent's final message not present in the workspace, and the exact 10-file spec which was inferred from the standard layout."
+}
+```

@@ -1,0 +1,41 @@
+# Basic Commerce Prompt
+
+This is the original, looser prompt used for the `basic-commerce` benchmark
+family.
+
+```text
+You are in a fresh empty workspace.
+Use any currently available Claude Code skills that apply to this code generation task.
+
+Create a production-style Python service in the current working directory. Do not read parent directories or existing local projects.
+
+Product:
+Build an inventory reservation and order orchestration API for a small commerce backend.
+
+Required files:
+- pyproject.toml
+- README.md
+- src/commerce_service/__init__.py
+- src/commerce_service/app.py
+- src/commerce_service/models.py
+- src/commerce_service/repository.py
+- src/commerce_service/service.py
+- src/commerce_service/security.py
+- tests/test_service.py
+- tests/test_api.py
+
+Functional requirements:
+- Use FastAPI, Pydantic, and SQLite.
+- Provide endpoints for health checks, SKU creation, stock adjustment, reservation creation, reservation confirmation, reservation cancellation, and order lookup.
+- Implement service-layer rules for stock availability, idempotency keys, reservation expiration, and order state transitions.
+- Keep database access behind a repository boundary.
+- Validate request payloads and return clear HTTP errors.
+- Use an API-key dependency for mutating endpoints.
+- Include pagination for order lookup.
+- Include tests for happy paths, insufficient stock, idempotent reservation retry, expired reservation rejection, unauthorized mutation, and pagination.
+- Keep the design production-minded but not over-engineered.
+
+Output contract:
+- Actually create the project files in the current working directory.
+- After creating files, print only a compact JSON object with keys "files_created", "entrypoint", and "test_command".
+```

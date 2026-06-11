@@ -1,0 +1,129 @@
+All 41 tests pass. I have read every source and test file and executed the suite. Here is the objective evaluation.
+
+```json
+{
+  "rubric_version": "benchmark-codegen-review-v1",
+  "score_scale": "0-100 per category",
+  "weights": {
+    "task_fulfillment": 0.20,
+    "functional_correctness": 0.25,
+    "executability": 0.15,
+    "test_quality": 0.15,
+    "code_quality": 0.10,
+    "minimality": 0.10,
+    "security_safety": 0.05
+  },
+  "task_fulfillment_score": 92,
+  "task_fulfillment_breakdown": {
+    "file_structure_compliance": 100,
+    "api_surface_coverage": 100,
+    "output_contract_adherence": 75
+  },
+  "functional_correctness_score": 94,
+  "functional_correctness_breakdown": {
+    "business_logic_accuracy": 95,
+    "expiration_and_state_rules": 100,
+    "concurrency_and_idempotency": 90,
+    "error_handling_semantics": 90
+  },
+  "executability_score": 100,
+  "executability_breakdown": {
+    "dependency_completeness": 100,
+    "imports_and_entrypoints": 100,
+    "automated_test_results": 100
+  },
+  "test_quality_score": 94,
+  "test_quality_breakdown": {
+    "specification_coverage": 95,
+    "assertion_rigor": 92,
+    "environment_isolation": 95
+  },
+  "code_quality_score": 89,
+  "code_quality_breakdown": {
+    "clarity_and_naming": 90,
+    "separation_of_concerns": 88
+  },
+  "minimality_score": 79,
+  "minimality_breakdown": {
+    "no_dead_code": 80,
+    "structural_complexity": 78
+  },
+  "security_safety_score": 93,
+  "security_safety_breakdown": {
+    "authentication_gate": 100,
+    "input_validation": 85
+  },
+  "review_confidence_score": 88,
+  "weighted_components": {
+    "task_fulfillment": 18.4,
+    "functional_correctness": 23.5,
+    "executability": 15.0,
+    "test_quality": 14.1,
+    "code_quality": 8.9,
+    "minimality": 7.9,
+    "security_safety": 4.65
+  },
+  "weighted_total": 92.5,
+  "verdict": "excellent",
+  "key_findings": [
+    "All 41 tests pass (tests/test_api.py + tests/test_service.py) under pytest with zero failures/errors in 0.43s.",
+    "All 7 specified endpoints are implemented: /health, /skus, /stock/adjust, /reservations, /reservations/{id}/confirm, /reservations/{id}/cancel, /orders.",
+    "Core business rules are correct: 300s expiration with stock restoration, PENDING-only state transitions, idempotency caching without double-deduction (verified by test_create_reservation_idempotency asserting stock==75).",
+    "Clean three-layer separation: repository.py (SQLite I/O), service.py (business logic), app.py (routing), security.py (auth dependency).",
+    "Notable structural flaw: tests/conftest.py re-implements the entire FastAPI app (~130 lines) instead of importing src/commerce_service/app.py, so the production app module's routing is never exercised by the test suite.",
+    "Two unused imports in app.py (JSONResponse, OrderResponse) constitute dead code."
+  ],
+  "score_rationale": {
+    "task_fulfillment": "All required source/test files present and all 7 endpoints implemented. The output_contract_adherence item (final JSON of files_created/entrypoint/test_command) cannot be observed from the workspace alone, so it is scored conservatively at 75 to reflect non-verifiability rather than failure.",
+    "functional_correctness": "Stock validation, 201-vs-200 status separation, pagination math ((total+size-1)//size), expiration restore, and idempotency are all correct and test-verified. Minor: SKU-not-found on reservation/adjust returns 404 rather than 400, and there is no positivity constraint on quantity/amount, but these are defensible interpretations.",
+    "executability": "Package installs via `pip install -e '.[dev]'`; pyproject declares fastapi, pydantic, uvicorn[standard], pytest, pytest-asyncio, httpx. Imports resolve against the src layout and uvicorn entrypoint is valid. 41/41 tests pass at runtime.",
+    "test_quality": "All 6 required scenarios covered (happy path, insufficient stock, idempotency, expiration, auth block, pagination) at both service and API layers. Assertions inspect response data fields and state (stock restoration, deduction). Fresh in-memory DB per test gives strong isolation. Lightly penalized because the harness tests a duplicated app, not the shipped app.py.",
+    "code_quality": "Readable naming, clear control flow, and proper layering. Slight deduction: domain values are passed as positional tuples between layers (e.g. service unpacks 6-tuples from repository), which is fragile, and the conftest app duplication harms DRY.",
+    "minimality": "Largely free of speculative abstraction, but app.py carries two unused imports and conftest.py duplicates the entire production app definition — duplicated domain concepts that should have been a single imported app.",
+    "security_safety": "All five mutating endpoints are gated by Depends(validate_api_token) returning 401 on missing/invalid token; read endpoints (/health, /orders) are intentionally open. Pydantic enforces field types but not value ranges (negative quantity/stock would pass)."
+  },
+  "instruction_failures": [
+    "Final agent JSON output contract (files_created/entrypoint/test_command) could not be verified from the delivered workspace artifacts."
+  ],
+  "correctness_failures": [],
+  "execution_failures": [],
+  "test_gaps": [
+    "The production app in src/commerce_service/app.py is never imported by the tests; conftest.py rebuilds an equivalent app, so route wiring in the shipped module is unvalidated.",
+    "No test for reserving a non-existent SKU (the 404 branch in create_reservation) or for adjusting stock on a missing SKU via the API.",
+    "No test for negative/zero quantity inputs to confirm validation behavior."
+  ],
+  "quality_notes": [
+    "Tuple-based data passing between repository and service (6-element tuples) is positional and brittle; named structures would be safer.",
+    "datetime.utcnow() is deprecated on Python 3.12 (491 deprecation warnings emitted), though tests still pass.",
+    "models.py uses deprecated class-based Config instead of ConfigDict (Pydantic v2 deprecation)."
+  ],
+  "unnecessary_code_examples": [
+    "src/commerce_service/app.py:4 — `from fastapi.responses import JSONResponse` is imported but never used.",
+    "src/commerce_service/app.py:17 — `OrderResponse` imported into app.py but not referenced.",
+    "tests/conftest.py:28-164 — full re-declaration of the FastAPI app and all 7 route handlers, duplicating app.py instead of importing it."
+  ],
+  "security_safety_notes": [
+    "All mutating endpoints enforce X-API-Token via the validate_api_token dependency; 401 on missing token and 401 on invalid token are both tested.",
+    "Token comparison uses plain `!=` (not constant-time) and the token is hardcoded as VALID_API_TOKEN = 'test-token-12345'; acceptable for the spec but not production-grade.",
+    "Pydantic validates types but no value constraints (e.g., quantity>0, initial_stock>=0); negative quantity would be accepted and could inflate stock."
+  ],
+  "file_evidence": [
+    {"path": "src/commerce_service/app.py", "note": "All 7 endpoints defined with correct status codes (201 for /skus and /reservations, 200 for adjust/confirm/cancel/orders); unused JSONResponse and OrderResponse imports."},
+    {"path": "src/commerce_service/service.py", "note": "Lines 86-113: confirm_reservation enforces PENDING, checks 300s expiry (RESERVATION_EXPIRY_SECONDS=300), restores stock on expiry; lines 46-84: idempotency lookup returns cached reservation before any mutation."},
+    {"path": "src/commerce_service/repository.py", "note": "Isolated SQLite layer with skus/reservations/orders schema; UNIQUE idempotency_key; get_orders_paginated computes total and applies LIMIT/OFFSET."},
+    {"path": "src/commerce_service/security.py", "note": "validate_api_token raises 401 for missing and invalid tokens via X-API-Token header."},
+    {"path": "tests/conftest.py", "note": "Provides fresh in-memory DB per test, but reconstructs the app rather than importing app.py — production routing untested."},
+    {"path": "tests/test_api.py", "note": "Covers happy path, insufficient stock, idempotency (id equality), expiration (manual created_at backdate to 301s, asserts 'Reservation expired'), auth 401, and pagination (pages==3, disjoint page ids)."},
+    {"path": "tests/test_service.py", "note": "Service-layer coverage including stock-restoration assertions on expiry/cancel and stock==75 deduction-once check for idempotency."},
+    {"path": "pyproject.toml", "note": "Declares all runtime and dev dependencies; configures pytest testpaths and asyncio_mode=auto."}
+  ],
+  "commands_run": [
+    "find . -type f (file inventory)",
+    "python3 --version  (Python 3.12.4)",
+    "pip install -e '.[dev]' -q",
+    "python3 -m pytest -v  (41 passed)",
+    "python3 -m pytest -q  (41 passed, 491 warnings in 0.43s)"
+  ],
+  "review_risk": "Low risk on functional verdict: the test suite was executed and all 41 tests passed, and source was read line-by-line. The main residual uncertainty is the unobservable final-output JSON contract (scored conservatively) and that the passing tests validate a duplicated app rather than the shipped app.py module, though both share the same underlying service/security/models code."
+}
+```

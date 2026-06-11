@@ -1,0 +1,79 @@
+# Strict Commerce Prompt
+
+This is the more explicit commerce prompt used for the `strict-production`
+benchmark family and then reused for the `strict-commerce-no-mcp` family after
+MCP was disabled in the harness.
+
+```text
+You are in a fresh empty workspace.
+Execute this task adhering strictly to the engineering specification below.
+
+System Specification: Commerce Inventory & Order API
+
+1. Target Directory Structure
+Create exactly the following files in the current working directory:
+- pyproject.toml
+- README.md
+- src/commerce_service/__init__.py
+- src/commerce_service/app.py
+- src/commerce_service/models.py
+- src/commerce_service/repository.py
+- src/commerce_service/service.py
+- src/commerce_service/security.py
+- tests/test_service.py
+- tests/test_api.py
+
+2. Technical Stack
+- Framework: FastAPI
+- Validation: Pydantic v2
+- Database: SQLite (via standard library sqlite3 or SQLAlchemy)
+
+3. API Endpoints & Core Logic Rules
+All mutating endpoints (POST, PUT, DELETE) must validate a static API token via a FastAPI dependency.
+
+- GET /health
+  Returns {"status": "ok"}. No authentication required.
+
+- POST /skus
+  Input: { "sku": "STRING", "initial_stock": INT }
+  Rule: Insert SKU with given stock. Return 201 Created.
+
+- POST /stock/adjust
+  Input: { "sku": "STRING", "amount": INT }
+  Rule: Adjust stock levels (positive or negative). Return 200 OK with updated stock.
+
+- POST /reservations
+  Input: { "sku": "STRING", "quantity": INT, "idempotency_key": "STRING" }
+  Rule 1 (Stock Check): If available stock < quantity, return HTTP 400 with {"detail": "Insufficient stock"}.
+  Rule 2 (Idempotency): If the idempotency_key already exists in the database, return the previously saved reservation response immediately without mutating stock again.
+  Rule 3 (Creation): Deduct stock and create a reservation with a UTC timestamp. Status is "PENDING". Return 201 Created with reservation details.
+
+- POST /reservations/{id}/confirm
+  Rule: Change status from "PENDING" to "CONFIRMED". Create a corresponding Order record. Return 200 OK.
+
+- POST /reservations/{id}/cancel
+  Rule: Change status to "CANCELLED". Restore the reserved quantity back to the SKU's available stock. Return 200 OK.
+
+- GET /orders
+  Input: Query parameters for "page" (default 1) and "size" (default 10).
+  Rule: Return a paginated list of orders matching the requested range.
+
+4. Invariant & Edge Case Enforcement
+- Expiration Check: Any attempt to confirm a reservation created more than 300 seconds ago must fail. Change status to "EXPIRED", do not create an order, restore the stock, and return HTTP 400 {"detail": "Reservation expired"}.
+- State Validation: Confirming/Cancelling a reservation that is not "PENDING" must return HTTP 400.
+
+5. Database Architecture
+- Isolate all raw SQL execution or ORM queries inside `repository.py`. The `service.py` layer must interact with data solely through repository class instances or methods.
+
+6. Testing Requirements
+The `tests/` directory must contain runnable pytest assertions verifying:
+- Happy path workflow (SKU -> Reserve -> Confirm -> Order lookup)
+- Insufficient stock rejection (HTTP 400)
+- Idempotent retry returns matching data without double-deduction
+- Expired reservation rejection and stock restoration
+- Unauthorized mutation block (Missing/Invalid API Key returns HTTP 401)
+- Pagination offset behavior on GET /orders
+
+Output Contract:
+Generate and write all files completely. Do not use placeholders or truncate implementations. After file creation is complete, print exactly one valid JSON object containing the keys "files_created", "entrypoint", and "test_command", and nothing else.
+```

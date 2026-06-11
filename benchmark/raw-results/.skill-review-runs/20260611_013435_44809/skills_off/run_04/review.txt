@@ -1,0 +1,137 @@
+```json
+{
+  "rubric_version": "benchmark-codegen-review-v1",
+  "score_scale": "0-100 per category",
+  "weights": {
+    "task_fulfillment": 0.20,
+    "functional_correctness": 0.25,
+    "executability": 0.15,
+    "test_quality": 0.15,
+    "code_quality": 0.10,
+    "minimality": 0.10,
+    "security_safety": 0.05
+  },
+  "task_fulfillment_score": 82,
+  "task_fulfillment_breakdown": {
+    "file_structure_compliance": 95,
+    "api_surface_coverage": 100,
+    "output_contract_adherence": 50
+  },
+  "functional_correctness_score": 51,
+  "functional_correctness_breakdown": {
+    "business_logic_accuracy": 45,
+    "expiration_and_state_rules": 45,
+    "concurrency_and_idempotency": 50,
+    "error_handling_semantics": 65
+  },
+  "executability_score": 66,
+  "executability_breakdown": {
+    "dependency_completeness": 95,
+    "imports_and_entrypoints": 85,
+    "automated_test_results": 19
+  },
+  "test_quality_score": 74,
+  "test_quality_breakdown": {
+    "specification_coverage": 95,
+    "assertion_rigor": 88,
+    "environment_isolation": 40
+  },
+  "code_quality_score": 84,
+  "code_quality_breakdown": {
+    "clarity_and_naming": 80,
+    "separation_of_concerns": 88
+  },
+  "minimality_score": 78,
+  "minimality_breakdown": {
+    "no_dead_code": 75,
+    "structural_complexity": 80
+  },
+  "security_safety_score": 80,
+  "security_safety_breakdown": {
+    "authentication_gate": 95,
+    "input_validation": 65
+  },
+  "review_confidence_score": 93,
+  "weighted_components": {
+    "task_fulfillment": 16.4,
+    "functional_correctness": 12.75,
+    "executability": 9.9,
+    "test_quality": 11.1,
+    "code_quality": 8.4,
+    "minimality": 7.8,
+    "security_safety": 4.0
+  },
+  "weighted_total": 70.4,
+  "verdict": "mixed",
+  "key_findings": [
+    "CRITICAL: The app is non-functional at runtime. Repository._get_connection() opens a new sqlite3.connect(':memory:') on every call and closes it after each operation. Each ':memory:' connection is an isolated database, so the schema created in _init_db() (on its own throwaway connection) and all written data vanish between calls. Every DB-touching request fails with 'no such table: skus'.",
+    "Executed `pytest`: 26 failed, 6 passed (18.75% pass rate). The only passing tests are those that never hit the DB: test_health and the five missing/invalid API-key (401) tests.",
+    "Confirmed root cause by reproduction: instantiating Repository with a file-backed DB path persists data across connections correctly (create_sku then get_sku_by_name both return the row), proving the defect is the ':memory:' + connection-per-call pattern, not the business logic.",
+    "All 10 specified files are present and all 7 endpoints are implemented; business-logic design (stock deduction on reserve, restoration on cancel/expire, 300s expiry, 201 vs 200 status codes, pagination offset) is correct in code but never exercises successfully due to the persistence bug.",
+    "Test isolation is weak for the API suite: app.py instantiates module-level `repo`/`service` singletons shared across all TestClient tests with no teardown; were the DB bug fixed, UNIQUE constraints on sku and idempotency_key would cause cross-test contamination."
+  ],
+  "score_rationale": {
+    "task_fulfillment": "All 10 target files present (src/commerce_service/{__init__,app,models,repository,security,service}.py, tests/{test_api,test_service}.py, pyproject.toml, README.md) and all 7 endpoints implemented (/health, /skus, /stock/adjust, /reservations, /reservations/{id}/confirm, /reservations/{id}/cancel, /orders). output_contract_adherence scored 50 because the agent's final JSON message (files_created/entrypoint/test_command) is not present in the workspace and cannot be verified from artifacts alone.",
+    "functional_correctness": "Logic is correctly specified in source (idempotency cache returns existing reservation without re-deducting, expiry restores stock, PENDING enforced on confirm/cancel, 201 on create vs 200 on adjust/confirm/cancel, offset=(page-1)*size) but the service does not actually function: the ':memory:' connection-per-call defect makes every stateful operation fail at runtime. Error semantics are partially correct (401 auth paths verified passing, 400 for business errors) but SKU/reservation 'not found' cases return 400 rather than 404 and all exceptions are funneled through a broad `except Exception`.",
+    "executability": "Dependencies are complete (fastapi, uvicorn[standard], pydantic, pytest, pytest-asyncio, httpx). Imports are absolute and consistent with the package layout; the package installs editable and the app module imports/starts. However automated test execution yields 26 failed / 6 passed, so automated_test_results is scored proportionally low (~19).",
+    "test_quality": "Coverage is excellent across all 6 required scenarios at both service and API layers (happy path, insufficient stock, idempotency, expiration, auth block, pagination) with rigorous assertions on response payloads and post-state (stock restoration, status transitions). Isolation is the weak point: test_service uses fresh in-memory repos per fixture, but test_api shares module-level singletons with no teardown, masking what would be UNIQUE-constraint contamination if persistence worked.",
+    "code_quality": "Clean, readable naming and clear layering: repository.py owns all SQL, service.py owns business rules, app.py owns routing, security.py owns auth. Minor deductions for blanket `except Exception -> 400` handlers that obscure error provenance and string-matching on exception messages ('Insufficient stock', 'not in PENDING', 'expired') to derive HTTP responses.",
+    "minimality": "No major over-engineering; the extra service.py layer is reasonable. Deductions for dead code: unused imports (Optional and Field in models.py, Optional in service.py), restore_stock() is a thin pass-through to adjust_stock(), and deduct_stock()'s return value is computed but never consumed.",
+    "security_safety": "All mutating endpoints plus GET /orders are gated by Depends(validate_api_key); /health is appropriately open. Input validation is type-level only via Pydantic with no business constraints (negative quantity, negative initial_stock, or negative amount are all accepted); Field is imported but no Field(gt=0)/ge constraints are applied."
+  },
+  "instruction_failures": [
+    "output_contract_adherence could not be confirmed: no agent final-message JSON (files_created/entrypoint/test_command) is observable in the delivered workspace."
+  ],
+  "correctness_failures": [
+    "Persistence layer fundamentally broken: per-call sqlite3.connect(':memory:') isolates every connection, so tables and data do not persist; runtime requests fail with sqlite3.OperationalError: no such table: skus.",
+    "Default DB_PATH=':memory:' (repository.py:7) and the test override (test_api.py:6, test_service.py:9 fixture) both trigger the isolation bug, so the service cannot complete any stateful workflow.",
+    "SKU-not-found and reservation-not-found conditions surface as HTTP 400 rather than 404; create_sku on a duplicate sku raises a raw sqlite IntegrityError funneled to a generic 400."
+  ],
+  "execution_failures": [
+    "pytest result: 26 failed, 6 passed in ~0.35s.",
+    "test_service.py failures: sqlite3.OperationalError: no such table: skus (repository.py:60 and elsewhere).",
+    "test_api.py failures: create/adjust/reserve endpoints return 400 instead of 201/200; confirm/cancel/list tests raise KeyError: 'id' because the upstream create call returned an error body."
+  ],
+  "test_gaps": [
+    "No test for negative/zero quantity or negative initial_stock (no input-constraint validation exists to test).",
+    "API test suite shares module-level repo/service singletons with no fixture teardown or DB reset between tests — no real environment isolation at the API layer.",
+    "No test for the cancel-after-confirm vs confirm-after-cancel ordering beyond the not-pending guard; no test for duplicate idempotency_key across distinct SKUs.",
+    "No test asserting 404 (vs 400) distinction for unknown SKU/reservation."
+  ],
+  "quality_notes": [
+    "Broad `except Exception: raise HTTPException(400, ...)` blocks in every app.py route mask the true error type and can convert internal errors (e.g., DB failures) into client-facing 400s.",
+    "HTTP status mapping relies on substring matching of exception messages ('Insufficient stock', 'not in PENDING', 'expired'), a brittle coupling between service strings and the API layer.",
+    "datetime.utcnow() is deprecated in Python 3.12; timezone-naive timestamps are used throughout (functional but not best practice)."
+  ],
+  "unnecessary_code_examples": [
+    "models.py imports Optional and Field but neither is used.",
+    "service.py imports Optional but it is unused.",
+    "repository.py restore_stock() merely delegates to adjust_stock() — a redundant alias.",
+    "repository.py deduct_stock() builds and returns a dict that the service layer never reads."
+  ],
+  "security_safety_notes": [
+    "Authentication gate is correctly applied via Depends(validate_api_key) to /skus, /stock/adjust, /reservations, confirm, cancel, and /orders; /health is unauthenticated by design.",
+    "VALID_API_KEY is a hardcoded constant ('test-api-key-12345') in security.py with no environment override — acceptable for a demo but not for real deployment.",
+    "Pydantic enforces field types but no value constraints; negative quantity/stock/amount pass validation, allowing nonsensical inventory states (Field is imported but no constraints declared)."
+  ],
+  "file_evidence": [
+    {"path": "src/commerce_service/repository.py", "note": "Lines 15-18 _get_connection() does sqlite3.connect(self.db_path) per call; with default DB_PATH=':memory:' (line 7) each connection is an isolated empty DB, so _init_db()'s tables (lines 20-54) never exist for subsequent calls — root cause of all runtime failures."},
+    {"path": "src/commerce_service/service.py", "note": "Correct business rules: idempotency short-circuit (26-35), insufficient-stock guard (41-42), 300s expiry with stock restoration (59-66), PENDING enforcement (54-57, 77-80) — all sound in design but never execute successfully due to the repository defect."},
+    {"path": "src/commerce_service/app.py", "note": "All 7 endpoints present; correct status codes (201 on create_sku/create_reservation, 200 default on adjust/confirm/cancel); module-level singletons repo/service (18-19) shared across all requests/tests; broad except Exception->400 in every route."},
+    {"path": "src/commerce_service/security.py", "note": "validate_api_key returns 401 for missing/invalid X-API-Key; applied as a dependency to all mutating endpoints and /orders. The six runtime-passing tests are exactly these auth and health paths."},
+    {"path": "src/commerce_service/models.py", "note": "Pydantic v2 models with correct response shapes; unused imports Optional (line 2) and Field (line 3); no value constraints on quantity/stock/amount."},
+    {"path": "tests/test_api.py", "note": "Line 6 forces DB_PATH=':memory:'; imports shared repo/service singletons (line 8) with no teardown between tests — isolation weakness independent of the DB bug."},
+    {"path": "tests/test_service.py", "note": "Fresh Repository(':memory:') per fixture (lines 7-9); strong coverage/assertions but every DB-backed test errors with 'no such table' at runtime."},
+    {"path": "pyproject.toml", "note": "Complete deps (fastapi, uvicorn[standard], pydantic; dev: pytest, pytest-asyncio, httpx); pytest configured with testpaths=['tests'] and asyncio_mode='auto'."}
+  ],
+  "commands_run": [
+    "find . -type f (file inventory)",
+    "python3 --version (Python 3.12.4)",
+    "pip install -e \".[dev]\" (editable install succeeded)",
+    "python3 -m pytest -v (26 failed, 6 passed)",
+    "python3 -m pytest -q (confirmed 26 failed, 6 passed)",
+    "DB_PATH reproduction with file-backed Repository (confirmed data persists with a file path, isolating the ':memory:' connection-per-call defect)"
+  ],
+  "review_risk": "Low. Findings are grounded in executed test output (26 failed / 6 passed) plus a direct reproduction isolating the root cause. The only unverifiable item is output_contract_adherence (the agent's final JSON message is not present in the workspace), which was scored conservatively rather than as a confirmed pass or fail."
+}
+```

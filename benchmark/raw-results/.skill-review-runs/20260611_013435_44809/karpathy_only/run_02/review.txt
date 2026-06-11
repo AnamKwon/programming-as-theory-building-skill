@@ -1,0 +1,133 @@
+I have all the evidence I need. All 37 tests pass; the app boots correctly; one edge case (duplicate SKU creation) raises an uncaught `IntegrityError` → HTTP 500. Here is my objective evaluation.
+
+```json
+{
+  "rubric_version": "benchmark-codegen-review-v1",
+  "score_scale": "0-100 per category",
+  "weights": {
+    "task_fulfillment": 0.20,
+    "functional_correctness": 0.25,
+    "executability": 0.15,
+    "test_quality": 0.15,
+    "code_quality": 0.10,
+    "minimality": 0.10,
+    "security_safety": 0.05
+  },
+  "task_fulfillment_score": 90,
+  "task_fulfillment_breakdown": {
+    "file_structure_compliance": 95,
+    "api_surface_coverage": 100,
+    "output_contract_adherence": 75
+  },
+  "functional_correctness_score": 94,
+  "functional_correctness_breakdown": {
+    "business_logic_accuracy": 92,
+    "expiration_and_state_rules": 98,
+    "concurrency_and_idempotency": 95,
+    "error_handling_semantics": 92
+  },
+  "executability_score": 98,
+  "executability_breakdown": {
+    "dependency_completeness": 100,
+    "imports_and_entrypoints": 95,
+    "automated_test_results": 100
+  },
+  "test_quality_score": 94,
+  "test_quality_breakdown": {
+    "specification_coverage": 100,
+    "assertion_rigor": 92,
+    "environment_isolation": 90
+  },
+  "code_quality_score": 94,
+  "code_quality_breakdown": {
+    "clarity_and_naming": 92,
+    "separation_of_concerns": 95
+  },
+  "minimality_score": 83,
+  "minimality_breakdown": {
+    "no_dead_code": 75,
+    "structural_complexity": 90
+  },
+  "security_safety_score": 88,
+  "security_safety_breakdown": {
+    "authentication_gate": 98,
+    "input_validation": 78
+  },
+  "review_confidence_score": 93,
+  "weighted_components": {
+    "task_fulfillment": 18.0,
+    "functional_correctness": 23.5,
+    "executability": 14.7,
+    "test_quality": 14.1,
+    "code_quality": 9.4,
+    "minimality": 8.3,
+    "security_safety": 4.4
+  },
+  "weighted_total": 92.4,
+  "verdict": "excellent",
+  "key_findings": [
+    "All 37 tests pass (21 API + 16 service) on pytest 7.4.3 / Python 3.12.4 in 0.32s with zero failures.",
+    "All 7 specified endpoints implemented: GET /health, POST /skus, POST /stock/adjust, POST /reservations, POST /reservations/{id}/confirm, POST /reservations/{id}/cancel, GET /orders.",
+    "Clean three-layer separation: repository.py (SQLite persistence), service.py (business logic + HTTPException), app.py (routing + auth dependency).",
+    "Correct domain rules: 201 on SKU/reservation create, 200 on idempotent reservation replay (verified stock not re-deducted), 300s expiration with stock restoration, PENDING-state enforcement on confirm/cancel.",
+    "Duplicate SKU creation raises an uncaught sqlite3.IntegrityError producing HTTP 500 (reproduced at runtime) — a robustness gap, not a spec-tested path.",
+    "Several declared Pydantic models are unused (ErrorResponse, StockAdjustResponse, OrderListResponse) plus unused imports in models.py."
+  ],
+  "score_rationale": {
+    "task_fulfillment": "All requested package/test/config files present and all 7 endpoints implemented. The agent's final JSON output contract (files_created/entrypoint/test_command) cannot be verified from the file artifacts alone, so output_contract_adherence is scored conservatively at 75.",
+    "functional_correctness": "Stock validation, 201-vs-200 semantics, pagination offset math ((page-1)*size), 300s expiration block, stock restoration on expire/cancel, and idempotent caching all verified by passing tests and direct inspection. Minor deduction: duplicate-SKU insert is unhandled (500) and quantity/amount lack value bounds.",
+    "executability": "pyproject declares fastapi/uvicorn/pydantic plus dev extras (pytest/pytest-asyncio/httpx); all present at runtime. Imports resolve, app boots, /health returns ok, and 100% of tests pass.",
+    "test_quality": "All 6 required scenarios covered (happy path, insufficient stock, idempotency, expiration, auth block, pagination) plus not-found/invalid-state. Assertions check response data and persisted stock state, not just status codes. Isolation via per-test :memory: repo and autouse teardown; the module-global swap in test_api is functional but slightly fragile.",
+    "code_quality": "Readable naming, clear control flow, and strong layering with DB access confined to repository.py and routing to app.py. Service layer cleanly raises HTTPException for transport mapping.",
+    "minimality": "No over-engineering and no unrequested features, but multiple unused response models and a couple of unused imports lower the no-dead-code sub-score.",
+    "security_safety": "All five mutating endpoints gated by the X-API-Key dependency; GET /orders correctly open. Pydantic enforces types, but no field constraints (negative quantity/amount and negative initial_stock are accepted), limiting input validation rigor."
+  },
+  "instruction_failures": [
+    "Agent's final structured JSON output (files_created/entrypoint/test_command) is not present in the repository artifacts and therefore could not be confirmed as the exclusive output."
+  ],
+  "correctness_failures": [
+    "POST /skus with a duplicate SKU raises uncaught sqlite3.IntegrityError -> HTTP 500 instead of a structured 400/409 (reproduced at runtime).",
+    "No validation that reservation quantity > 0 or initial_stock >= 0; negative values would be accepted by the models."
+  ],
+  "execution_failures": [],
+  "test_gaps": [
+    "No test for duplicate SKU creation (the path that fails with 500).",
+    "No test asserting reservation creation against a non-existent SKU returns 404.",
+    "Negative-quantity / negative-amount input validation is untested."
+  ],
+  "quality_notes": [
+    "models.py imports datetime and Optional that are unused.",
+    "ErrorResponse, StockAdjustResponse, and OrderListResponse models are defined but never referenced as response_model or return types.",
+    "Endpoints return plain dicts rather than declared response_model schemas, weakening the typed-contract benefit of the defined models."
+  ],
+  "unnecessary_code_examples": [
+    "src/commerce_service/models.py: StockAdjustResponse (unused)",
+    "src/commerce_service/models.py: OrderListResponse (unused)",
+    "src/commerce_service/models.py: ErrorResponse (unused)",
+    "src/commerce_service/models.py: unused imports `datetime` and `Optional`"
+  ],
+  "security_safety_notes": [
+    "All mutating endpoints (/skus, /stock/adjust, /reservations, confirm, cancel) enforce verify_api_key; 401 returned for missing and invalid keys (test-verified).",
+    "GET /orders is intentionally unauthenticated, consistent with the read-only contract.",
+    "Pydantic validates payload types but applies no value constraints (e.g., Field(gt=0)), so semantically invalid quantities/amounts pass validation."
+  ],
+  "file_evidence": [
+    {"path": "src/commerce_service/app.py", "note": "7 endpoints; verify_api_key dependency on all 5 mutating routes; reservation returns dynamic 201/200 via JSONResponse."},
+    {"path": "src/commerce_service/service.py", "note": "Business logic: idempotency cache (200), insufficient-stock 400, 300s expiration with stock restore (lines 92-99), PENDING enforcement (lines 81-85, 123-127)."},
+    {"path": "src/commerce_service/repository.py", "note": "SQLite persistence isolated here; pagination offset=(page-1)*size at line 167; create_sku has no duplicate guard (line 78) causing 500."},
+    {"path": "src/commerce_service/security.py", "note": "X-API-Key header check, 401 on missing/invalid."},
+    {"path": "src/commerce_service/models.py", "note": "Pydantic request/response models; StockAdjustResponse/OrderListResponse/ErrorResponse and datetime/Optional imports unused."},
+    {"path": "tests/test_api.py", "note": "21 API tests covering all 6 required scenarios + auth and state edges; autouse :memory: fixture with clear_all teardown."},
+    {"path": "tests/test_service.py", "note": "16 service-level tests asserting on data models and persisted stock state."},
+    {"path": "pyproject.toml", "note": "Declares fastapi/uvicorn/pydantic + dev extras pytest/pytest-asyncio/httpx; src layout."}
+  ],
+  "commands_run": [
+    "find . -type f (file inventory: 11 files)",
+    "python3 --version (3.12.4); python3 -m pytest --version (7.4.3)",
+    "python3 -c import fastapi/pydantic/httpx (0.104.1 / 2.5.0 / 0.25.1)",
+    "python3 -m pytest tests/ -v (37 passed in 0.32s)",
+    "python3 -c TestClient boot + duplicate-SKU probe (health ok, dup SKU -> sqlite3.IntegrityError / 500)"
+  ],
+  "review_risk": "Low. Scores grounded in a full passing test run (37/37) plus direct line inspection and a runtime reproduction of the duplicate-SKU 500. The only unverifiable item is the agent's final JSON output contract, which is not recoverable from file artifacts and was scored conservatively rather than assumed."
+}
+```

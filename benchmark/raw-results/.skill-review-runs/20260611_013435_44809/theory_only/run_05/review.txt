@@ -1,0 +1,136 @@
+Deterministic failure confirmed. Root cause: `repository.py:195` orders only by `created_at DESC`. SQLite's `CURRENT_TIMESTAMP` has 1-second granularity, so rapidly-created orders share an identical timestamp and SQLite falls back to rowid-ascending order — the opposite of newest-first. No secondary `id DESC` tie-break. This is a genuine pagination-ordering defect, not flakiness.
+
+```json
+{
+  "rubric_version": "benchmark-codegen-review-v1",
+  "score_scale": "0-100 per category",
+  "weights": {
+    "task_fulfillment": 0.20,
+    "functional_correctness": 0.25,
+    "executability": 0.15,
+    "test_quality": 0.15,
+    "code_quality": 0.10,
+    "minimality": 0.10,
+    "security_safety": 0.05
+  },
+  "task_fulfillment_score": 90,
+  "task_fulfillment_breakdown": {
+    "file_structure_compliance": 100,
+    "api_surface_coverage": 100,
+    "output_contract_adherence": 70
+  },
+  "functional_correctness_score": 90,
+  "functional_correctness_breakdown": {
+    "business_logic_accuracy": 80,
+    "expiration_and_state_rules": 95,
+    "concurrency_and_idempotency": 95,
+    "error_handling_semantics": 90
+  },
+  "executability_score": 90,
+  "executability_breakdown": {
+    "dependency_completeness": 95,
+    "imports_and_entrypoints": 95,
+    "automated_test_results": 80
+  },
+  "test_quality_score": 90,
+  "test_quality_breakdown": {
+    "specification_coverage": 95,
+    "assertion_rigor": 90,
+    "environment_isolation": 85
+  },
+  "code_quality_score": 87,
+  "code_quality_breakdown": {
+    "clarity_and_naming": 88,
+    "separation_of_concerns": 85
+  },
+  "minimality_score": 79,
+  "minimality_breakdown": {
+    "no_dead_code": 70,
+    "structural_complexity": 88
+  },
+  "security_safety_score": 88,
+  "security_safety_breakdown": {
+    "authentication_gate": 95,
+    "input_validation": 80
+  },
+  "review_confidence_score": 93,
+  "weighted_components": {
+    "task_fulfillment": 18.0,
+    "functional_correctness": 22.5,
+    "executability": 13.5,
+    "test_quality": 13.5,
+    "code_quality": 8.7,
+    "minimality": 7.9,
+    "security_safety": 4.4
+  },
+  "weighted_total": 88.5,
+  "verdict": "good",
+  "key_findings": [
+    "All 10 target files present plus tests/__init__.py; full src-layout package with pyproject.toml, README, and two test modules.",
+    "All 7 required endpoints implemented (/health, /skus, /stock/adjust, /reservations, confirm, cancel, /orders) with correct 201-vs-200 status codes.",
+    "Test execution: 51 passed, 1 failed out of 52 (98%). Failure is deterministic, not flaky (reproduced twice).",
+    "Genuine defect: /orders pagination ordering relies on `ORDER BY created_at DESC` only; with SQLite 1-second timestamp granularity, same-second orders return rowid-ascending (oldest first) instead of newest first — repository.py:195.",
+    "Idempotency correctly returns the cached reservation without double-deducting stock (verified by passing tests in both test modules).",
+    "300-second expiration, stock restoration on expiration/cancellation, and PENDING-status enforcement all implemented and passing.",
+    "Several unused imports across modules (ReservationResponse, SKUResponse, ErrorResponse, repository datetime/Path, service timezone).",
+    "Error-to-HTTP mapping done via substring matching on exception text (e.g. \"Insufficient stock\" in str(e)) — fragile coupling between app and service layers."
+  ],
+  "score_rationale": {
+    "task_fulfillment": "File structure and API surface are complete (100/100 each): all 10 requested files exist and all 7 endpoints are routed with correct auth placement. Output-contract adherence scored 70 because the agent's final JSON message (files_created/entrypoint/test_command) is not present among the inspected artifacts, so exclusive-JSON-output compliance cannot be confirmed from the workspace.",
+    "functional_correctness": "Expiration/state rules, idempotency, and error semantics are correct and test-verified. business_logic_accuracy is reduced to 80 due to the non-deterministic pagination ordering (no id DESC tie-break) that fails one test and would mis-order same-second orders in production.",
+    "executability": "Dependencies are complete and imports/entrypoint are correct (app boots, uvicorn target valid). automated_test_results scored 80 rather than 100 because 1/52 tests fails on a real ordering bug; the rubric requires 100% pass for full marks.",
+    "test_quality": "All six required scenarios are covered (happy path, insufficient stock, idempotency, expiration, auth block, pagination) with rigorous assertions on data and state (stock levels, status transitions, quantities). Isolation uses per-test temp SQLite files with teardown; slight deduction because test_api mutates module-global repo/service and import creates a stray commerce.db.",
+    "code_quality": "Clear naming and clean three-layer separation (repository/service/app). Deducted for cross-layer coupling: HTTP status selection depends on substring matching of service exception messages, which is brittle.",
+    "minimality": "Architecture is appropriately lean with no speculative abstractions. Deducted primarily for multiple unused imports and unused models (SKUResponse, ErrorResponse), which are concrete dead code.",
+    "security_safety": "All mutating endpoints are gated by the X-API-Key dependency returning 401 on missing/invalid keys; read endpoints are intentionally open. input_validation reduced to 80 because Pydantic models lack value constraints (e.g., quantity/initial_stock could be negative or zero with no rejection)."
+  },
+  "instruction_failures": [
+    "Agent's final structured JSON output (files_created/entrypoint/test_command) not observable in the delivered workspace artifacts, so exclusive-output-contract compliance is unverified."
+  ],
+  "correctness_failures": [
+    "Pagination ordering is non-deterministic for orders created within the same wall-clock second: repository.get_orders_paginated orders by created_at DESC only (repository.py:195), causing test_orders_pagination_ordering to fail (got reservation_id 1, expected 3).",
+    "adjust_stock and create_reservation permit stock to go negative / accept non-positive quantities since no domain constraints are enforced (latent, not directly tested)."
+  ],
+  "execution_failures": [
+    "1 of 52 tests fails deterministically: tests/test_service.py::TestPagination::test_orders_pagination_ordering."
+  ],
+  "test_gaps": [
+    "No test asserts rejection of negative/zero quantity or negative initial_stock.",
+    "No test covers cancelling an already-EXPIRED reservation or confirming a CANCELLED one beyond the generic non-PENDING path.",
+    "API-layer test for idempotency relies on importing the module-global `service` to read stock rather than asserting via an endpoint, coupling the test to internals."
+  ],
+  "quality_notes": [
+    "HTTP exception mapping uses string membership checks on exception messages (app.py:68, 85-88, 104-105) — fragile if wording changes.",
+    "service.py uses deprecated datetime.utcnow() (DeprecationWarning emitted on Python 3.12).",
+    "Repository opens/closes a new SQLite connection per call; acceptable for scope but not pooled."
+  ],
+  "unnecessary_code_examples": [
+    "app.py imports ReservationResponse but never uses it.",
+    "models.py defines SKUResponse and ErrorResponse that are never referenced as response models or elsewhere.",
+    "repository.py imports `datetime` and `Path` which are unused.",
+    "service.py imports `timezone` which is unused."
+  ],
+  "security_safety_notes": [
+    "All mutating endpoints (/skus, /stock/adjust, /reservations, /reservations/{id}/confirm, /reservations/{id}/cancel) enforce verify_api_key returning 401 on missing/invalid key — confirmed by passing auth tests.",
+    "Pydantic enforces types but no field-level constraints; malformed-type payloads are rejected (422) but semantically invalid values (negative quantity) are accepted.",
+    "Static hardcoded API key 'test-api-key' in security.py — acceptable for the spec but not production-grade."
+  ],
+  "file_evidence": [
+    {"path": "src/commerce_service/repository.py", "note": "Line 195: ORDER BY created_at DESC with no id tie-break — root cause of the failing ordering test under 1-second timestamp granularity."},
+    {"path": "src/commerce_service/service.py", "note": "Lines 31-52 idempotency check before stock deduction (correct, no double-deduct); lines 64-74 300s expiration with stock restoration; line 66 deprecated utcnow()."},
+    {"path": "src/commerce_service/app.py", "note": "All 7 endpoints routed; 201 on /skus and /reservations, mutating routes gated by Depends(verify_api_key); fragile string-based error mapping at lines 68/85-88."},
+    {"path": "src/commerce_service/security.py", "note": "verify_api_key returns 401 for missing and invalid keys (lines 8-17)."},
+    {"path": "tests/test_service.py", "note": "Line 243-254 failing pagination-ordering test; comprehensive coverage of all six required scenarios."},
+    {"path": "tests/test_api.py", "note": "Per-test temp SQLite isolation via fixtures; covers auth, idempotency, expiration, pagination at HTTP layer."},
+    {"path": "pyproject.toml", "note": "Declares fastapi, pydantic, uvicorn, and dev deps pytest/pytest-asyncio/httpx; src package-dir layout."}
+  ],
+  "commands_run": [
+    "python3 --version (Python 3.12.4)",
+    "pip install -e . ; pip install pytest httpx",
+    "python3 -c 'import fastapi, pydantic, httpx, pytest' -> deps ok",
+    "python3 -m pytest -> 1 failed, 51 passed, 59 warnings",
+    "python3 -m pytest tests/test_service.py::TestPagination::test_orders_pagination_ordering (x2) -> deterministic failure"
+  ],
+  "review_risk": "Low. All source and test files were read in full and the actual test command was executed (and the single failure reproduced twice), grounding the executability and correctness scores in runtime evidence. The only unverifiable item is the agent's final JSON output-contract message, which is not part of the inspected workspace; that single sub-item was scored conservatively rather than assumed compliant."
+}
+```

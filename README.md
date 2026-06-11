@@ -41,10 +41,11 @@ The benchmark compares commerce-backend code generation across three isolated ar
 
 Code generation used **Claude Haiku** through the Claude Code `MODEL=haiku` setting for every arm. Each generation ran in a fresh temporary workspace, and generated projects were reviewed by a separate Claude Opus review pass using `benchmark-codegen-review-v1`.
 
-The copied benchmark now contains two prompt families:
+The copied benchmark now contains three prompt families:
 
 - `basic-commerce`: the original, looser FastAPI + SQLite inventory reservation/order orchestration prompt.
-- `strict-production`: a later, more explicit prompt that specifies endpoints, status codes, error bodies, expiration behavior, stock restoration, 401 auth behavior, and pagination semantics.
+- `strict-production`: a later, more explicit prompt that specifies endpoints, status codes, error bodies, expiration behavior, stock restoration, 401 auth behavior, and pagination semantics. This maps to `benchmark/prompts/strict-commerce.md`.
+- `strict-commerce-no-mcp`: the same strict prompt run after MCP usage was disabled in the harness, also using `benchmark/prompts/strict-commerce.md`. It is reported separately because the execution environment changed.
 
 Because the prompt changed, the headline result is reported by prompt family rather than as one flattened average.
 
@@ -56,6 +57,9 @@ Because the prompt changed, the headline result is reported by prompt family rat
 | `strict-production` | `skills_off` | 19 | 80.9 | 76.6 | 74.2 | 80.3 | 4 excellent, 7 good, 8 mixed |
 | `strict-production` | `karpathy_only` | 19 | 82.5 | 77.5 | **80.5** | 83.2 | 5 excellent, 5 good, 9 mixed |
 | `strict-production` | `theory_only` | 20 | **83.4** | **81.8** | 77.8 | **83.8** | 4 excellent, 12 good, 4 mixed |
+| `strict-commerce-no-mcp` | `skills_off` | 10 | 78.5 | 64.3 | 73.9 | 88.0 | 2 excellent, 2 good, 6 mixed |
+| `strict-commerce-no-mcp` | `karpathy_only` | 9 | 84.6 | 82.8 | 83.7 | 82.9 | 3 excellent, 4 good, 2 mixed |
+| `strict-commerce-no-mcp` | `theory_only` | 10 | **88.5** | **89.5** | **91.2** | **88.9** | 4 excellent, 6 good |
 
 ## Interpreting the result
 
@@ -63,10 +67,13 @@ The `basic-commerce` prompt is the cleaner test of skill behavior because the pr
 
 The `strict-production` prompt raised every arm. It explicitly supplied many rules that the theory-building skill otherwise had to recover: status codes, stock restoration, expiration behavior, idempotency expectations, and pagination semantics. In that stricter family, the gap narrowed; `karpathy_only` won one run and `theory_only` won the other.
 
-The overall pattern is that `karpathy_only` improves readability and compactness, while `theory_only` more consistently improves domain correctness, executability, and behavioral tests. Neither skill eliminates recurring failures by itself: inventory/reservation invariants, idempotency, expiration/state transitions, SQLite isolation, runtime entrypoints, dead code, and README overclaims still appear in reviews.
+The MCP-disabled strict run is separated from the earlier strict runs. In that run, `theory_only` led with 88.5, followed by `karpathy_only` at 84.6 and `skills_off` at 78.5.
 
-Run-by-run results, invalid review-output notes, copied raw result folders, and recurring failure categories are documented in [benchmark/README.md](benchmark/README.md).
+The overall pattern is that `karpathy_only` improves readability and compactness, while `theory_only` more consistently improves domain correctness, executability, and behavioral tests. Across all parseable isolated reviews, `theory_only` has the best weighted average: 81.0 vs 77.7 for `karpathy_only` and 74.8 for `skills_off`. Neither skill eliminates recurring failures by itself: inventory/reservation invariants, idempotency, expiration/state transitions, SQLite isolation, runtime entrypoints, dead code, and README overclaims still appear in reviews.
 
+Run-by-run results, excluded review-output notes, copied raw result folders, manifest join notes, and recurring failure categories are documented in [benchmark/README.md](benchmark/README.md).
+
+- `benchmark/prompts/`
 - `benchmark/results-20260609.json`
 - `benchmark/raw-results/.skill-codegen-runs/`
 - `benchmark/raw-results/.skill-review-runs/`
@@ -115,7 +122,7 @@ MODEL=haiku REPEATS=10 ARMS="skills_off karpathy_only theory_only" ./run_skill_c
 MODEL=opus ./run_opus_code_review_experiment.sh .skill-codegen-runs/<run_id>
 ```
 
-The published benchmark combines multiple 10-repeat batches. Keep prompt revisions separate when aggregating; the `basic-commerce` and `strict-production` prompts are not directly interchangeable samples.
+The published benchmark combines multiple 10-repeat batches. Keep prompt revisions and environment changes separate when aggregating; the `basic-commerce`, `strict-production`, and `strict-commerce-no-mcp` groups are not directly interchangeable samples.
 
 The benchmark harness intentionally keeps `both` out of the default comparison set. `ARMS=both` remains available as an explicit opt-in, but the default comparison isolates single-skill effects.
 
@@ -137,6 +144,10 @@ Naur, Peter. "Programming as Theory Building." *Microprocessing and Microprogram
 |   `-- plugin.json
 |-- benchmark/
 |   |-- README.md
+|   |-- prompts/
+|   |   |-- README.md
+|   |   |-- basic-commerce.md
+|   |   `-- strict-commerce.md
 |   |-- raw-results/
 |   |   |-- .skill-codegen-runs/
 |   |   `-- .skill-review-runs/

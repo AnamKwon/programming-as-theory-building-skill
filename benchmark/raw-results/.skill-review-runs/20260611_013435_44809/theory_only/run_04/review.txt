@@ -1,0 +1,134 @@
+All files read and tests executed. Key findings: `pytest` alone fails collection (src layout, package not installed, no `conftest.py`); with `PYTHONPATH=src`, 27 pass / 4 fail — all four failures are missing-API-key cases returning **422 instead of 401** (FastAPI `Header(...)` raises a validation error, not the auth error the spec requires).
+
+```json
+{
+  "rubric_version": "benchmark-codegen-review-v1",
+  "score_scale": "0-100 per category",
+  "weights": {
+    "task_fulfillment": 0.20,
+    "functional_correctness": 0.25,
+    "executability": 0.15,
+    "test_quality": 0.15,
+    "code_quality": 0.10,
+    "minimality": 0.10,
+    "security_safety": 0.05
+  },
+  "task_fulfillment_score": 90,
+  "task_fulfillment_breakdown": {
+    "file_structure_compliance": 95,
+    "api_surface_coverage": 100,
+    "output_contract_adherence": 75
+  },
+  "functional_correctness_score": 81,
+  "functional_correctness_breakdown": {
+    "business_logic_accuracy": 90,
+    "expiration_and_state_rules": 95,
+    "concurrency_and_idempotency": 85,
+    "error_handling_semantics": 55
+  },
+  "executability_score": 68,
+  "executability_breakdown": {
+    "dependency_completeness": 90,
+    "imports_and_entrypoints": 75,
+    "automated_test_results": 40
+  },
+  "test_quality_score": 93,
+  "test_quality_breakdown": {
+    "specification_coverage": 100,
+    "assertion_rigor": 90,
+    "environment_isolation": 90
+  },
+  "code_quality_score": 89,
+  "code_quality_breakdown": {
+    "clarity_and_naming": 88,
+    "separation_of_concerns": 90
+  },
+  "minimality_score": 78,
+  "minimality_breakdown": {
+    "no_dead_code": 70,
+    "structural_complexity": 85
+  },
+  "security_safety_score": 93,
+  "security_safety_breakdown": {
+    "authentication_gate": 95,
+    "input_validation": 90
+  },
+  "review_confidence_score": 92,
+  "weighted_components": {
+    "task_fulfillment": 18.0,
+    "functional_correctness": 20.25,
+    "executability": 10.2,
+    "test_quality": 13.95,
+    "code_quality": 8.9,
+    "minimality": 7.8,
+    "security_safety": 4.65
+  },
+  "weighted_total": 83.8,
+  "verdict": "good",
+  "key_findings": [
+    "All 7 required endpoints implemented (/health, /skus, /stock/adjust, /reservations, confirm, cancel, /orders) with correct 201-vs-200 status codes.",
+    "Bare `pytest` (the documented test command) fails at collection with ModuleNotFoundError: src-layout package is not installed and there is no conftest.py adding src to sys.path; tests only run after `pip install -e` or PYTHONPATH=src.",
+    "With PYTHONPATH=src, 27 tests pass and 4 fail: all four missing-API-key tests assert 401 but receive 422, because FastAPI's `Header(...)` raises a 422 validation error before the auth check runs.",
+    "Core business logic is correct: 300s expiration with stock restoration, cancellation stock restoration, PENDING enforcement, idempotency caching without double-deducting stock, and pagination math all pass their tests.",
+    "Clean layering: DB access isolated in repository.py, business logic in service.py, routing in app.py, auth in security.py.",
+    "Several unused imports (json/os/time/Path in tests, Optional in models, HTTPException in app.py) and empty unused request models (ConfirmReservationRequest/CancelReservationRequest)."
+  ],
+  "score_rationale": {
+    "task_fulfillment": "All expected files and all 7 endpoints are present and routed correctly. output_contract_adherence is scored conservatively because the agent's final JSON message (files_created/entrypoint/test_command) is not inspectable from the workspace; README documents the entrypoint and pytest.",
+    "functional_correctness": "Stock rules, expiration, cancellation restoration, idempotency, and pagination are correct and verified by passing tests. Docked primarily for error-handling semantics: missing auth header returns 422 instead of the specified 401, producing 4 real test failures.",
+    "executability": "Dependencies are fully declared. However, the documented `pytest` command does not run out of the box due to the uninstalled src-layout package and absence of conftest.py, and even after fixing the path 4/31 tests fail, so automated_test_results is well below 100%.",
+    "test_quality": "Tests cover all six required scenarios at both API and service layers, make strict assertions on response data and persisted state (stock levels, order creation, EXPIRED status), and isolate state by deleting/recreating the SQLite file per test via an autouse fixture.",
+    "code_quality": "Naming, routing, and control flow are readable; database operations are cleanly confined to repository.py while app.py holds only routing, satisfying separation of concerns.",
+    "minimality": "Architecture is proportionate with no speculative abstractions, but multiple unused imports and two empty request-body models reduce the no-dead-code score.",
+    "security_safety": "Every mutating endpoint depends on verify_api_key; GET /orders is unauthenticated (read-only, acceptable). Pydantic models enforce type and bound constraints (min_length, ge, gt)."
+  },
+  "instruction_failures": [
+    "Cannot confirm the final output was exclusively the requested JSON (files_created/entrypoint/test_command) — not present/inspectable in the workspace artifacts."
+  ],
+  "correctness_failures": [
+    "Missing X-API-Key header yields HTTP 422 (FastAPI validation) instead of the specified 401 Unauthorized; invalid key correctly yields 401. 4 tests fail on this.",
+    "Idempotent duplicate reservation returns HTTP 201 on the cached/replayed response rather than indicating a replay (e.g., 200); functionally cached but status semantics are debatable."
+  ],
+  "execution_failures": [
+    "`pytest` (documented command) aborts at collection: ModuleNotFoundError: No module named 'commerce_service' — no editable install performed and no conftest.py to expose src/.",
+    "After setting PYTHONPATH=src: 4 failed, 27 passed (the four *_missing_api_key tests fail with 422 != 401)."
+  ],
+  "test_gaps": [
+    "No test asserts the 422-vs-401 distinction is intended; the suite encodes 401 as expected, which the implementation does not satisfy.",
+    "test_reservation_idempotency (API) does not actually re-query and assert post-idempotency stock level; it only creates an unrelated SKU-002 and never asserts on it (dead assertion path).",
+    "No negative test for adjust_stock driving available_stock below zero (the <0 guard in service.adjust_stock is unverified).",
+    "No test for duplicate-SKU 409 conflict at the API layer (only at service layer)."
+  ],
+  "quality_notes": [
+    "Uses deprecated datetime.utcnow() throughout (DeprecationWarnings) and deprecated FastAPI @app.on_event('startup').",
+    "New SQLite connection opened/closed per repository call with no transaction spanning stock-deduct + reservation-insert, so create_reservation is not atomic under failure.",
+    "Confirm/cancel define request models (ConfirmReservationRequest/CancelReservationRequest) but pass them as `= None` and never use them."
+  ],
+  "unnecessary_code_examples": [
+    "tests/test_api.py imports `json` and `pathlib.Path` (Path used, json unused).",
+    "tests/test_service.py imports `os` and `time` which are never used.",
+    "src/commerce_service/models.py imports `Optional` which is unused.",
+    "src/commerce_service/app.py imports `HTTPException` which is unused.",
+    "Empty ConfirmReservationRequest / CancelReservationRequest models that carry no fields and are not read."
+  ],
+  "security_safety_notes": [
+    "All mutating endpoints (POST /skus, /stock/adjust, /reservations, confirm, cancel) enforce verify_api_key; GET /orders is read-only and unauthenticated.",
+    "API key is a hardcoded static constant in security.py (test-api-key-12345) with plain string comparison (no constant-time compare) — acceptable for the spec but not production-grade.",
+    "Pydantic Field constraints validate types and bounds (min_length>=1, ge=0 stock, gt=0 quantity), mitigating malformed-input risk."
+  ],
+  "file_evidence": [
+    {"path": "src/commerce_service/security.py", "note": "verify_api_key uses Header(...); missing header → 422, only invalid value → 401, causing the 4 test failures."},
+    {"path": "src/commerce_service/service.py", "note": "Lines 98-107: correct 300s expiration with status->EXPIRED and stock restoration; lines 121-141 cancel restores stock; lines 52-56 idempotency cache."},
+    {"path": "src/commerce_service/repository.py", "note": "DB access fully isolated here; per-call connections; pagination via LIMIT/OFFSET at lines 240-263."},
+    {"path": "src/commerce_service/app.py", "note": "All 7 endpoints; /skus and /reservations return 201, confirm/cancel/adjust return 200; unused HTTPException import."},
+    {"path": "pyproject.toml", "note": "src layout (package-dir src) with no console entrypoint and no conftest, so `pytest` fails without editable install."},
+    {"path": "tests/test_api.py", "note": "Lines 60-76 assert 401 for missing/invalid key — missing-key case fails (422); autouse fixture recreates DB per test."}
+  ],
+  "commands_run": [
+    "find . -type f (excluding caches) — enumerated 11 project files",
+    "python3 -m pytest -p no:cacheprovider — 2 collection errors (ModuleNotFoundError: commerce_service)",
+    "PYTHONPATH=src python3 -m pytest -p no:cacheprovider — 4 failed, 27 passed, 186 warnings"
+  ],
+  "review_risk": "Low. All core/test files were read in full and tests were executed twice (canonical and PYTHONPATH=src), so executability and correctness scores are grounded in real runtime output. The only unverifiable item is the agent's final JSON output contract (not present in the workspace), which slightly limits confidence on output_contract_adherence; the exact list of '10 requested files' was inferred from the README/structure rather than an original spec document."
+}
+```

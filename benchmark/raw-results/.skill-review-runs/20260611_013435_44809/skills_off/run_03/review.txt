@@ -1,0 +1,133 @@
+All checks complete. Confirmed: 7/7 endpoints present, all 10 target files present, 39/39 tests pass, and `pydantic-settings`/`python-dotenv` declared but unused. Here is the objective evaluation.
+
+```json
+{
+  "rubric_version": "benchmark-codegen-review-v1",
+  "score_scale": "0-100 per category",
+  "weights": {
+    "task_fulfillment": 0.20,
+    "functional_correctness": 0.25,
+    "executability": 0.15,
+    "test_quality": 0.15,
+    "code_quality": 0.10,
+    "minimality": 0.10,
+    "security_safety": 0.05
+  },
+  "task_fulfillment_score": 92,
+  "task_fulfillment_breakdown": {
+    "file_structure_compliance": 100,
+    "api_surface_coverage": 100,
+    "output_contract_adherence": 75
+  },
+  "functional_correctness_score": 91,
+  "functional_correctness_breakdown": {
+    "business_logic_accuracy": 95,
+    "expiration_and_state_rules": 95,
+    "concurrency_and_idempotency": 90,
+    "error_handling_semantics": 85
+  },
+  "executability_score": 98,
+  "executability_breakdown": {
+    "dependency_completeness": 95,
+    "imports_and_entrypoints": 100,
+    "automated_test_results": 100
+  },
+  "test_quality_score": 95,
+  "test_quality_breakdown": {
+    "specification_coverage": 100,
+    "assertion_rigor": 95,
+    "environment_isolation": 90
+  },
+  "code_quality_score": 92,
+  "code_quality_breakdown": {
+    "clarity_and_naming": 94,
+    "separation_of_concerns": 90
+  },
+  "minimality_score": 85,
+  "minimality_breakdown": {
+    "no_dead_code": 80,
+    "structural_complexity": 90
+  },
+  "security_safety_score": 96,
+  "security_safety_breakdown": {
+    "authentication_gate": 100,
+    "input_validation": 92
+  },
+  "review_confidence_score": 95,
+  "weighted_components": {
+    "task_fulfillment": 18.4,
+    "functional_correctness": 22.75,
+    "executability": 14.7,
+    "test_quality": 14.25,
+    "code_quality": 9.2,
+    "minimality": 8.5,
+    "security_safety": 4.8
+  },
+  "weighted_total": 92.6,
+  "verdict": "excellent",
+  "key_findings": [
+    "All 39 tests pass (39 passed, 0 failed) under `python -m pytest -v`; 100% pass rate verified at runtime.",
+    "All 10 target files present exactly as specified (pyproject.toml, README.md, __init__.py, app.py, models.py, repository.py, security.py, service.py, tests/test_api.py, tests/test_service.py).",
+    "All 7 endpoints implemented: GET /health, POST /skus, POST /stock/adjust, POST /reservations, POST /reservations/{id}/confirm, POST /reservations/{id}/cancel, GET /orders.",
+    "Core business rules correct: insufficient stock -> 400, 201 on creation vs 200 on mutation/read, offset pagination, 300s expiration with stock restoration, PENDING state enforcement, idempotency caching without double-deduction.",
+    "Clean layering: DB access isolated in repository.py, business logic in service.py, routing in app.py, auth in security.py.",
+    "Minor deviations: missing auth header returns 403 (rubric references 401 for auth failures), unused dependencies (pydantic-settings, python-dotenv) and dead imports/methods, deprecated on_event/utcnow usage (warnings only)."
+  ],
+  "score_rationale": {
+    "task_fulfillment": "File structure (10/10) and API surface (7/7) are fully compliant. output_contract_adherence is scored conservatively (75) because the agent's final chat message is not present in the workspace and cannot be verified against the required {files_created, entrypoint, test_command} JSON contract; artifacts are otherwise complete and consistent.",
+    "functional_correctness": "Stock validation, status codes, pagination math, 300s expiration + restoration, PENDING enforcement, and idempotency are all implemented correctly and verified by passing tests. Deductions: error semantics use 403 for missing credentials rather than 401, and idempotency returns the cached reservation without validating that re-submitted params match the original key; no real concurrency locking (lazy expiration only).",
+    "executability": "Dependencies declared completely; imports and entrypoint (uvicorn src.commerce_service.app:app) are consistent with the package layout; full test suite executes and passes 39/39. Slight deduction for two declared-but-unused runtime dependencies.",
+    "test_quality": "All 6 required scenarios covered (happy path, insufficient stock, idempotency, expiration, auth block, pagination) plus extras, across both API and service layers. Assertions check response models and state mutations (stock restoration, id equality, totals), not just status codes. Each test uses an isolated tempfile SQLite DB with teardown and dependency_overrides cleanup; minor side-effect: TestClient startup touches the real commerce.db.",
+    "code_quality": "Readable naming, docstrings, and clear control flow; dependency-injected service pattern is clean. Separation of concerns is strong, though SQLAlchemy ORM models and engine/session live inside repository.py rather than a dedicated db/models module.",
+    "minimality": "No over-engineering and no unrequested features. Deductions for dead code: unused `Optional` imports in models.py and service.py, unused Repository.rollback()/close() helpers, and two unused declared dependencies.",
+    "security_safety": "All five mutating endpoints are gated by the verify_api_token dependency; reads (/health, /orders) are appropriately open. Pydantic models enforce types and constraints (initial_stock ge=0, quantity gt=0). Minor: non-constant-time token comparison and 403-vs-401 on missing header."
+  },
+  "instruction_failures": [
+    "Cannot confirm the agent's final response was exclusively the required JSON object (files_created/entrypoint/test_command) — the chat output is not part of the inspected workspace."
+  ],
+  "correctness_failures": [
+    "Missing Authorization header returns 403 FORBIDDEN; the rubric references 401 for auth failures (invalid token correctly returns 401).",
+    "Idempotency lookup returns the existing reservation regardless of whether the resubmitted sku/quantity match the original request bound to that key."
+  ],
+  "execution_failures": [],
+  "test_gaps": [
+    "No test asserts that an idempotent replay with DIFFERENT quantity/sku is rejected or ignored.",
+    "No explicit test that stock remains deducted for an unconfirmed-but-not-yet-touched expired reservation (lazy expiration behavior).",
+    "Auth-on-confirm/cancel mutating endpoints lack a dedicated unauthorized test (only skus/stock/reservations covered)."
+  ],
+  "quality_notes": [
+    "Deprecated @app.on_event('startup') and datetime.utcnow() generate 118 warnings (non-fatal).",
+    "ORM models defined in repository.py rather than a separate models/db module slightly blurs the layering.",
+    "Token comparison uses '!=' rather than a constant-time comparison."
+  ],
+  "unnecessary_code_examples": [
+    "from typing import Optional in models.py (unused).",
+    "from typing import Optional in service.py (unused).",
+    "Repository.rollback() and Repository.close() are defined but never called.",
+    "Declared dependencies pydantic-settings and python-dotenv are never imported/used."
+  ],
+  "security_safety_notes": [
+    "All mutating endpoints (/skus, /stock/adjust, /reservations, confirm, cancel) are protected by verify_api_token; /health and /orders are unauthenticated reads.",
+    "Pydantic Field constraints enforce non-negative initial_stock and positive reservation quantity, validating payload types and bounds.",
+    "API token read from API_TOKEN env (default 'secret-token'); comparison is not constant-time."
+  ],
+  "file_evidence": [
+    {"path": "src/commerce_service/app.py", "note": "All 7 routes present; mutating routes depend on verify_api_token; 201 status on /skus and /reservations."},
+    {"path": "src/commerce_service/service.py", "note": "RESERVATION_EXPIRY_SECONDS=300; insufficient-stock 400; expiration restores stock and marks EXPIRED; PENDING enforced on confirm/cancel; idempotency returns existing reservation."},
+    {"path": "src/commerce_service/repository.py", "note": "All DB ops isolated here; SQLAlchemy models SKU/Reservation/Order; pagination via offset/limit + count; unused rollback()/close() helpers."},
+    {"path": "src/commerce_service/security.py", "note": "Bearer-token check: missing header -> 403, malformed/invalid token -> 401."},
+    {"path": "src/commerce_service/models.py", "note": "Pydantic v2 models with Field constraints (initial_stock ge=0, quantity gt=0); unused Optional import."},
+    {"path": "tests/test_api.py", "note": "Covers happy path, insufficient stock, idempotency, expiration, auth block, pagination via TestClient with isolated temp DB."},
+    {"path": "tests/test_service.py", "note": "Service-layer unit tests asserting state changes (stock deduction/restoration) and HTTPException raising."},
+    {"path": "pyproject.toml", "note": "Complete deps; pydantic-settings and python-dotenv declared but unused."}
+  ],
+  "commands_run": [
+    "find . -type f (file inventory)",
+    "python -c 'import fastapi, sqlalchemy, pydantic, httpx, pytest' (dependency check -> deps ok)",
+    "python -m pytest -v (result: 39 passed, 118 warnings in 0.89s)",
+    "grep -rn '@app.' src/commerce_service/app.py (confirmed 7 endpoints)",
+    "grep -rn 'pydantic_settings|dotenv|import os' src/ (confirmed unused deps)"
+  ],
+  "review_risk": "Low. All source and test files were read in full and the test suite was executed with a 39/39 pass result. The only unverifiable item is the agent's final JSON output contract (not present in the workspace), which was scored conservatively rather than penalized as a confirmed failure."
+}
+```

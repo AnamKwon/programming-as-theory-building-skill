@@ -1,0 +1,135 @@
+Confirmed: `OrderResponse`/`PaginatedOrdersResponse` are only self-referential within `models.py` (never imported by app/service), and `Depends` is unused in `security.py`.
+
+```json
+{
+  "rubric_version": "benchmark-codegen-review-v1",
+  "score_scale": "0-100 per category",
+  "weights": {
+    "task_fulfillment": 0.20,
+    "functional_correctness": 0.25,
+    "executability": 0.15,
+    "test_quality": 0.15,
+    "code_quality": 0.10,
+    "minimality": 0.10,
+    "security_safety": 0.05
+  },
+  "task_fulfillment_score": 88,
+  "task_fulfillment_breakdown": {
+    "file_structure_compliance": 95,
+    "api_surface_coverage": 100,
+    "output_contract_adherence": 70
+  },
+  "functional_correctness_score": 89,
+  "functional_correctness_breakdown": {
+    "business_logic_accuracy": 95,
+    "expiration_and_state_rules": 95,
+    "concurrency_and_idempotency": 80,
+    "error_handling_semantics": 85
+  },
+  "executability_score": 100,
+  "executability_breakdown": {
+    "dependency_completeness": 100,
+    "imports_and_entrypoints": 100,
+    "automated_test_results": 100
+  },
+  "test_quality_score": 92,
+  "test_quality_breakdown": {
+    "specification_coverage": 100,
+    "assertion_rigor": 90,
+    "environment_isolation": 85
+  },
+  "code_quality_score": 93,
+  "code_quality_breakdown": {
+    "clarity_and_naming": 90,
+    "separation_of_concerns": 95
+  },
+  "minimality_score": 75,
+  "minimality_breakdown": {
+    "no_dead_code": 70,
+    "structural_complexity": 80
+  },
+  "security_safety_score": 85,
+  "security_safety_breakdown": {
+    "authentication_gate": 95,
+    "input_validation": 75
+  },
+  "review_confidence_score": 91,
+  "weighted_components": {
+    "task_fulfillment": 17.6,
+    "functional_correctness": 22.25,
+    "executability": 15.0,
+    "test_quality": 13.8,
+    "code_quality": 9.3,
+    "minimality": 7.5,
+    "security_safety": 4.25
+  },
+  "weighted_total": 89.7,
+  "verdict": "good",
+  "key_findings": [
+    "All 35 tests pass (pytest: '35 passed') across both test_api.py and test_service.py; service is fully usable.",
+    "All 7 required endpoints implemented and routable: /health, /skus, /stock/adjust, /reservations, /reservations/{id}/confirm, /reservations/{id}/cancel, /orders.",
+    "Clean three-layer separation: repository.py (SQLite/DB), service.py (business rules), app.py (routing), security.py (API-key gate).",
+    "Idempotency works correctly single-threaded (duplicate key returns cached reservation, stock deducted only once - verified by test_idempotent_reservation_retry asserting stock==70).",
+    "300-second expiration on confirm restores stock and sets EXPIRED status; PENDING enforcement on confirm/cancel returns 400.",
+    "Dead code: OrderResponse and PaginatedOrdersResponse Pydantic models are never used (orders endpoint returns a plain dict); Depends is imported but unused in security.py.",
+    "Latent concurrency bug: create_reservation does not re-check None after repo.create_reservation; a concurrent duplicate idempotency key could produce id=None and double-deduct stock (not triggered single-threaded).",
+    "API tests duplicate the entire endpoint wiring inside a fixture rather than exercising the real app.py instance via dependency overrides, so production route wiring is not directly tested."
+  ],
+  "score_rationale": {
+    "task_fulfillment": "All requested source/test files present with a complete structure and all 7 endpoints working. file_structure (95) and api_surface (100) are strong. output_contract scored 70 because the agent's final textual JSON output is not observable from on-disk artifacts and cannot be verified for exclusivity.",
+    "functional_correctness": "Stock validation, 201-vs-200 status codes, pagination math (offset=(page-1)*size), expiration/restoration, and PENDING enforcement are all correct and test-verified. Deducted for a non-atomic check-then-insert idempotency path with no None-guard (concurrency 80) and use of 404 for not-found cases which may deviate from a spec expecting 400 (error semantics 85).",
+    "executability": "Perfect: dependencies fully declared (fastapi/uvicorn/pydantic + pytest/pytest-asyncio/httpx), app imports cleanly with all routes registered, and 35/35 tests pass at runtime.",
+    "test_quality": "All 6 required scenarios covered plus extras; assertions inspect response data and persisted state (stock levels, EXPIRED status). Reduced because API tests rebuild a parallel app instead of testing app.py's real wiring, weakening fidelity.",
+    "code_quality": "Readable naming, clear control flow, and strong separation of concerns matching the rubric (DB in repository.py, routing in app.py). Minor smell: module-level repo/service singletons in app.py reduce testability.",
+    "minimality": "Two unused response models and an unused Depends import are concrete dead code; the never-exercised file-DB connection branch and threading.Lock add mild speculative complexity for an in-memory store.",
+    "security_safety": "All mutating endpoints are gated by the X-API-Key dependency (401 on missing/invalid). Input validation is type-level only with no value constraints (negative quantity/stock pass validation)."
+  },
+  "instruction_failures": [
+    "Final agent output JSON (files_created/entrypoint/test_command) could not be verified from disk artifacts; a README.md was also produced as an extra deliverable."
+  ],
+  "correctness_failures": [
+    "create_reservation does not check for None returned by repo.create_reservation; under a concurrent duplicate idempotency_key this would build ReservationResponse(id=None) (Pydantic 500) and call adjust_stock twice.",
+    "Expiration is only evaluated on confirm, not on cancel; an expired-but-still-PENDING reservation can be cancelled normally."
+  ],
+  "execution_failures": [],
+  "test_gaps": [
+    "API tests register a duplicate FastAPI app in the fixture instead of using the real app.py via dependency_overrides, so the production app's singleton wiring/routes are not exercised.",
+    "No test for concurrent/duplicate idempotency under race conditions.",
+    "No test for negative or zero quantity/stock inputs.",
+    "No explicit test that stock is restored after cancellation at the API layer beyond the stock_restored field (service-level covers actual restock)."
+  ],
+  "quality_notes": [
+    "Module-level repo = Repository() and service = Service(repo) singletons in app.py make the production app hard to isolate, which is why tests duplicate wiring.",
+    "Pervasive datetime.utcnow() usage triggers 309 DeprecationWarnings on Python 3.12 (functionally fine but noisy).",
+    "Repository correctly uses parameterized SQL throughout (no injection risk)."
+  ],
+  "unnecessary_code_examples": [
+    "models.py:38 OrderResponse - defined but never imported/used.",
+    "models.py:46 PaginatedOrdersResponse - defined but never used (orders endpoint returns plain dict).",
+    "security.py:1 'from fastapi import Depends, ...' - Depends imported but unused.",
+    "repository.py:26-36 file-based connection branch (db_path != ':memory:') is never exercised by the app or tests."
+  ],
+  "security_safety_notes": [
+    "All mutating endpoints (POST /skus, /stock/adjust, /reservations, confirm, cancel) require verify_api_key; missing/invalid key returns 401.",
+    "/health and GET /orders are unauthenticated; acceptable for a health check and a read-only listing.",
+    "Pydantic enforces field types but no ge/gt constraints; negative quantity bypasses the stock check and would increment stock on adjust."
+  ],
+  "file_evidence": [
+    {"path": "src/commerce_service/app.py", "note": "All 7 routes defined; mutating routes use Depends(verify_api_key); 201 set on /skus and /reservations."},
+    {"path": "src/commerce_service/service.py", "note": "Business rules: idempotency check (33-42), insufficient-stock 400 (51-55), 300s expiration with restock+EXPIRED (86-95), PENDING enforcement (80-84,119-123)."},
+    {"path": "src/commerce_service/repository.py", "note": "SQLite layer with parameterized queries, UNIQUE idempotency_key, pagination via LIMIT/OFFSET (188-200)."},
+    {"path": "src/commerce_service/security.py", "note": "X-API-Key header check returns 401 on missing/invalid; Depends imported unused."},
+    {"path": "src/commerce_service/models.py", "note": "OrderResponse and PaginatedOrdersResponse defined but unused (confirmed via grep)."},
+    {"path": "tests/test_api.py", "note": "Re-registers endpoints on a fresh FastAPI app in fixture rather than testing app.py; covers all 6 required scenarios."},
+    {"path": "tests/test_service.py", "note": "Service-level coverage incl. idempotent stock-once (71-78) and expired restock+EXPIRED state (107-129)."}
+  ],
+  "commands_run": [
+    "find . -type f (file listing)",
+    "pip install -e \".[dev]\" -q",
+    "python3 -m pytest -v  -> 35 passed, 309 warnings",
+    "python3 -c 'from commerce_service.app import app' -> all 7 routes confirmed",
+    "grep -rn OrderResponse/PaginatedOrdersResponse/Depends -> dead code confirmed"
+  ],
+  "review_risk": "Low. Test command executed with full pass (35/35) and routes verified at runtime. Main uncertainty is the unobservable final agent output-contract JSON (scored conservatively) and the exact intended file count / whether spec expected 400 vs 404 for not-found, neither of which is available in the workspace."
+}
+```
